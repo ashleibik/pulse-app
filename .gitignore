@@ -1,0 +1,34 @@
+# ---- Secrets: never commit these ----
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.key
+supabase/.temp/
+
+# ---- Personal health data: captures stay on your machine ----
+# Raw BLE logs contain your heart rate, sleep times, etc. Keep them out of git
+# (especially if this repo becomes a public portfolio piece).
+re-toolkit/captures/
+*.log
+*.jsonl
+*.csv
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# ---- Xcode / Swift ----
+ios/**/xcuserdata/
+ios/**/DerivedData/
+*.xcuserstate
+.build/
+
+# ---- OS / editors ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
