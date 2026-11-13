@@ -91,7 +91,7 @@ jobs:
           mkdir -p screenshots
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
-          xcrun simctl ui "$UDID" appearance dark
+          xcrun simctl ui "$UDID" appearance light
           xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 --wifiBars 3 || true
           xcrun simctl install "$UDID" "$APP"
 
@@ -102,14 +102,22 @@ jobs:
             xcrun simctl io "$UDID" screenshot "screenshots/$1.png"
           }
 
+          # The simulator is in LIGHT mode here. Today is in the new Mono design (light + dark).
+          # The other screens are still the old dark design and must stay dark by themselves
+          # (legacyDarkTheme / legacyDarkSheet), so capturing them in light mode tests that.
           shot 0-welcome 6
           # First real launch generates 30 days of demo data (debug build: give it time).
-          shot 1-today 45 -hasSeenWelcome YES -screenshotTab today
+          shot 1-today-light 45 -hasSeenWelcome YES -screenshotTab today
+          shot 1-today-light-lower 8 -hasSeenWelcome YES -screenshotTab today -screenshotScroll bottom
           shot 2-recovery 8 -hasSeenWelcome YES -screenshotTab today -screenshotRoute recovery
           shot 3-sleep 8 -hasSeenWelcome YES -screenshotTab sleep
           shot 4-activity 8 -hasSeenWelcome YES -screenshotTab activity
           shot 5-trends 8 -hasSeenWelcome YES -screenshotTab trends
           shot 6-settings 8 -hasSeenWelcome YES -screenshotTab today -screenshotRoute settings
+
+          xcrun simctl ui "$UDID" appearance dark
+          shot 1-today-dark 8 -hasSeenWelcome YES -screenshotTab today
+          shot 1-today-dark-lower 8 -hasSeenWelcome YES -screenshotTab today -screenshotScroll bottom
           ls -la screenshots
 
       - uses: actions/upload-artifact@v4

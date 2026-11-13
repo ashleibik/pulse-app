@@ -10,8 +10,8 @@ struct PulseApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .preferredColorScheme(.dark)   // dark mode first; a light theme can come later
-                .tint(Theme.accent)
+                // Follows the system's light / dark setting. Monochrome: controls are black / white.
+                .tint(DS.Colors.primary)
         }
         .modelContainer(container)
     }

@@ -3,6 +3,7 @@
 ```
 ios/
   project.yml          XcodeGen spec -> generates Pulse.xcodeproj (not committed)
+  design/DESIGN.md     the design system "Mono" (colors, type, spacing, motion). Spec first, then code
   PulseCore/           Swift package, Foundation only, builds + tests on Windows/Linux/macOS
     Sources/PulseCore/
       Models/          MinuteSample, SleepSession, Workout, DailySummary, BinaryCoding
@@ -21,7 +22,8 @@ ios/
                        (a fake band that speaks the protocol), MinuteBuilder (1 Hz records -> minutes)
     Tests/PulseCoreTests/
   Pulse/               the SwiftUI app (needs Xcode)
-    App/               PulseApp, RootView (tabs), Theme
+    App/               PulseApp, RootView (tabs), Design (DS tokens = DESIGN.md in code),
+                       Theme (old dark design, used until every screen is rebuilt)
     Data/              SwiftData models, PulseStore, DemoDataLoader
     Features/          Today, Recovery (detail), Sleep, Activity (+ workout detail), Trends,
                        Settings (profile + recalculate), Welcome (first launch), Shared components
@@ -46,6 +48,16 @@ Run the tests:
 
 The SwiftUI app **can't** be built on Windows. It's written against iOS 17 APIs and builds on a Mac.
 
+## See the app without a Mac
+
+| Option | What you get | How |
+|---|---|---|
+| **Cloud Mac (GitHub Actions)** | The REAL app compiled with Xcode, plus iPhone simulator screenshots of every screen | Push app changes (or *Actions → iOS build & screenshots → Run workflow*), then `gh run download --name screenshots` |
+| **Web preview** | A clickable look-alike in the browser, filled with numbers from the real PulseCore engine | `.\ios\scripts\build-preview.ps1`, then open `docs/preview/pulse-preview.html` |
+
+The workflow (`.github/workflows/ios.yml`) also runs the Python tests and the PulseCore tests on macOS.
+Each run costs about 5 macOS minutes (counted 10x against a private repo's free minutes).
+
 ## On a Mac (when you have one)
 
 ```bash
@@ -57,8 +69,8 @@ open Pulse.xcodeproj
 ```
 1. Select the **Pulse** target → *Signing & Capabilities* → pick your Team (a free Apple ID works for 7-day installs).
 2. Choose an iPhone simulator (or your phone) and press ⌘R.
-3. First launch generates 30 days of demo data (about 2 s). The pill at the top-left says **Demo data**.
+3. First launch generates 30 days of demo data (about 2 s). The pill at the top says **Demo data**.
 4. Run PulseCore tests in Xcode (⌘U on the PulseCore scheme) or `cd PulseCore && swift test`.
 
-> ⚠️ The app layer has **never been compiled yet** (Windows can't). Expect a few small fixes on the
-> first Mac build. Paste the errors into Claude Code and they're usually one-liners.
+> The app layer is compiled by GitHub Actions on every push that touches `ios/`, so it should
+> build on your Mac too. It has not been run on a real iPhone yet.

@@ -23,6 +23,16 @@ public enum RecoveryZone: String, Codable, Sendable, CaseIterable {
         case .red: "Prioritise rest"
         }
     }
+
+    /// One word for the state. The monochrome design (ios/design/DESIGN.md) shows recovery with
+    /// this word + how full the ring is, instead of green / yellow / red.
+    public var word: String {
+        switch self {
+        case .green: "Ready"
+        case .yellow: "Steady"
+        case .red: "Rest"
+        }
+    }
 }
 
 // MARK: - Sleep

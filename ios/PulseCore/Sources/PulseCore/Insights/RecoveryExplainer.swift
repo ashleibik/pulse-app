@@ -55,6 +55,23 @@ public enum RecoveryExplainer {
         return RecoveryBreakdown(components: c, factors: factors)
     }
 
+    /// One short line for the Today screen: the single biggest reason behind the score.
+    /// (Design rule: one line per metric, details behind a tap.)
+    /// - Parameter breakdown: `nil` while there is no baseline yet.
+    public static func oneLine(_ breakdown: RecoveryBreakdown?) -> String {
+        guard let top = breakdown?.factors.first else { return "Still learning your normal." }
+        // Under 3 points nothing really stands out.
+        guard abs(top.points) >= 3 else { return "Everything is close to your normal." }
+        let helped = top.points > 0
+        switch top.kind {
+        case .hrv: return helped ? "HRV is above your normal." : "HRV is below your normal."
+        case .restingHeartRate:
+            // Lower resting HR is the good direction.
+            return helped ? "Resting HR is below your normal." : "Resting HR is above your normal."
+        case .sleep: return helped ? "You slept as much as you needed." : "You slept less than you needed."
+        }
+    }
+
     /// "68 ms vs your normal 61 ms". If both round to the same whole number, show one decimal
     /// ("53.6 bpm vs your normal 54.4 bpm"); otherwise "54 vs 54, +3 points" looks like a contradiction.
     /// (Found in the first real screenshots.)

@@ -3,203 +3,279 @@ import SwiftData
 import PulseCore
 
 /// Home screen. Goal: answer "How ready am I today?" in 2 seconds.
-/// Top to bottom: verdict (recovery) -> what to do with it (strain target) -> supporting numbers -> today's activity.
+///
+/// Built in the Mono design (ios/design/DESIGN.md): black, white and grays only. Recovery is
+/// shown by how full the ring is plus one word, never by color.
+///
+/// Top to bottom: verdict (recovery) -> what to do with it (strain) -> supporting numbers ->
+/// the week -> today's activity. Every block opens its details on tap.
 struct TodayView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @Query(sort: \WorkoutRecord.start, order: .reverse) private var workouts: [WorkoutRecord]
     @Query private var profiles: [ProfileRecord]
-    @Environment(DemoDataLoader.self) private var loader
 
     @State private var showSettings = LaunchOptions.route == "settings"
     @State private var showRecovery = LaunchOptions.route == "recovery"
     @State private var explaining: MetricKind?
+    /// Goes up by one on every tap that opens something. Drives the light haptic.
+    @State private var taps = 0
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 if let today = days.first {
                     content(today)
-                        .padding(.horizontal)
-                        .padding(.bottom, 24)
+                        .padding(.horizontal, DS.Space.side)
+                        .padding(.top, DS.Space.s)
+                        .padding(.bottom, DS.Space.xxl)
                 } else {
                     loadingState
                 }
             }
-            .screenBackground()
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                // The status pill lives in the header, not here: on iOS 26 toolbar items become
-                // small round "glass" buttons and the pill's text was cut off (seen in CI screenshots).
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape.fill") }
-                        .accessibilityLabel("Settings")
+            // Only the screenshot job sets this (to capture the lower half of the screen).
+            .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
+            .monoBackground()
+            // The header below replaces the navigation bar on this screen.
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(isPresented: $showRecovery) {
+                if let today = days.first {
+                    RecoveryDetailView(day: today).legacyDarkTheme()
                 }
             }
-            .navigationDestination(isPresented: $showRecovery) {
-                if let today = days.first { RecoveryDetailView(day: today) }
+            .sheet(isPresented: $showSettings) {
+                SettingsView().legacyDarkSheet()
             }
-            .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
+                    .legacyDarkSheet()
             }
+            .sensoryFeedback(.impact(weight: .light), trigger: taps)
         }
     }
 
     // MARK: - Sections
 
-    @ViewBuilder
     private func content(_ today: DaySummaryRecord) -> some View {
-        VStack(alignment: .leading, spacing: Theme.spacing) {
-            header
-            recoveryCard(today)
-            strainCard(today)
-            tiles(today)
-            activity
+        VStack(alignment: .leading, spacing: DS.Space.xxl) {
+            VStack(spacing: DS.Space.xl) {
+                header.riseIn(0)
+                hero(today).riseIn(1)
+            }
+            strain(today).riseIn(2)
+            stats(today).riseIn(3)
+            week.riseIn(4)
+            activity.riseIn(5)
         }
     }
 
+    /// Date on the left, data source + settings on the right.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(greeting)
-                .font(.largeTitle.weight(.bold))
+        HStack(spacing: DS.Space.s) {
+            Text(Date.now.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+                .textStyle(.bodyStrong)
+                .foregroundStyle(DS.Colors.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .accessibilityAddTraits(.isHeader)
-            HStack(spacing: 10) {
-                Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondaryText)
-                SyncStatusChip()
-                    .fixedSize()
+            Spacer(minLength: DS.Space.s)
+            StatusPill()
+            IconButton(systemName: "gearshape", label: "Settings") {
+                open { showSettings = true }
             }
         }
-        .padding(.top, 4)
     }
 
-    private func recoveryCard(_ today: DaySummaryRecord) -> some View {
-        NavigationLink {
-            RecoveryDetailView(day: today)
-        } label: {
-            VStack(spacing: 14) {
-                RecoveryRing(score: today.recoveryScore)
-                    .padding(.top, 8)
-                if let zone = today.zone {
-                    Text(zone.headline)
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(Theme.color(for: zone))
-                }
-                Text(today.explanation)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Label("See what moved your score", systemImage: "chevron.right")
+    /// The verdict: ring + number, one word, one line, one button.
+    private func hero(_ today: DaySummaryRecord) -> some View {
+        VStack(spacing: 0) {
+            RecoveryDial(score: today.recoveryScore)
+
+            Text(today.zone?.word ?? "Learning")
+                .textStyle(.display)
+                .foregroundStyle(DS.Colors.primary)
+                .padding(.top, DS.Space.l)
+                .accessibilityHidden(true)      // the ring already reads this word to VoiceOver
+
+            Text(reason(today))
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, DS.Space.xs)
+
+            Button {
+                open { showRecovery = true }
+            } label: {
+                Label("See why", systemImage: "arrow.right")
                     .labelStyle(TrailingIconLabelStyle())
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.accent)
             }
-            .frame(maxWidth: .infinity)
-            .card()
+            .buttonStyle(.primaryPill)
+            .padding(.top, DS.Space.l)
+            .accessibilityHint("Shows what moved your recovery score")
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
     }
 
-    private func strainCard(_ today: DaySummaryRecord) -> some View {
+    private func strain(_ today: DaySummaryRecord) -> some View {
         let target = StrainGuidance.targetRange(recovery: today.recoveryScore)
-        return Button { explaining = .strain } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
-                    Label("Strain", systemImage: "flame.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.strain)
-                    Spacer()
-                    Text(PulseFormat.strain(today.strain))
-                        .font(.title2.weight(.bold))
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                    Text("/ 21").font(.caption).foregroundStyle(Theme.secondaryText)
+        return Button {
+            open { explaining = .strain }
+        } label: {
+            VStack(alignment: .leading, spacing: DS.Space.m) {
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "flame")
+                        Text("Strain")
+                    }
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+
+                    HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                        CountUpText(value: today.strain) { PulseFormat.strain($0) }
+                            .textStyle(.title)
+                            .foregroundStyle(DS.Colors.primary)
+                        Text("of 21")
+                            .textStyle(.caption)
+                            .foregroundStyle(DS.Colors.secondary)
+                    }
                 }
-                StrainTargetBar(strain: today.strain, target: target)
+                StrainMeter(strain: today.strain, target: target)
                 Text(StrainGuidance.advice(strain: today.strain, recovery: today.recoveryScore))
-                    .font(.footnote)
-                    .foregroundStyle(Theme.secondaryText)
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .card()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
         .accessibilityHint("Shows what strain means")
     }
 
-    private func tiles(_ today: DaySummaryRecord) -> some View {
-        let columns = [GridItem(.flexible(), spacing: Theme.spacing), GridItem(.flexible(), spacing: Theme.spacing)]
-        return LazyVGrid(columns: columns, spacing: Theme.spacing) {
-            tile(.sleep) {
-                MetricTile(title: "Sleep",
-                           value: today.sleepMinutes.map { PulseFormat.duration(minutes: $0) } ?? "--",
-                           caption: sleepCaption(today), color: Theme.sleep, systemImage: "moon.fill")
+    /// Four numbers, no boxes: a hairline and white space keep them apart.
+    private func stats(_ today: DaySummaryRecord) -> some View {
+        VStack(spacing: DS.Space.l) {
+            HStack(alignment: .top, spacing: DS.Space.m) {
+                stat(.sleep) {
+                    StatBlock(symbol: "moon", label: "Sleep",
+                              number: today.sleepMinutes.map { Double($0) },
+                              format: { PulseFormat.duration(minutes: Int($0.rounded())) },
+                              caption: sleepCaption(today))
+                }
+                stat(.sleep) {
+                    StatBlock(symbol: "bed.double", label: "Need tonight",
+                              number: Double(tonightsNeed(today)),
+                              format: { PulseFormat.duration(minutes: Int($0.rounded())) },
+                              caption: "to recover fully")
+                }
             }
-            tile(.sleep) {
-                MetricTile(title: "Need tonight", value: PulseFormat.duration(minutes: tonightsNeed(today)),
-                           caption: "go to bed in time", color: Theme.sleep, systemImage: "bed.double.fill")
-            }
-            tile(.hrv) {
-                MetricTile(title: "HRV", value: today.hrvRMSSD.map { "\(Int($0.rounded()))" } ?? "--",
-                           unit: "ms", caption: baselineCaption(today.hrvRMSSD, today.baselineHRV),
-                           color: Theme.recoveryGreen, systemImage: "waveform.path.ecg")
-            }
-            tile(.restingHeartRate) {
-                MetricTile(title: "Resting HR", value: today.restingHeartRate.map { "\(Int($0.rounded()))" } ?? "--",
-                           unit: "bpm", caption: baselineCaption(today.restingHeartRate, today.baselineRestingHeartRate),
-                           color: Theme.heart, systemImage: "heart.fill")
+            Hairline()
+            HStack(alignment: .top, spacing: DS.Space.m) {
+                stat(.hrv) {
+                    StatBlock(symbol: "waveform.path.ecg", label: "HRV",
+                              number: today.hrvRMSSD,
+                              format: { "\(Int($0.rounded()))" }, unit: "ms",
+                              caption: baselineCaption(today.hrvRMSSD, today.baselineHRV))
+                }
+                stat(.restingHeartRate) {
+                    StatBlock(symbol: "heart", label: "Resting HR",
+                              number: today.restingHeartRate,
+                              format: { "\(Int($0.rounded()))" }, unit: "bpm",
+                              caption: baselineCaption(today.restingHeartRate, today.baselineRestingHeartRate))
+                }
             }
         }
     }
 
-    @ViewBuilder
+    /// The one card on this screen: recovery for the last 7 days.
+    private var week: some View {
+        let recent = Array(days.prefix(7).reversed())       // oldest first
+        let scores = recent.compactMap(\.recoveryScore)
+        let chartDays = recent.enumerated().map { index, day in
+            WeekRecoveryChart.Day(id: "\(day.date.timeIntervalSince1970)",
+                                  letter: day.date.formatted(.dateTime.weekday(.narrow)),
+                                  score: day.recoveryScore,
+                                  isToday: index == recent.count - 1)
+        }
+        return Button {
+            open { explaining = .recovery }
+        } label: {
+            VStack(alignment: .leading, spacing: DS.Space.m) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Last 7 days")
+                        .textStyle(.heading)
+                        .foregroundStyle(DS.Colors.primary)
+                    Spacer()
+                    if !scores.isEmpty {
+                        Text("Avg \(Int((scores.reduce(0, +) / Double(scores.count)).rounded()))%")
+                            .textStyle(.caption)
+                            .foregroundStyle(DS.Colors.secondary)
+                    }
+                }
+                WeekRecoveryChart(days: chartDays)
+            }
+            .monoCard()
+        }
+        .buttonStyle(.pressable)
+        .accessibilityHint("Shows what recovery means")
+    }
+
     private var activity: some View {
         let todays = workouts.filter { Calendar.current.isDateInToday($0.start) }
-        SectionHeader(title: "Today's activity", trailing: todays.isEmpty ? nil : "\(todays.count)")
-            .padding(.top, 8)
-        if todays.isEmpty {
-            Label("No workouts yet today", systemImage: "figure.walk")
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondaryText)
-                .card()
-        } else {
-            VStack(spacing: 14) {
-                ForEach(todays) { WorkoutRow(workout: $0) }
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("Activity")
+                .textStyle(.heading)
+                .foregroundStyle(DS.Colors.primary)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.bottom, DS.Space.s)
+            if todays.isEmpty {
+                Text("No workouts yet today.")
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+            } else {
+                ForEach(Array(todays.enumerated()), id: \.element.id) { index, workout in
+                    if index > 0 { Hairline() }
+                    ActivityRow(workout: workout)
+                }
             }
-            .card()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var loadingState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: DS.Space.m) {
             ProgressView()
-            Text("Generating 30 days of demo data…")
-                .font(.headline)
+            Text("Preparing 30 days of demo data")
+                .textStyle(.bodyStrong)
+                .foregroundStyle(DS.Colors.primary)
             Text("This only happens once.")
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondaryText)
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 160)
+        .padding(.top, 200)
     }
 
     // MARK: - Helpers
 
-    private func tile<Content: View>(_ kind: MetricKind, @ViewBuilder _ content: () -> Content) -> some View {
-        Button { explaining = kind } label: { content() }
-            .buttonStyle(.plain)
+    /// Every tap that opens something goes through here, so it also gives a light haptic.
+    private func open(_ action: () -> Void) {
+        taps += 1
+        action()
+    }
+
+    private func stat<Content: View>(_ kind: MetricKind, @ViewBuilder _ content: () -> Content) -> some View {
+        Button { open { explaining = kind } } label: { content() }
+            .buttonStyle(.pressable)
             .accessibilityHint("Shows what this means")
     }
 
-    private var greeting: String {
-        switch Calendar.current.component(.hour, from: .now) {
-        case 5..<12: "Good morning"
-        case 12..<18: "Good afternoon"
-        default: "Good evening"
-        }
+    /// One line: the single biggest reason behind today's score (tested in PulseCore).
+    private func reason(_ today: DaySummaryRecord) -> String {
+        let history = days.prefix(20).map(\.value)
+        return RecoveryExplainer.oneLine(RecoveryExplainer.breakdown(for: today.value, history: history))
     }
 
     /// Tonight's need = tomorrow's formula applied to today (yesterday-strain and debt rules).
@@ -226,14 +302,21 @@ struct TodayView: View {
 /// "Text  >" with the icon after the title.
 struct TrailingIconLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             configuration.title
             configuration.icon.imageScale(.small)
         }
     }
 }
 
-#Preview {
+#Preview("Light") {
+    TodayView()
+        .modelContainer(PulseStore.previewContainer)
+        .environment(DemoDataLoader())
+        .preferredColorScheme(.light)
+}
+
+#Preview("Dark") {
     TodayView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DemoDataLoader())

@@ -1,8 +1,8 @@
 import SwiftUI
 import PulseCore
 
-/// All colors, sizes and shared styles live here, so the look stays consistent and can be
-/// changed in one place.
+/// OLD design tokens (dark, colorful). Still used by every screen that has not been rebuilt in
+/// the Mono design yet. New code uses `DS` (Design.swift). Delete this file when the rollout is done.
 enum Theme {
     // MARK: Colors
     static let background = Color(red: 0.04, green: 0.05, blue: 0.07)
@@ -70,6 +70,24 @@ struct CardStyle: ViewModifier {
 }
 
 extension View {
+    // The two helpers below keep the OLD dark design readable now that the app follows the
+    // system's light / dark setting. Each screen drops its helper when it is rebuilt in the Mono
+    // design (ios/design/DESIGN.md, "Rollout").
+
+    /// For old-design tabs and pushed screens: they were only ever designed for dark mode.
+    func legacyDarkTheme() -> some View {
+        environment(\.colorScheme, .dark)
+            .tint(Theme.accent)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+
+    /// For old-design sheets and full-screen covers. A sheet is its own "presentation", so
+    /// `preferredColorScheme` changes only the sheet, not the screen underneath.
+    func legacyDarkSheet() -> some View {
+        preferredColorScheme(.dark)
+            .tint(Theme.accent)
+    }
+
     func card() -> some View { modifier(CardStyle()) }
 
     /// Standard screen background + scroll padding.

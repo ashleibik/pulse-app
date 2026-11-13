@@ -35,6 +35,38 @@ import Testing
     #expect(RecoveryExplainer.comparison(54.0, 54.02, unit: "bpm") == "54 bpm vs your normal 54 bpm")
 }
 
+@Test func oneLineNamesTheBiggestFactor() {
+    func breakdown(_ kind: RecoveryFactor.Kind, _ points: Double) -> RecoveryBreakdown {
+        RecoveryBreakdown(components: RecoveryComponents(zHRV: 0, zRHR: 0, zSleep: 0), factors: [
+            RecoveryFactor(kind: kind, title: "", detail: "", points: points),
+            RecoveryFactor(kind: .hrv, title: "", detail: "", points: 1),
+        ])
+    }
+    #expect(RecoveryExplainer.oneLine(nil) == "Still learning your normal.")
+    #expect(RecoveryExplainer.oneLine(breakdown(.sleep, -14)) == "You slept less than you needed.")
+    #expect(RecoveryExplainer.oneLine(breakdown(.sleep, 6)) == "You slept as much as you needed.")
+    #expect(RecoveryExplainer.oneLine(breakdown(.hrv, 12)) == "HRV is above your normal.")
+    #expect(RecoveryExplainer.oneLine(breakdown(.hrv, -12)) == "HRV is below your normal.")
+    // Positive points for resting HR mean it was LOWER than normal (the good direction).
+    #expect(RecoveryExplainer.oneLine(breakdown(.restingHeartRate, 5)) == "Resting HR is below your normal.")
+    #expect(RecoveryExplainer.oneLine(breakdown(.restingHeartRate, -5)) == "Resting HR is above your normal.")
+    #expect(RecoveryExplainer.oneLine(breakdown(.sleep, -2)) == "Everything is close to your normal.")
+}
+
+@Test func oneLineStaysShortForEveryDemoDay() {
+    // The Today screen gives this one line of space.
+    for day in computed.days {
+        let line = RecoveryExplainer.oneLine(RecoveryExplainer.breakdown(for: day, history: computed.days))
+        #expect(line.count <= 36, "\(line)")
+    }
+}
+
+@Test func recoveryZoneWords() {
+    #expect(RecoveryZone(score: 80).word == "Ready")
+    #expect(RecoveryZone(score: 50).word == "Steady")
+    #expect(RecoveryZone(score: 10).word == "Rest")
+}
+
 @Test func breakdownNeedsABaseline() {
     #expect(RecoveryExplainer.breakdown(for: computed.days[2], history: computed.days) == nil)
 }
