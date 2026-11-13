@@ -30,6 +30,7 @@ Lines marked **(our choice)** were not in the original brief. They fill a gap an
 | `tertiary` | `#A3A3A3` | `#5C5C5C` **(our choice)** | Chevrons, target ranges, disabled. **Not for text** |
 | `muted` **(our choice)** | `#D4D4D4` | `#333333` | Past data in charts |
 | `onPrimary` | `#FFFFFF` | `#000000` | Text on a primary button |
+| `sheet` **(our choice)** | `#FFFFFF` | `#111111` | Background of sheets (in dark mode one step lighter than the screen, so you can see where the sheet starts) |
 
 Rules:
 - No accent colors, no gradients, no glows.
@@ -45,7 +46,11 @@ Rules:
 | Strain vs target | Black fill on a gray track, target range as a darker gray band, plus one line of advice |
 | Up / down vs normal | Arrow glyph and words: "▲ 3 vs normal", "at your normal" |
 | Data source | Words in the status pill: "Demo data", later "Synced 5 min ago" |
-| Good / bad trend | Words ("better", "worse"), never green / red |
+| Good / bad trend | Arrow + size + word: "▲ 3 better", "▼ 12m worse", "no change". Never green / red |
+| What helped / hurt recovery | A bar growing right (helped) or left (hurt) from the middle, plus a signed number: "+3", "−18" |
+| Sleep phases | Their own labelled row in the chart, plus a gray level: Restful `primary`, Light `tertiary`, Awake `secondary` |
+| Heart-rate zones | Label (Z1–Z5) and bar length. All bars `primary` |
+| Risky actions (replace demo data) | A confirmation dialog that says what will happen. No red buttons |
 
 ## 3. Typography
 
@@ -54,7 +59,8 @@ and above, so headlines are SF Pro Display without bundling anything.
 
 | Style | Size | Weight | Tracking | Text style (Dynamic Type) | Used for |
 |---|---|---|---|---|---|
-| `hero` | 76 (64–80 allowed) | Bold | −3 | scales with Large Title, capped at 92 | The one number of the screen |
+| `hero` | 64–76 | Bold | −4% of the size | scales with Large Title, capped at +20% | The one number of the screen (76 in the big recovery ring, 64 elsewhere) |
+| `welcome headline` | 44 | Bold | −1.5 | scales with Large Title, capped at 56 | Welcome pages only |
 | `display` | 34 | Bold | −0.8 | Large Title | State word, screen headline |
 | `title` | 28 | Bold | −0.5 | Title 1 | Stat values |
 | `heading` | 22 | Bold | −0.3 | Title 2 | Section headings |
@@ -75,8 +81,13 @@ Rules:
 - Prefer white space, then a hairline (`border`, 1 pt), then a card. In that order.
 - At most **one or two cards per screen**.
 - Minimum tap target 44 × 44 pt.
-- No navigation bar on main screens. A slim header (title left, actions right) is pinned at the
-  top on a solid `background`, so content scrolls under it cleanly.
+- **Tab screens and sheets have no navigation bar.** A slim header (title left, actions right,
+  `ScreenHeader` in code) is pinned at the top on a solid background, so content scrolls under
+  it cleanly. On sheets the action is a round close button.
+- **Pushed screens** (Recovery, a workout) keep the system navigation bar, so the standard back
+  button and the swipe-back gesture work.
+- **Every screen starts with its answer**: one hero number with a caption above and one line
+  below. Then sections, each with a bold heading.
 
 ## 5. Shapes
 
@@ -86,23 +97,31 @@ Rules:
 | Primary button | Pill (fully rounded), `primary` fill, `onPrimary` text, height 52 |
 | Secondary button | Pill, `surface` fill, `primary` text, height 52 |
 | Icon button | Circle 44, `surface` fill, `primary` icon |
+| Pill picker | Small pills (height 36), selected = `primary` fill, others = `surface` fill. Replaces the segmented control |
+| Row | Label left (`body`), value right (`bodyStrong`), 52 high, hairline between rows |
 | Status pill | Capsule with a 1 pt `border` outline, `caption` text |
 | Bars and tracks | Capsules (fully rounded ends) |
 
-One primary button per screen at most.
+One primary button per screen at most. Disabled buttons fade to 40%.
+On sheets, `surface`-filled controls use `border` instead (in dark mode the sheet itself is `surface`).
 
 ## 6. Icons
 
 SF Symbols, **regular weight**, monochrome, outline versions (`moon`, not `moon.fill`) outside the
-tab bar. Icons are `primary` or `secondary`, never tinted. The tab bar keeps the iOS standard
-(filled when selected) **(our choice)**.
+tab bar. Large illustrative icons (welcome pages, empty states) are **thin**. Icons are `primary`
+or `secondary`, never tinted. The tab bar keeps the iOS standard (filled when selected)
+**(our choice)**.
 
 ## 7. Charts
 
 Swift Charts, black and gray only.
-- No gridlines, no Y axis. X labels in `caption` / `secondary`.
-- Bars: rounded (capsule). Lines: thin (2 pt), round joins.
-- **Past data `muted`, today `primary`.**
+- No gridlines. X labels in `caption` / `secondary`.
+- **Bars** (`DayBarsChart`): rounded (capsule), no Y axis. **Past days `muted`, today (or the
+  selected day) `primary`.** A day without data keeps a small stub so the row has no hole.
+  Up to 14 bars get a weekday letter each; more than that get the day of the month once a week.
+- **Lines** (`LineChart`): thin (2 pt), round joins, `primary`. A few quiet numbers on the right
+  give the scale. Trend lines mark today with a dot. **(our choice:** a light gray line was too
+  faint to read, so for lines "today" is the dot, not the color.)
 - Every chart has a VoiceOver summary in words.
 
 ## 8. Copy
@@ -134,9 +153,17 @@ Swift Charts, black and gray only.
 
 ## 11. Rollout
 
-| Screen | Status |
-|---|---|
-| Today | **Mono** (this spec) |
-| Recovery detail, Sleep, Activity, Workout detail, Trends, Settings, Welcome, metric sheets | Old dark design, pinned dark with `legacyDarkTheme()` until rebuilt |
+Every screen is in the Mono design: Today, Recovery, Sleep, Activity, Workout, Trends, Settings,
+Welcome and the metric sheets. The old dark, colorful theme (`Theme.swift`) is deleted.
 
-Old tokens live in `Theme` (`Pulse/App/Theme.swift`) and are deleted once every screen is moved.
+Checked so far: both appearances in simulator screenshots (GitHub Actions). **Not checked yet:**
+the animations and haptics in motion, Dynamic Type at large sizes, and VoiceOver on a real device.
+
+## 12. Checklist for a new screen
+
+1. Does it start with its answer (one hero number or one sentence)?
+2. Only `DS` tokens: no hard-coded colors, sizes or animations?
+3. Two weights, sentence case, one line per metric?
+4. At most two cards and one primary button?
+5. Does every state read without color?
+6. Light and dark screenshot taken? VoiceOver label on every block?

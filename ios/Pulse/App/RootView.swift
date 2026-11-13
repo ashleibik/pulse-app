@@ -13,22 +13,17 @@ struct RootView: View {
     enum Tab: String, Hashable { case today, sleep, activity, trends }
 
     var body: some View {
-        // Today is rebuilt in the Mono design. The other tabs still use the old dark design and
-        // are pinned dark with `legacyDarkTheme()` until they are rebuilt too.
         TabView(selection: $tab) {
             TodayView()
                 .tabItem { Label("Today", systemImage: "sun.max.fill") }
                 .tag(Tab.today)
             SleepView()
-                .legacyDarkTheme()
                 .tabItem { Label("Sleep", systemImage: "moon.zzz.fill") }
                 .tag(Tab.sleep)
             ActivityView()
-                .legacyDarkTheme()
                 .tabItem { Label("Activity", systemImage: "flame.fill") }
                 .tag(Tab.activity)
             TrendsView()
-                .legacyDarkTheme()
                 .tabItem { Label("Trends", systemImage: "chart.xyaxis.line") }
                 .tag(Tab.trends)
         }
@@ -37,7 +32,6 @@ struct RootView: View {
         .environment(loader)
         .fullScreenCover(isPresented: Binding(get: { !hasSeenWelcome }, set: { hasSeenWelcome = !$0 })) {
             WelcomeView { hasSeenWelcome = true }
-                .legacyDarkSheet()
         }
         .task {
             // Until the band is paired, fill the app with demo data on first launch.

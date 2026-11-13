@@ -174,3 +174,18 @@ func day(_ i: Int, recovery: Double?, sleep: Int?, hrv: Double?, rhr: Double?, s
     #expect((1...4).contains(found.count))
     #expect(!found.contains { $0.id == "learning" })
 }
+
+@Test func changeCaptionSaysDirectionAndWhetherItIsGood() {
+    #expect(TrendInsights.changeCaption(3.2, higherIsBetter: true) == "▲ 3 better")
+    #expect(TrendInsights.changeCaption(-4.0, higherIsBetter: true) == "▼ 4 worse")
+    // Resting heart rate: going down is the good direction.
+    #expect(TrendInsights.changeCaption(-2.0, higherIsBetter: false) == "▼ 2 better")
+    #expect(TrendInsights.changeCaption(2.0, higherIsBetter: false) == "▲ 2 worse")
+    #expect(TrendInsights.changeCaption(nil, higherIsBetter: true) == "no change")
+    // A change that would print as "0" is "no change", not "▲ 0 better".
+    #expect(TrendInsights.changeCaption(0.3, higherIsBetter: true) == "no change")
+    #expect(TrendInsights.changeCaption(12.4, higherIsBetter: true,
+                                        format: { PulseFormat.duration(minutes: Int($0.rounded())) }) == "▲ 12m better")
+    #expect(TrendInsights.changeCaption(0.2, higherIsBetter: true,
+                                        format: { PulseFormat.duration(minutes: Int($0.rounded())) }) == "no change")
+}

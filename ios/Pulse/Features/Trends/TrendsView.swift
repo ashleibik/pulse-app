@@ -1,9 +1,9 @@
 import SwiftUI
 import SwiftData
-import Charts
 import PulseCore
 
 /// Week / month view: averages vs the previous period, plain-language insights, and one chart per metric.
+/// Mono design (ios/design/DESIGN.md): "better" / "worse" is written out, never shown as green / red.
 struct TrendsView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @State private var period: Period = .week
@@ -12,7 +12,6 @@ struct TrendsView: View {
         case week = 7, month = 30
         var id: Int { rawValue }
         var label: String { self == .week ? "7 days" : "30 days" }
-        var previousLabel: String { self == .week ? "vs previous 7 days" : "vs previous 30 days" }
     }
 
     /// Oldest first, for charts.
@@ -20,146 +19,124 @@ struct TrendsView: View {
     private var values: [DailySummary] { days.map(\.value) }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.spacing) {
-                    Picker("Period", selection: $period) {
-                        ForEach(Period.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .sensoryFeedback(.selection, trigger: period)
-
-                    summaryRow
-
-                    SectionHeader(title: "Insights").padding(.top, 4)
-                    ForEach(TrendInsights.insights(values)) { InsightCard(insight: $0) }
-
-                    SectionHeader(title: "Charts").padding(.top, 4)
-                    recoveryCard
-                    lineCard(.hrv, color: Theme.recoveryGreen) { $0.hrvRMSSD }
-                    lineCard(.restingHeartRate, color: Theme.heart) { $0.restingHeartRate }
-                    barCard(.sleep, color: Theme.sleep) { $0.sleepMinutes.map { Double($0) / 60 } }
-                    barCard(.strain, color: Theme.strain) { $0.strain }
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 24)
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.xxl) {
+                summary.riseIn(0)
+                insights.riseIn(1)
+                recoveryChart.riseIn(2)
+                lineSection(.hrv) { $0.hrvRMSSD }
+                lineSection(.restingHeartRate) { $0.restingHeartRate }
+                barSection(.sleep) { $0.sleepMinutes.map { Double($0) / 60 } }
+                barSection(.strain) { $0.strain }
             }
-            .screenBackground()
-            .navigationTitle("Trends")
-            .animation(.easeInOut(duration: 0.3), value: period)
+            .padding(.horizontal, DS.Space.side)
+            .padding(.top, DS.Space.l)
+            .padding(.bottom, DS.Space.xxl)
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ScreenHeader(title: "Trends") {
+                PillPicker(options: Period.allCases, label: { $0.label }, selection: $period)
+            }
+        }
+        // Only the screenshot job sets this (to capture the lower half of the screen).
+        .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
+        .monoBackground()
+        .animation(DS.Motion.spring, value: period)
     }
 
     // MARK: - Summary
 
-    private var summaryRow: some View {
+    /// The answer: average recovery for the period, then three supporting averages.
+    private var summary: some View {
         let recovery = TrendInsights.compare(values, period: period.rawValue, \.recoveryScore)
         let hrv = TrendInsights.compare(values, period: period.rawValue, \.hrvRMSSD)
+        let resting = TrendInsights.compare(values, period: period.rawValue, \.restingHeartRate)
         let sleep = TrendInsights.compare(values, period: period.rawValue) { $0.sleepMinutes.map { Double($0) } }
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: Theme.spacing) {
-                stat("Recovery", recovery.current.map(PulseFormat.percent), recovery.delta, higherIsBetter: true)
-                stat("HRV", hrv.current.map { "\(Int($0.rounded())) ms" }, hrv.delta, higherIsBetter: true)
-                stat("Sleep", sleep.current.map { PulseFormat.duration(minutes: Int($0.rounded())) }, sleep.delta,
-                     higherIsBetter: true, deltaFormat: { PulseFormat.duration(minutes: Int($0.rounded())) })
+        let duration: (Double) -> String = { PulseFormat.duration(minutes: Int($0.rounded())) }
+        let whole: (Double) -> String = { "\(Int($0.rounded()))" }
+
+        return VStack(alignment: .leading, spacing: DS.Space.l) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                Text("Average recovery, last \(period.label)")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                if let current = recovery.current {
+                    HeroNumber(value: current) { PulseFormat.percent($0) }
+                } else {
+                    Text("--")
+                        .font(.system(size: 64, weight: .bold))
+                        .foregroundStyle(DS.Colors.tertiary)
+                }
+                Text("\(TrendInsights.changeCaption(recovery.delta, higherIsBetter: true)) vs the \(period.label) before")
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
             }
-            Text("Averages, \(period.previousLabel)")
-                .font(.caption2)
-                .foregroundStyle(Theme.secondaryText)
-                .padding(.horizontal, 4)
+            .accessibilityElement(children: .combine)
+
+            Hairline()
+
+            HStack(alignment: .top, spacing: DS.Space.m) {
+                StatBlock(label: "HRV", number: hrv.current, format: whole, unit: "ms",
+                          caption: TrendInsights.changeCaption(hrv.delta, higherIsBetter: true),
+                          valueStyle: .heading)
+                StatBlock(label: "Resting HR", number: resting.current, format: whole, unit: "bpm",
+                          caption: TrendInsights.changeCaption(resting.delta, higherIsBetter: false),
+                          valueStyle: .heading)
+                StatBlock(label: "Sleep", number: sleep.current, format: duration,
+                          caption: TrendInsights.changeCaption(sleep.delta, higherIsBetter: true, format: duration),
+                          valueStyle: .heading)
+            }
         }
     }
 
-    private func stat(_ title: String, _ value: String?, _ delta: Double?, higherIsBetter: Bool,
-                      deltaFormat: @escaping (Double) -> String = { String(format: "%.0f", $0) }) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(Theme.secondaryText)
-            Text(value ?? "--")
-                .font(.headline.monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            ChangeBadge(delta: delta, higherIsBetter: higherIsBetter, format: deltaFormat)
+    private var insights: some View {
+        let items = TrendInsights.insights(values)
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionTitle(title: "Insights")
+                .padding(.bottom, DS.Space.xs)
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, insight in
+                if index > 0 { Hairline() }
+                InsightRow(insight: insight)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
-        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Charts
 
-    private var recoveryCard: some View {
+    /// The one card on this screen.
+    private var recoveryChart: some View {
         let scores = window.compactMap(\.recoveryScore)
-        return VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Recovery", trailing: average(scores).map { "avg \(PulseFormat.percent($0))" })
-            Chart {
-                ForEach(window) { day in
-                    if let score = day.recoveryScore {
-                        BarMark(x: .value("Day", day.date, unit: .day), y: .value("Recovery", score))
-                            .foregroundStyle(Theme.color(for: day.zone))
-                            .cornerRadius(3)
-                    }
-                }
-                if let avg = average(scores) {
-                    averageRule(avg)
-                }
-            }
-            .chartYScale(domain: 0...100)
-            .frame(height: 150)
-            .accessibilityLabel("Recovery chart, \(period.label). Average \(average(scores).map(PulseFormat.percent) ?? "not available").")
+        let avg = average(scores)
+        let bars = DayBarsChart.Bar.from(window) { $0.recoveryScore }
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Recovery", trailing: avg.map { "Avg \(PulseFormat.percent($0))" })
+            DayBarsChart(bars: bars, domain: 0...100, height: 120,
+                         summary: "Recovery, last \(period.label). Average \(avg.map { PulseFormat.percent($0) } ?? "not available").")
         }
-        .card()
+        .monoCard()
     }
 
-    private func lineCard(_ kind: MetricKind, color: Color, value: @escaping (DaySummaryRecord) -> Double?) -> some View {
-        let points = window.compactMap { day in value(day).map { DayValue(date: day.date, value: $0) } }
+    private func lineSection(_ kind: MetricKind, value: (DaySummaryRecord) -> Double?) -> some View {
+        var points: [ChartPoint] = []
+        for day in window {
+            if let v = value(day) { points.append(ChartPoint(date: day.date, value: v)) }
+        }
         let avg = average(points.map(\.value))
-        return VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: kind.title, trailing: avg.map { "avg \(kind.format($0))" })
-            Chart {
-                ForEach(points) { point in
-                    LineMark(x: .value("Day", point.date, unit: .day), y: .value(kind.title, point.value))
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(color)
-                    PointMark(x: .value("Day", point.date, unit: .day), y: .value(kind.title, point.value))
-                        .foregroundStyle(color)
-                        .symbolSize(period == .week ? 30 : 12)
-                }
-                if let avg {
-                    averageRule(avg)
-                }
-            }
-            .chartYScale(domain: .automatic(includesZero: false))
-            .frame(height: 130)
-            .accessibilityLabel("\(kind.title) chart, \(period.label). Average \(avg.map(kind.format) ?? "not available").")
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: kind.shortTitle, trailing: avg.map { "Avg \(kind.format($0))" })
+            LineChart(points: points, marksLast: true,
+                      summary: "\(kind.title), last \(period.label). Average \(avg.map { kind.format($0) } ?? "not available").")
         }
-        .card()
     }
 
-    private func barCard(_ kind: MetricKind, color: Color, value: @escaping (DaySummaryRecord) -> Double?) -> some View {
-        let points = window.compactMap { day in value(day).map { DayValue(date: day.date, value: $0) } }
-        let avg = average(points.map(\.value))
-        return VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: kind.title, trailing: avg.map { "avg \(kind.format($0))" })
-            Chart {
-                ForEach(points) { point in
-                    BarMark(x: .value("Day", point.date, unit: .day), y: .value(kind.title, point.value))
-                        .foregroundStyle(color.gradient)
-                        .cornerRadius(3)
-                }
-                if let avg {
-                    averageRule(avg)
-                }
-            }
-            .frame(height: 130)
-            .accessibilityLabel("\(kind.title) chart, \(period.label). Average \(avg.map(kind.format) ?? "not available").")
+    private func barSection(_ kind: MetricKind, value: (DaySummaryRecord) -> Double?) -> some View {
+        let bars = DayBarsChart.Bar.from(window, value: value)
+        let avg = average(bars.compactMap(\.value))
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: kind.shortTitle, trailing: avg.map { "Avg \(kind.format($0))" })
+            DayBarsChart(bars: bars,
+                         summary: "\(kind.title), last \(period.label). Average \(avg.map { kind.format($0) } ?? "not available").")
         }
-        .card()
-    }
-
-    private func averageRule(_ value: Double) -> some ChartContent {
-        RuleMark(y: .value("Average", value))
-            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-            .foregroundStyle(.white.opacity(0.45))
     }
 
     private func average(_ values: [Double]) -> Double? {
@@ -167,7 +144,13 @@ struct TrendsView: View {
     }
 }
 
-#Preview {
+#Preview("Light") {
+    TrendsView()
+        .modelContainer(PulseStore.previewContainer)
+        .preferredColorScheme(.light)
+}
+
+#Preview("Dark") {
     TrendsView()
         .modelContainer(PulseStore.previewContainer)
         .preferredColorScheme(.dark)

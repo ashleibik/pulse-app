@@ -22,6 +22,23 @@ public struct Insight: Identifiable, Sendable, Equatable {
 
 public enum TrendInsights {
 
+    /// The change between two periods in words, e.g. "▲ 3 better", "▼ 12m worse", "no change".
+    /// The monochrome design (ios/design/DESIGN.md) never uses green / red for good / bad, so the
+    /// words carry it.
+    /// - Parameters:
+    ///   - delta: current average minus previous average (`nil` = not enough data).
+    ///   - higherIsBetter: `false` for metrics like resting heart rate.
+    ///   - format: turns the size of the change into text, e.g. 12.4 -> "12m".
+    public static func changeCaption(_ delta: Double?, higherIsBetter: Bool,
+                                     format: (Double) -> String = { String(format: "%.0f", $0) }) -> String {
+        guard let delta else { return "no change" }
+        let size = format(abs(delta))
+        // A change that prints as zero ("0", "0m", "0.0") is not worth an arrow.
+        if size.allSatisfy({ !$0.isNumber || $0 == "0" }) { return "no change" }
+        let good = (delta > 0) == higherIsBetter
+        return "\(delta > 0 ? "▲" : "▼") \(size) \(good ? "better" : "worse")"
+    }
+
     /// `days` in any order. Compares the last `period` days with the `period` days before them.
     public static func compare(_ days: [DailySummary], period: Int,
                                _ value: (DailySummary) -> Double?) -> PeriodComparison {

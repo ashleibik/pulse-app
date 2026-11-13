@@ -4,6 +4,8 @@ import Charts
 import PulseCore
 
 /// One night at a time: how long, how calm, overnight heart rate, and why you needed what you needed.
+/// Mono design (ios/design/DESIGN.md): the sleep phases are told apart by their row and a gray
+/// level, not by color.
 struct SleepView: View {
     @Query(sort: \SleepRecord.end, order: .reverse) private var allSleeps: [SleepRecord]
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
@@ -12,86 +14,107 @@ struct SleepView: View {
     @Environment(DemoDataLoader.self) private var loader
 
     @State private var nightIndex = 0          // 0 = last night, 1 = the night before, ...
-    @State private var heartRate: [MinutePoint] = []
+    @State private var heartRate: [ChartPoint] = []
     @State private var segments: [SleepSegment] = []
 
     private var sleeps: [SleepRecord] { allSleeps.filter { !$0.isNap } }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        ScrollView {
+            Group {
                 if sleeps.isEmpty {
-                    ContentUnavailableView("No sleep yet", systemImage: "moon.zzz",
-                                           description: Text("Wear your band to bed and your night will appear here."))
-                        .padding(.top, 80)
+                    EmptyState(symbol: "moon.zzz", title: "No sleep yet",
+                               text: "Wear your band to bed and your night will appear here.")
+                        .padding(.top, DS.Space.xxl)
                 } else {
-                    let night = sleeps[min(nightIndex, sleeps.count - 1)]
-                    content(night)
-                        .padding(.horizontal)
-                        .padding(.bottom, 24)
+                    content(sleeps[min(nightIndex, sleeps.count - 1)])
                 }
             }
-            .screenBackground()
-            .navigationTitle("Sleep")
-            .task(id: "\(nightIndex)-\(loader.rawDataReady)-\(sleeps.count)") { loadNight() }
+            .padding(.horizontal, DS.Space.side)
+            .padding(.top, DS.Space.l)
+            .padding(.bottom, DS.Space.xxl)
         }
+        .safeAreaInset(edge: .top, spacing: 0) { header }
+        // Only the screenshot job sets this (to capture the lower half of the screen).
+        .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
+        .monoBackground()
+        .task(id: "\(nightIndex)-\(loader.rawDataReady)-\(sleeps.count)") { loadNight() }
+        .sensoryFeedback(.selection, trigger: nightIndex)
     }
 
     private func loadNight() {
         guard !sleeps.isEmpty else { return }
         let night = sleeps[min(nightIndex, sleeps.count - 1)]
         let minutes = PulseStore.minutes(from: night.start, to: night.end, in: context)
-        heartRate = minutes.compactMap { m in m.averageHeartRate.map { MinutePoint(date: m.start, value: $0) } }
+        heartRate = minutes.compactMap { m in m.averageHeartRate.map { ChartPoint(date: m.start, value: $0) } }
         segments = SleepTimeline.build(minutes: minutes, from: night.start, to: night.end)
     }
 
-    @ViewBuilder
+    // MARK: - Sections
+
+    /// Title on the left, older / newer night on the right.
+    private var header: some View {
+        ScreenHeader(title: "Sleep") {
+            IconButton(systemName: "chevron.left", label: "Previous night") { nightIndex += 1 }
+                .disabled(nightIndex >= sleeps.count - 1)
+            IconButton(systemName: "chevron.right", label: "Next night") { nightIndex -= 1 }
+                .disabled(nightIndex == 0)
+        }
+    }
+
     private func content(_ night: SleepRecord) -> some View {
         let summary = days.first { Calendar.current.isDate($0.date, inSameDayAs: night.end) }
         let need = summary?.sleepNeedMinutes ?? 480
-        VStack(spacing: Theme.spacing) {
-            nightPicker(night)
-            headline(night, need: need)
-            timelineCard
-            heartRateCard
-            HStack(spacing: Theme.spacing) {
-                MetricTile(title: "Efficiency", value: PulseFormat.percent(efficiency(night) * 100),
-                           caption: "asleep / in bed", color: Theme.sleep, systemImage: "bed.double.fill")
-                MetricTile(title: "Wake-ups", value: "\(night.disturbances)",
-                           caption: "\(night.awakeMinutes) min awake", color: Theme.sleep, systemImage: "eye.fill")
+        return VStack(alignment: .leading, spacing: DS.Space.xxl) {
+            hero(night, need: need).riseIn(0)
+            timeline.riseIn(1)
+            heart.riseIn(2)
+            HStack(alignment: .top, spacing: DS.Space.m) {
+                StatBlock(symbol: "bed.double", label: "Efficiency",
+                          number: efficiency(night) * 100,
+                          format: { PulseFormat.percent($0) },
+                          caption: "asleep / in bed")
+                StatBlock(symbol: "eye", label: "Wake-ups",
+                          number: Double(night.disturbances),
+                          format: { "\(Int($0.rounded()))" },
+                          caption: "\(night.awakeMinutes) min awake")
             }
+            .riseIn(3)
             if let summary {
-                needCard(for: summary)
+                needBreakdown(for: summary).riseIn(4)
             }
         }
     }
 
-    // MARK: - Cards
-
-    private func headline(_ night: SleepRecord, need: Int) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(PulseFormat.duration(minutes: night.asleepMinutes))
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                Text("asleep").foregroundStyle(Theme.secondaryText)
+    /// The answer: how long you slept, and how that compares with what you needed.
+    private func hero(_ night: SleepRecord, need: Int) -> some View {
+        let fraction = Double(night.asleepMinutes) / Double(max(need, 1))
+        let title = nightIndex == 0 ? "Last night" : night.end.formatted(.dateTime.weekday(.wide).month().day())
+        let times = "\(night.start.formatted(date: .omitted, time: .shortened)) – \(night.end.formatted(date: .omitted, time: .shortened))"
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            Text("\(title) · \(times)")
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+            HeroNumber(value: Double(night.asleepMinutes)) {
+                PulseFormat.duration(minutes: Int($0.rounded()))
             }
-            ProgressView(value: min(1, Double(night.asleepMinutes) / Double(need)))
-                .tint(Theme.sleep)
-                .animation(.easeOut, value: night.asleepMinutes)
-            Text("\(Int((Double(night.asleepMinutes) / Double(need) * 100).rounded()))% of the \(PulseFormat.duration(minutes: need)) you needed")
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondaryText)
+            ProgressMeter(fraction: fraction)
+                .padding(.vertical, DS.Space.xs)
+            Text("\(Int((fraction * 100).rounded()))% of the \(PulseFormat.duration(minutes: need)) you needed.")
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
         }
-        .card()
-        .accessibilityElement(children: .combine)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), asleep \(PulseFormat.duration(minutes: night.asleepMinutes))")
+        .accessibilityValue("\(Int((fraction * 100).rounded())) percent of the \(PulseFormat.duration(minutes: need)) you needed")
     }
 
-    private var timelineCard: some View {
+    /// The one card on this screen: when you were restful, in light sleep, or awake.
+    private var timeline: some View {
         let totals = SleepTimeline.totals(segments)
-        return VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Your night")
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Your night")
             if segments.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             } else {
@@ -99,68 +122,75 @@ struct SleepView: View {
                     RectangleMark(xStart: .value("Start", segment.start),
                                   xEnd: .value("End", segment.end),
                                   y: .value("Phase", segment.phase.title))
-                        .foregroundStyle(Theme.color(for: segment.phase))
-                        .cornerRadius(2)
+                        .foregroundStyle(Self.gray(for: segment.phase))
+                        .cornerRadius(3)
                 }
                 .chartYScale(domain: SleepPhase.allCases.map(\.title))
+                .chartYAxis {
+                    AxisMarks(position: .leading) { _ in
+                        AxisValueLabel()
+                            .font(.footnote)
+                            .foregroundStyle(DS.Colors.secondary)
+                    }
+                }
                 .chartXAxis {
                     AxisMarks(values: .stride(by: .hour, count: 2)) { _ in
-                        AxisGridLine()
                         AxisValueLabel(format: .dateTime.hour())
+                            .font(.footnote)
+                            .foregroundStyle(DS.Colors.secondary)
                     }
                 }
-                .frame(height: 130)
+                .frame(height: 120)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(timelineSummary(totals))
 
-                HStack(spacing: 16) {
+                HStack(alignment: .top, spacing: DS.Space.s) {
                     ForEach(SleepPhase.allCases.reversed(), id: \.self) { phase in
-                        HStack(spacing: 6) {
-                            Circle().fill(Theme.color(for: phase)).frame(width: 8, height: 8)
-                            Text(phase.title).font(.caption)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .fill(Self.gray(for: phase))
+                                    .frame(width: 10, height: 10)
+                                Text(phase.title)
+                                    .textStyle(.caption)
+                                    .foregroundStyle(DS.Colors.secondary)
+                            }
                             Text(PulseFormat.duration(minutes: totals[phase] ?? 0))
-                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .textStyle(.bodyStrong)
+                                .monospacedDigit()
+                                .foregroundStyle(DS.Colors.primary)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .foregroundStyle(Theme.secondaryText)
-                .accessibilityHidden(true)
+                .accessibilityHidden(true)      // the chart's label already lists the totals
 
                 Text("Restful = very still with a low heart rate. Pulse doesn't guess REM or deep sleep: heart rate and motion alone can't measure them reliably.")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.secondaryText)
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .card()
+        .monoCard()
     }
 
-    private var heartRateCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Heart rate", trailing: lowestText)
+    private var heart: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Heart rate", trailing: lowestText)
             if heartRate.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 160)
+                ProgressView().frame(maxWidth: .infinity, minHeight: 140)
             } else {
-                Chart(heartRate) { point in
-                    LineMark(x: .value("Time", point.date), y: .value("BPM", point.value))
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(Theme.heart)
-                }
-                .chartYScale(domain: .automatic(includesZero: false))
-                .chartXAxis {
-                    AxisMarks(values: .stride(by: .hour, count: 2)) { _ in
-                        AxisGridLine()
-                        AxisValueLabel(format: .dateTime.hour())
-                    }
-                }
-                .frame(height: 150)
-                .accessibilityLabel("Overnight heart rate chart. \(lowestText ?? "")")
+                LineChart(points: heartRate,
+                          xValues: .stride(by: .hour, count: 2),
+                          xFormat: .dateTime.hour(),
+                          height: 140,
+                          summary: "Overnight heart rate. \(lowestText ?? "")")
             }
         }
-        .card()
     }
 
     /// "Why did I need 8h 30m?" Rebuilt from yesterday's numbers with the same formula as the engine.
-    private func needCard(for summary: DaySummaryRecord) -> some View {
+    private func needBreakdown(for summary: DaySummaryRecord) -> some View {
         let previous = days.first {
             Calendar.current.isDate($0.date, inSameDayAs: summary.date.addingTimeInterval(-86_400))
         }
@@ -169,56 +199,43 @@ struct SleepView: View {
             previousStrain: previous?.strain,
             previousNeed: previous.map { Double($0.sleepNeedMinutes) },
             previousAsleep: previous?.sleepMinutes.map { Double($0) })
-        return VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Why you needed \(PulseFormat.duration(minutes: Int(breakdown.total.rounded())))")
-            needRow("Your baseline", breakdown.goal, sign: "")
-            needRow("Yesterday's strain", breakdown.strainExtra, sign: "+")
-            needRow("Recent sleep debt", breakdown.debtExtra, sign: "+")
-            if breakdown.goal + breakdown.strainExtra + breakdown.debtExtra > breakdown.total + 0.5 {
-                Text("Capped at 10 hours.").font(.caption2).foregroundStyle(Theme.secondaryText)
+        let capped = breakdown.goal + breakdown.strainExtra + breakdown.debtExtra > breakdown.total + 0.5
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionTitle(title: "Why you needed \(PulseFormat.duration(minutes: Int(breakdown.total.rounded())))")
+                .padding(.bottom, DS.Space.s)
+            ValueRow(label: "Your baseline", value: minutesText(breakdown.goal, sign: ""))
+            Hairline()
+            ValueRow(label: "Yesterday's strain", value: minutesText(breakdown.strainExtra, sign: "+"),
+                     emphasized: breakdown.strainExtra > 0)
+            Hairline()
+            ValueRow(label: "Recent sleep debt", value: minutesText(breakdown.debtExtra, sign: "+"),
+                     emphasized: breakdown.debtExtra > 0)
+            if capped {
+                Text("Capped at 10 hours.")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .padding(.top, DS.Space.s)
             }
         }
-        .card()
-    }
-
-    private func needRow(_ title: String, _ minutes: Double, sign: String) -> some View {
-        HStack {
-            Text(title).font(.subheadline)
-            Spacer()
-            Text(sign + PulseFormat.duration(minutes: Int(minutes.rounded())))
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(minutes > 0 || sign.isEmpty ? Color.primary : Theme.secondaryText)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private func nightPicker(_ night: SleepRecord) -> some View {
-        HStack {
-            Button { nightIndex += 1 } label: { Image(systemName: "chevron.left") }
-                .disabled(nightIndex >= sleeps.count - 1)
-                .accessibilityLabel("Previous night")
-            Spacer()
-            VStack(spacing: 2) {
-                Text(nightIndex == 0 ? "Last night" : night.end.formatted(.dateTime.weekday(.wide).month().day()))
-                    .font(.headline)
-                Text("\(night.start.formatted(date: .omitted, time: .shortened)) – \(night.end.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondaryText)
-            }
-            Spacer()
-            Button { nightIndex -= 1 } label: { Image(systemName: "chevron.right") }
-                .disabled(nightIndex == 0)
-                .accessibilityLabel("Next night")
-        }
-        .font(.title3)
-        .padding(.vertical, 4)
-        .sensoryFeedback(.selection, trigger: nightIndex)
     }
 
     // MARK: - Helpers
 
+    /// Gray level per phase. The rows of the chart are labelled, so this is only extra help.
+    private static func gray(for phase: SleepPhase) -> Color {
+        switch phase {
+        case .restful: DS.Colors.primary
+        case .light: DS.Colors.tertiary
+        case .awake: DS.Colors.secondary
+        }
+    }
+
+    private func minutesText(_ minutes: Double, sign: String) -> String {
+        sign + PulseFormat.duration(minutes: Int(minutes.rounded()))
+    }
+
     private var lowestText: String? {
-        heartRate.map(\.value).min().map { "lowest \(Int($0.rounded())) bpm" }
+        heartRate.map(\.value).min().map { "Lowest \(Int($0.rounded())) bpm" }
     }
 
     private func efficiency(_ night: SleepRecord) -> Double {
@@ -232,22 +249,14 @@ struct SleepView: View {
     }
 }
 
-/// Average HR for one minute, for charts.
-struct MinutePoint: Identifiable {
-    let date: Date
-    let value: Double
-    var id: Date { date }
-
-    /// Reads raw minutes in [from, to) as chart points (skipping off-wrist minutes).
-    /// Use the view's own (main) context.
-    static func load(from: Date, to: Date, context: ModelContext) -> [MinutePoint] {
-        PulseStore.minutes(from: from, to: to, in: context).compactMap { m in
-            m.averageHeartRate.map { MinutePoint(date: m.start, value: $0) }
-        }
-    }
+#Preview("Light") {
+    SleepView()
+        .modelContainer(PulseStore.previewContainer)
+        .environment(DemoDataLoader())
+        .preferredColorScheme(.light)
 }
 
-#Preview {
+#Preview("Dark") {
     SleepView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DemoDataLoader())

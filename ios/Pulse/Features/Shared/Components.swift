@@ -1,48 +1,184 @@
 import SwiftUI
+import SwiftData
+import Charts
 import PulseCore
 
-// Reusable building blocks shared by several screens.
+// Reusable building blocks of the Mono design (ios/design/DESIGN.md), shared by all screens.
+// Rules they all follow: black / white / grays only, two font weights, meaning in words and fill
+// amount (never in color), VoiceOver reads each block as one sentence.
 
-// MARK: - Recovery ring
+// MARK: - Screen header
 
-/// The big ring on the Home screen. Animates in (unless Reduce Motion is on), colored by zone,
-/// grows with Dynamic Type, and VoiceOver reads it as one element.
-struct RecoveryRing: View {
-    let score: Double?
-    var size: CGFloat = 200
-    var lineWidth: CGFloat = 16
+/// The slim bar pinned at the top of a screen: title on the left, actions on the right.
+/// It replaces the navigation bar. Its solid background also covers the status bar, so scrolled
+/// content never runs under the clock.
+///
+/// Use it with `.safeAreaInset(edge: .top, spacing: 0) { ScreenHeader(...) }`.
+struct ScreenHeader<Trailing: View>: View {
+    let title: String
+    /// Sheets have a drag handle at the top and need a little more room, and use the sheet color.
+    let isSheet: Bool
+    let trailing: Trailing
 
-    @State private var progress: Double = 0
-    @ScaledMetric(relativeTo: .largeTitle) private var textScale: CGFloat = 1
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var zone: RecoveryZone? { score.map(RecoveryZone.init(score:)) }
-    private var scaledSize: CGFloat { size * min(max(textScale, 1), 1.3) }
+    init(title: String, isSheet: Bool = false, @ViewBuilder trailing: () -> Trailing) {
+        self.title = title
+        self.isSheet = isSheet
+        self.trailing = trailing()
+    }
 
     var body: some View {
-        let color = Theme.color(for: zone)
+        HStack(spacing: DS.Space.s) {
+            Text(title)
+                .textStyle(.bodyStrong)
+                .foregroundStyle(DS.Colors.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: DS.Space.s)
+            trailing
+        }
+        .frame(minHeight: 44)
+        .padding(.horizontal, DS.Space.side)
+        .padding(.top, isSheet ? DS.Space.l : DS.Space.s)
+        .padding(.bottom, DS.Space.s)
+        .background(isSheet ? DS.Colors.sheet : DS.Colors.background)
+    }
+}
+
+extension ScreenHeader where Trailing == EmptyView {
+    init(title: String, isSheet: Bool = false) {
+        self.init(title: title, isSheet: isSheet) { EmptyView() }
+    }
+}
+
+// MARK: - Empty state
+
+/// Shown when a screen has nothing to show yet.
+struct EmptyState: View {
+    let symbol: String
+    let title: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            Image(systemName: symbol)
+                .font(.system(size: 40, weight: .thin))
+                .foregroundStyle(DS.Colors.primary)
+                .padding(.bottom, DS.Space.s)
+                .accessibilityHidden(true)
+            Text(title)
+                .textStyle(.heading)
+                .foregroundStyle(DS.Colors.primary)
+            Text(text)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Section title
+
+/// Bold section heading with an optional quiet note on the right ("Avg 52%").
+struct SectionTitle: View {
+    let title: String
+    var trailing: String? = nil
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .textStyle(.heading)
+                .foregroundStyle(DS.Colors.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: DS.Space.s)
+            if let trailing {
+                Text(trailing)
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+        }
+    }
+}
+
+// MARK: - Hero number
+
+/// The one huge number of a screen. Counts up when it appears.
+struct HeroNumber: View {
+    let value: Double
+    /// Point size at the default text size (the spec allows 64 to 80).
+    var size: CGFloat = 64
+    let format: (Double) -> String
+
+    /// 1.0 at the default text size, bigger with Dynamic Type.
+    @ScaledMetric(relativeTo: .largeTitle) private var scale: CGFloat = 1
+
+    var body: some View {
+        let points = size * min(max(scale, 1), 1.2)
+        CountUpText(value: value, format: format)
+            .font(.system(size: points, weight: .bold))
+            .tracking(-points * 0.04)
+            .foregroundStyle(DS.Colors.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+    }
+}
+
+// MARK: - Recovery dial
+
+/// A thin ring that fills to the recovery score, with the number inside.
+/// No color coding. The fill amount and the word under it ("Ready", "Steady", "Rest") carry the meaning.
+struct RecoveryDial: View {
+    let score: Double?
+    var diameter: CGFloat = 232
+    var lineWidth: CGFloat = 12
+
+    /// What is drawn right now (0...100). Animates from 0 to `score` on appear.
+    @State private var shown: Double = 0
+    /// 1.0 at the default text size, bigger with Dynamic Type.
+    @ScaledMetric(relativeTo: .largeTitle) private var scale: CGFloat = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// 76 pt in the big dial. Scales with the ring, capped so the number always fits inside.
+    private var hero: CGFloat { diameter * 0.33 * min(max(scale, 1), 1.2) }
+
+    var body: some View {
         ZStack {
             Circle()
-                .stroke(color.opacity(0.15), lineWidth: lineWidth)
+                .stroke(DS.Colors.border, lineWidth: lineWidth)
             Circle()
-                .trim(from: 0, to: progress)
-                .stroke(color.gradient, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .shadow(color: color.opacity(0.5), radius: 10)
-            VStack(spacing: 2) {
-                Text(score.map(PulseFormat.percent) ?? "--")
-                    .font(.system(size: scaledSize * 0.26, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .minimumScaleFactor(0.5)
-                Text("RECOVERY")
-                    .font(.caption.weight(.semibold))
-                    .tracking(1.5)
-                    .foregroundStyle(Theme.secondaryText)
+                .trim(from: 0, to: shown / 100)
+                .stroke(DS.Colors.primary, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))      // start at 12 o'clock
+
+            VStack(spacing: 0) {
+                if score != nil {
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        CountingText(value: shown) { "\(Int($0.rounded()))" }
+                            .font(.system(size: hero, weight: .bold))
+                            .tracking(-hero * 0.04)
+                        Text("%")
+                            .font(.system(size: hero * 0.4, weight: .bold))
+                            .foregroundStyle(DS.Colors.secondary)
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                } else {
+                    Text("--")
+                        .font(.system(size: hero, weight: .bold))
+                        .foregroundStyle(DS.Colors.tertiary)
+                }
+                Text("Recovery")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
             }
-            .padding(lineWidth)
+            .foregroundStyle(DS.Colors.primary)
+            .padding(.horizontal, lineWidth + DS.Space.m)
         }
-        .frame(width: scaledSize, height: scaledSize)
+        .frame(width: diameter, height: diameter)
         .onAppear { animate(to: score) }
         .onChange(of: score) { _, newValue in animate(to: newValue) }
         .accessibilityElement(children: .ignore)
@@ -51,104 +187,351 @@ struct RecoveryRing: View {
     }
 
     private func animate(to value: Double?) {
-        let target = (value ?? 0) / 100
+        let target = value ?? 0
         if reduceMotion {
-            progress = target
+            shown = target
         } else {
-            withAnimation(.spring(response: 1.0, dampingFraction: 0.85)) { progress = target }
+            withAnimation(DS.Motion.draw) { shown = target }
         }
     }
 
     private var accessibilityText: String {
-        guard let score, let zone else { return "Not enough data yet" }
-        return "\(Int(score.rounded())) percent. \(zone.headline)."
+        guard let score else { return "Not enough data yet" }
+        return "\(Int(score.rounded())) percent. \(RecoveryZone(score: score).word)."
     }
 }
 
-// MARK: - Metric tile
+// MARK: - Meters
 
-/// Small card with an icon, a title, a big number and an optional caption.
-struct MetricTile: View {
-    let title: String
-    let value: String
-    var unit: String? = nil
-    var caption: String? = nil
-    let color: Color
-    let systemImage: String
+/// 0-21 bar. Light track, darker gray band = today's target range, black fill = strain so far.
+struct StrainMeter: View {
+    let strain: Double
+    let target: ClosedRange<Double>
+
+    @State private var shown: Double = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: systemImage)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(color)
-                .lineLimit(1)
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(value)
-                    .font(.title2.weight(.bold))
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.7)
-                    .lineLimit(1)
-                    .contentTransition(.numericText())
-                if let unit {
-                    Text(unit)
-                        .font(.caption)
-                        .foregroundStyle(Theme.secondaryText)
-                }
-            }
-            if let caption {
-                Text(caption)
-                    .font(.caption2)
-                    .foregroundStyle(Theme.secondaryText)
-                    .lineLimit(2)
+        GeometryReader { geo in
+            let width = geo.size.width
+            ZStack(alignment: .leading) {
+                Capsule().fill(DS.Colors.border)
+                Capsule()
+                    .fill(DS.Colors.tertiary)
+                    .frame(width: width * (target.upperBound - target.lowerBound) / Strain.maximum)
+                    .offset(x: width * target.lowerBound / Strain.maximum)
+                Capsule()
+                    .fill(DS.Colors.primary)
+                    .frame(width: max(8, width * min(shown, Strain.maximum) / Strain.maximum))
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
-        .card()
+        .frame(height: 8)
+        .onAppear { animate(to: strain) }
+        .onChange(of: strain) { _, newValue in animate(to: newValue) }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Strain \(PulseFormat.strain(strain)) of 21. Target \(Int(target.lowerBound)) to \(Int(target.upperBound)).")
+    }
+
+    private func animate(to value: Double) {
+        if reduceMotion {
+            shown = value
+        } else {
+            withAnimation(DS.Motion.draw) { shown = value }
+        }
+    }
+}
+
+/// Plain progress bar, 0...1. Grows in when it appears.
+struct ProgressMeter: View {
+    /// 0...1 (values outside are clamped).
+    let fraction: Double
+    var track: Color = DS.Colors.border
+
+    @State private var shown: Double = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(track)
+                Capsule()
+                    .fill(DS.Colors.primary)
+                    .frame(width: max(8, geo.size.width * min(max(shown, 0), 1)))
+            }
+        }
+        .frame(height: 8)
+        .onAppear { animate(to: fraction) }
+        .onChange(of: fraction) { _, newValue in animate(to: newValue) }
+        .accessibilityHidden(true)      // the text next to it says the same thing
+    }
+
+    private func animate(to value: Double) {
+        if reduceMotion {
+            shown = value
+        } else {
+            withAnimation(DS.Motion.draw) { shown = value }
+        }
+    }
+}
+
+/// Centered bar for "what moved your score": grows to the right when a factor helped and to the
+/// left when it hurt. The signed number next to it ("+3", "-18") says the same in text.
+struct ContributionBar: View {
+    let points: Double
+    var fullScale: Double = 30
+
+    var body: some View {
+        GeometryReader { geo in
+            let half = geo.size.width / 2
+            let length = max(4, min(abs(points) / fullScale, 1) * half)
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(DS.Colors.border)
+                    .frame(height: 8)
+                Capsule()
+                    .fill(DS.Colors.primary)
+                    .frame(width: length, height: 8)
+                    .offset(x: points >= 0 ? half : half - length)
+                // The middle = "exactly at your normal".
+                Rectangle()
+                    .fill(DS.Colors.tertiary)
+                    .frame(width: 1, height: 16)
+                    .offset(x: half)
+            }
+            .frame(height: 16)
+        }
+        .frame(height: 16)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Five horizontal bars for heart-rate zones. The bar length is the information; no colors.
+struct ZoneBars: View {
+    /// Minutes per zone (5 values).
+    let minutes: [Int]
+    var track: Color = DS.Colors.border
+
+    var body: some View {
+        let total = max(1, minutes.reduce(0, +))
+        VStack(spacing: DS.Space.m) {
+            ForEach(0..<5, id: \.self) { zone in
+                let value = zone < minutes.count ? minutes[zone] : 0
+                HStack(spacing: DS.Space.m) {
+                    Text("Z\(zone + 1)")
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.primary)
+                        .frame(width: 24, alignment: .leading)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(track)
+                            if value > 0 {
+                                Capsule()
+                                    .fill(DS.Colors.primary)
+                                    .frame(width: max(8, geo.size.width * Double(value) / Double(total)))
+                            }
+                        }
+                    }
+                    .frame(height: 8)
+                    Text(PulseFormat.duration(minutes: value))
+                        .textStyle(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(DS.Colors.secondary)
+                        .frame(width: 56, alignment: .trailing)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Zone \(zone + 1), \(HeartRateZones.names[zone]): \(PulseFormat.duration(minutes: value))")
+            }
+        }
+    }
+}
+
+// MARK: - Stat
+
+/// A number with a label above and one short line below. No box: spacing and type size separate it.
+/// The number counts up when it appears.
+struct StatBlock: View {
+    var symbol: String? = nil
+    let label: String
+    /// `nil` = no data yet, shown as "--".
+    let number: Double?
+    /// Turns the (counting) number into text, e.g. 326 -> "5h 26m".
+    let format: (Double) -> String
+    var unit: String? = nil
+    var caption: String? = nil
+    /// `.title` (28) normally, `.heading` (22) when three stats share one row.
+    var valueStyle: DS.TextStyle = .title
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            HStack(spacing: 6) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .accessibilityHidden(true)
+                }
+                Text(label)
+            }
+            .textStyle(.caption)
+            .foregroundStyle(DS.Colors.secondary)
+            .lineLimit(1)
+
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Group {
+                    if let number {
+                        CountUpText(value: number, format: format)
+                    } else {
+                        Text("--")
+                    }
+                }
+                .textStyle(valueStyle)
+                .foregroundStyle(DS.Colors.primary)
+                if let unit {
+                    Text(unit)
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+
+            if let caption {
+                Text(caption)
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue("\(number.map(format) ?? "no data") \(unit ?? ""). \(caption ?? "")")
+    }
+}
+
+// MARK: - Rows
+
+/// "Label ........ value" on one line. Used for breakdowns and settings.
+struct ValueRow: View {
+    let label: String
+    let value: String
+    var symbol: String? = nil
+    /// `false` greys the value out (for "+0m"-style rows that did not matter).
+    var emphasized = true
+
+    var body: some View {
+        HStack(spacing: DS.Space.m) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.body)
+                    .foregroundStyle(DS.Colors.primary)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+            }
+            Text(label)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+            Spacer(minLength: DS.Space.s)
+            Text(value)
+                .textStyle(emphasized ? .bodyStrong : .body)
+                .monospacedDigit()
+                .foregroundStyle(emphasized ? DS.Colors.primary : DS.Colors.secondary)
+                .multilineTextAlignment(.trailing)
+        }
+        .frame(minHeight: 52)
         .accessibilityElement(children: .combine)
     }
 }
 
-// MARK: - Section header
-
-struct SectionHeader: View {
-    let title: String
-    var trailing: String? = nil
+/// One workout, one line: icon, name + details, strain.
+struct ActivityRow: View {
+    let workout: WorkoutRecord
+    /// Shows a chevron when the row opens a detail screen.
+    var showsChevron = false
 
     var body: some View {
-        HStack {
-            Text(title.uppercased())
-                .font(.caption.weight(.semibold))
-                .tracking(1.2)
-                .foregroundStyle(Theme.secondaryText)
-            Spacer()
-            if let trailing {
-                Text(trailing).font(.caption).foregroundStyle(Theme.secondaryText)
+        HStack(spacing: DS.Space.m) {
+            Image(systemName: workout.kind.symbolName.outlineSymbol)
+                .font(.title3)
+                .foregroundStyle(DS.Colors.primary)
+                .frame(width: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(workout.kind.displayName)
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.primary)
+                Text("\(workout.start.formatted(date: .omitted, time: .shortened)) · \(PulseFormat.duration(minutes: workout.durationMinutes))")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+            Spacer(minLength: DS.Space.s)
+            Text(PulseFormat.strain(workout.strain))
+                .textStyle(.bodyStrong)
+                .monospacedDigit()
+                .foregroundStyle(DS.Colors.primary)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.footnote)
+                    .foregroundStyle(DS.Colors.tertiary)
+                    .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, 4)
-        .accessibilityAddTraits(.isHeader)
+        .padding(.vertical, DS.Space.m)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(workout.kind.displayName), \(PulseFormat.duration(minutes: workout.durationMinutes)), strain \(PulseFormat.strain(workout.strain))")
     }
 }
 
-// MARK: - Data source chip
+/// One observation on the Trends screen: icon, title, one or two sentences.
+struct InsightRow: View {
+    let insight: Insight
 
-/// Top-left status pill. Until Phase 5 it says "Demo data", so fake numbers are never mistaken
-/// for real ones.
-struct SyncStatusChip: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: DS.Space.m) {
+            Image(systemName: insight.symbolName.outlineSymbol)
+                .font(.title3)
+                .foregroundStyle(DS.Colors.primary)
+                .frame(width: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                Text(insight.title)
+                    .textStyle(.bodyStrong)
+                    .foregroundStyle(DS.Colors.primary)
+                Text(insight.detail)
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, DS.Space.m)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+extension String {
+    /// Design rule: outline icons. PulseCore's symbol names end in ".fill" for a few items.
+    var outlineSymbol: String { replacingOccurrences(of: ".fill", with: "") }
+}
+
+// MARK: - Status pill
+
+/// Says where the numbers come from, in words. Outline only, so it stays quiet.
+struct StatusPill: View {
     @Environment(DemoDataLoader.self) private var loader
 
     var body: some View {
         HStack(spacing: 6) {
             if loader.isBusy {
                 ProgressView().controlSize(.mini)
-            } else {
-                Circle().fill(dotColor).frame(width: 8, height: 8)
             }
-            Text(text).font(.caption.weight(.medium))
+            Text(text)
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(.white.opacity(0.08), in: Capsule())
+        .padding(.horizontal, 12)
+        .frame(minHeight: 28)
+        .overlay(Capsule().stroke(DS.Colors.border, lineWidth: 1))
+        .fixedSize()
         .accessibilityElement(children: .combine)
     }
 
@@ -160,179 +543,189 @@ struct SyncStatusChip: View {
         case .failed: "Data error"
         }
     }
-
-    private var dotColor: Color {
-        switch loader.state {
-        case .ready: Theme.recoveryYellow
-        case .failed: Theme.recoveryRed
-        default: Theme.secondaryText
-        }
-    }
 }
 
-// MARK: - Workout row
+// MARK: - Pill picker
 
-struct WorkoutRow: View {
-    let workout: WorkoutRecord
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: workout.kind.symbolName)
-                .font(.title3)
-                .foregroundStyle(Theme.strain)
-                .frame(width: 40, height: 40)
-                .background(Theme.strain.opacity(0.15), in: Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text(workout.kind.displayName).font(.headline)
-                Text("\(workout.start.formatted(date: .omitted, time: .shortened)) · \(PulseFormat.duration(minutes: workout.durationMinutes)) · avg \(workout.averageHeartRate) bpm")
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondaryText)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 0) {
-                Text(PulseFormat.strain(workout.strain))
-                    .font(.title3.weight(.bold))
-                    .monospacedDigit()
-                Text("strain").font(.caption2).foregroundStyle(Theme.secondaryText)
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-// MARK: - Strain target bar
-
-/// 0-21 bar with today's strain filled in and the recommended range shaded.
-struct StrainTargetBar: View {
-    let strain: Double
-    let target: ClosedRange<Double>
+/// A row of small pills where exactly one is selected (black). Replaces the segmented control.
+struct PillPicker<Value: Hashable>: View {
+    let options: [Value]
+    let label: (Value) -> String
+    @Binding var selection: Value
 
     var body: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.08))
-                Capsule()
-                    .fill(Theme.strain.opacity(0.25))
-                    .frame(width: width * (target.upperBound - target.lowerBound) / Strain.maximum)
-                    .offset(x: width * target.lowerBound / Strain.maximum)
-                Capsule()
-                    .fill(Theme.strain.gradient)
-                    .frame(width: max(10, width * min(strain, Strain.maximum) / Strain.maximum))
-            }
-        }
-        .frame(height: 12)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Strain \(PulseFormat.strain(strain)) of 21. Target \(Int(target.lowerBound)) to \(Int(target.upperBound)).")
-    }
-}
-
-// MARK: - Contribution bar
-
-/// Centered bar: grows right (green) when a factor helped, left (red) when it hurt.
-struct ContributionBar: View {
-    let points: Double
-    var fullScale: Double = 30
-
-    var body: some View {
-        GeometryReader { geo in
-            let half = geo.size.width / 2
-            let length = max(3, min(abs(points) / fullScale, 1) * half)
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.06))
-                Rectangle().fill(.white.opacity(0.25)).frame(width: 1).offset(x: half)
-                Capsule()
-                    .fill(points >= 0 ? Theme.recoveryGreen : Theme.recoveryRed)
-                    .frame(width: length)
-                    .offset(x: points >= 0 ? half : half - length)
-            }
-        }
-        .frame(height: 8)
-        .accessibilityHidden(true)   // the row's text already says "+12 points"
-    }
-}
-
-// MARK: - Insight card
-
-struct InsightCard: View {
-    let insight: Insight
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: insight.symbolName)
-                .font(.headline)
-                .foregroundStyle(Theme.color(for: insight.tone))
-                .frame(width: 36, height: 36)
-                .background(Theme.color(for: insight.tone).opacity(0.15), in: Circle())
-            VStack(alignment: .leading, spacing: 4) {
-                Text(insight.title).font(.headline)
-                Text(insight.detail)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .card()
-        .accessibilityElement(children: .combine)
-    }
-}
-
-// MARK: - Change badge
-
-/// "▲ 3.2" / "▼ 4" with color depending on whether up is good for this metric.
-struct ChangeBadge: View {
-    let delta: Double?
-    var higherIsBetter = true
-    var format: (Double) -> String = { String(format: "%.0f", $0) }
-
-    var body: some View {
-        if let delta, abs(delta) >= 0.05 {
-            let good = (delta > 0) == higherIsBetter
-            Text("\(delta > 0 ? "▲" : "▼") \(format(abs(delta)))")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(good ? Theme.recoveryGreen : Theme.recoveryYellow)
-                .accessibilityLabel("\(delta > 0 ? "up" : "down") \(format(abs(delta))) from the previous period")
-        } else {
-            Text("no change")
-                .font(.caption)
-                .foregroundStyle(Theme.secondaryText)
-        }
-    }
-}
-
-// MARK: - Zone bars
-
-/// Five horizontal bars for heart-rate zones.
-struct ZoneBars: View {
-    /// Minutes per zone (5 values).
-    let minutes: [Int]
-
-    var body: some View {
-        let total = max(1, minutes.reduce(0, +))
-        VStack(spacing: 8) {
-            ForEach(0..<5, id: \.self) { zone in
-                let value = zone < minutes.count ? minutes[zone] : 0
-                HStack(spacing: 10) {
-                    Text("Z\(zone + 1)")
-                        .font(.caption.weight(.bold))
-                        .frame(width: 26, alignment: .leading)
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(.white.opacity(0.06))
-                            Capsule()
-                                .fill(Theme.zoneColors[zone])
-                                .frame(width: max(4, geo.size.width * Double(value) / Double(total)))
-                        }
-                    }
-                    .frame(height: 10)
-                    Text(PulseFormat.duration(minutes: value))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Theme.secondaryText)
-                        .frame(width: 56, alignment: .trailing)
+        HStack(spacing: DS.Space.s) {
+            ForEach(options, id: \.self) { option in
+                let isSelected = option == selection
+                Button {
+                    withAnimation(DS.Motion.spring) { selection = option }
+                } label: {
+                    Text(label(option))
+                        .textStyle(.caption)
+                        .foregroundStyle(isSelected ? DS.Colors.onPrimary : DS.Colors.primary)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 36)
+                        .background(isSelected ? DS.Colors.primary : DS.Colors.surface, in: Capsule())
+                        .frame(minHeight: 44)       // tap target
                 }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Zone \(zone + 1), \(HeartRateZones.names[zone]): \(PulseFormat.duration(minutes: value))")
+                .buttonStyle(.pressable)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
+        .sensoryFeedback(.selection, trigger: selection)
+    }
+}
+
+// MARK: - Charts
+
+/// One bar per day. Past days light gray, the highlighted day (normally today) black.
+/// No gridlines, no Y axis, rounded bars.
+struct DayBarsChart: View {
+    struct Bar: Identifiable {
+        let id: String          // unique per day (weekday letters repeat: T, T, S, S)
+        let label: String       // shown under the bar; "" = no label
+        let value: Double?      // nil = no data that day
+        let isHighlighted: Bool
+    }
+
+    /// Oldest first.
+    let bars: [Bar]
+    /// Fixed scale (for example 0...100 for recovery). `nil` = from 0 to the biggest value.
+    var domain: ClosedRange<Double>? = nil
+    var height: CGFloat = 104
+    /// The chart in words, for VoiceOver.
+    let summary: String
+
+    @State private var grown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var top: Double {
+        domain?.upperBound ?? max((bars.compactMap(\.value).max() ?? 1) * 1.05, 1)
+    }
+
+    var body: some View {
+        Chart(bars) { bar in
+            BarMark(x: .value("Day", bar.id),
+                    // A day with no (or a tiny) value still gets a small stub, so the row has no hole.
+                    y: .value("Value", grown ? max(bar.value ?? 0, top * 0.03) : 0),
+                    width: .ratio(0.5))
+                .clipShape(Capsule())
+                .foregroundStyle(bar.isHighlighted ? DS.Colors.primary : DS.Colors.muted)
+        }
+        .chartYScale(domain: (domain?.lowerBound ?? 0)...top)
+        .chartYAxis(.hidden)
+        .chartXAxis {
+            AxisMarks { value in
+                AxisValueLabel {
+                    if let id = value.as(String.self) {
+                        Text(label(for: id))
+                            .textStyle(.caption)
+                            .foregroundStyle(DS.Colors.secondary)
+                    }
+                }
+            }
+        }
+        .frame(height: height)
+        .onAppear {
+            if reduceMotion {
+                grown = true
+            } else {
+                withAnimation(DS.Motion.draw.delay(0.15)) { grown = true }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary)
+    }
+
+    private func label(for id: String) -> String {
+        bars.first { $0.id == id }?.label ?? ""
+    }
+}
+
+extension DayBarsChart.Bar {
+    /// Builds bars from stored days.
+    /// - Parameters:
+    ///   - days: oldest first.
+    ///   - highlight: the day drawn in black. Default: the last one.
+    static func from(_ days: [DaySummaryRecord], highlight: Date? = nil,
+                     value: (DaySummaryRecord) -> Double?) -> [DayBarsChart.Bar] {
+        let target = highlight ?? days.last?.date
+        // More than two weeks: a letter under every bar would be unreadable, so label one bar a
+        // week with the day of the month instead.
+        let sparse = days.count > 14
+        var bars: [DayBarsChart.Bar] = []
+        for (index, day) in days.enumerated() {
+            var label = day.date.formatted(.dateTime.weekday(.narrow))
+            if sparse {
+                label = (days.count - 1 - index) % 7 == 0 ? day.date.formatted(.dateTime.day()) : ""
+            }
+            let isTarget = target.map { Calendar.current.isDate(day.date, inSameDayAs: $0) } ?? false
+            bars.append(DayBarsChart.Bar(id: "\(day.date.timeIntervalSince1970)", label: label,
+                                         value: value(day), isHighlighted: isTarget))
+        }
+        return bars
+    }
+}
+
+/// One point on a line chart.
+struct ChartPoint: Identifiable {
+    let date: Date
+    let value: Double
+    var id: Date { date }
+
+    /// Reads raw minutes in [from, to) as heart-rate points (skipping off-wrist minutes).
+    /// Use the view's own (main) context.
+    static func heartRate(from: Date, to: Date, context: ModelContext) -> [ChartPoint] {
+        PulseStore.minutes(from: from, to: to, in: context).compactMap { minute in
+            minute.averageHeartRate.map { ChartPoint(date: minute.start, value: $0) }
+        }
+    }
+}
+
+/// A thin black line over time. No gridlines; a few quiet numbers on the right give the scale.
+struct LineChart: View {
+    let points: [ChartPoint]
+    /// Where the X labels go, e.g. `.stride(by: .hour, count: 2)`.
+    var xValues: AxisMarkValues = .automatic(desiredCount: 4)
+    /// How an X label is written, e.g. `.dateTime.hour()`.
+    var xFormat: Date.FormatStyle = .dateTime.month(.abbreviated).day()
+    /// Puts a dot on the newest point ("today").
+    var marksLast = false
+    var height: CGFloat = 132
+    /// The chart in words, for VoiceOver.
+    let summary: String
+
+    var body: some View {
+        Chart {
+            ForEach(points) { point in
+                LineMark(x: .value("Time", point.date), y: .value("Value", point.value))
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(DS.Colors.primary)
+            }
+            if marksLast, let last = points.last {
+                PointMark(x: .value("Time", last.date), y: .value("Value", last.value))
+                    .symbolSize(70)
+                    .foregroundStyle(DS.Colors.primary)
+            }
+        }
+        .chartYScale(domain: .automatic(includesZero: false))
+        .chartYAxis {
+            AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
+                AxisValueLabel()
+                    .font(.footnote)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: xValues) { _ in
+                AxisValueLabel(format: xFormat)
+                    .font(.footnote)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+        }
+        .frame(height: height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary)
     }
 }

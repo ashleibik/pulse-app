@@ -3,6 +3,7 @@ import SwiftData
 import PulseCore
 
 /// Today's strain vs target, time in heart-rate zones, and the workout history.
+/// Mono design (ios/design/DESIGN.md).
 struct ActivityView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @Query(sort: \WorkoutRecord.start, order: .reverse) private var workouts: [WorkoutRecord]
@@ -11,47 +12,39 @@ struct ActivityView: View {
     @Environment(DemoDataLoader.self) private var loader
 
     @State private var zoneMinutes: [Int] = []
+    /// The open workout (empty = the list is showing).
+    @State private var path: [UUID] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
-                VStack(spacing: Theme.spacing) {
+                VStack(alignment: .leading, spacing: DS.Space.xxl) {
                     if let today = days.first {
-                        strainCard(today)
-                        zonesCard
+                        strain(today).riseIn(0)
+                        zones.riseIn(1)
                     }
-                    SectionHeader(title: "Workouts", trailing: "last 14 days")
-                        .padding(.top, 8)
-                    if recent.isEmpty {
-                        ContentUnavailableView("No workouts yet", systemImage: "figure.run",
-                                               description: Text("Workouts will appear here automatically."))
-                    }
-                    ForEach(groupedByDay) { group in
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(dayTitle(group.day))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Theme.secondaryText)
-                            ForEach(group.items) { workout in
-                                NavigationLink(value: workout.id) {
-                                    WorkoutRow(workout: workout)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .card()
-                    }
+                    workoutList.riseIn(2)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 24)
+                .padding(.horizontal, DS.Space.side)
+                .padding(.top, DS.Space.l)
+                .padding(.bottom, DS.Space.xxl)
             }
-            .screenBackground()
-            .navigationTitle("Activity")
+            .safeAreaInset(edge: .top, spacing: 0) { ScreenHeader(title: "Activity") }
+            .monoBackground()
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: UUID.self) { id in
                 if let workout = workouts.first(where: { $0.id == id }) {
                     WorkoutDetailView(workout: workout)
                 }
             }
             .task(id: "\(loader.rawDataReady)-\(days.first?.strain ?? 0)") { loadZones() }
+            .task {
+                // Only the screenshot job sets this: open the hardest workout straight away.
+                if LaunchOptions.route == "workout", path.isEmpty,
+                   let hardest = workouts.max(by: { $0.strain < $1.strain }) {
+                    path = [hardest.id]
+                }
+            }
         }
     }
 
@@ -62,46 +55,81 @@ struct ActivityView: View {
         zoneMinutes = HeartRateZones.minutesPerZone(minutes.map(\.averageHeartRate), maxHeartRate: maxHR)
     }
 
-    private func strainCard(_ today: DaySummaryRecord) -> some View {
+    // MARK: - Sections
+
+    /// The answer: how hard today has been, against the target.
+    private func strain(_ today: DaySummaryRecord) -> some View {
         let target = StrainGuidance.targetRange(recovery: today.recoveryScore)
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Day strain").font(.headline)
-                    Text("Target \(Int(target.lowerBound))–\(Int(target.upperBound)) based on your recovery")
-                        .font(.caption)
-                        .foregroundStyle(Theme.secondaryText)
-                }
-                Spacer()
-                Text(PulseFormat.strain(today.strain))
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(spacing: 6) {
+                Image(systemName: "flame")
+                    .accessibilityHidden(true)
+                Text("Day strain")
             }
-            StrainTargetBar(strain: today.strain, target: target)
+            .textStyle(.caption)
+            .foregroundStyle(DS.Colors.secondary)
+
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+                HeroNumber(value: today.strain) { PulseFormat.strain($0) }
+                Text("of 21")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+            StrainMeter(strain: today.strain, target: target)
+                .padding(.vertical, DS.Space.xs)
             Text(StrainGuidance.advice(strain: today.strain, recovery: today.recoveryScore))
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondaryText)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .card()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var zonesCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Heart rate zones today",
-                          trailing: "max HR \(Int(profiles.first?.estimatedMaxHeartRate() ?? 190))")
+    /// The one card on this screen.
+    private var zones: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Heart rate zones",
+                         trailing: "Max HR \(Int(profiles.first?.estimatedMaxHeartRate() ?? 190))")
             if zoneMinutes.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 100)
             } else if zoneMinutes.reduce(0, +) == 0 {
                 Text("No time above 50% of your max heart rate yet today.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondaryText)
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
-                ZoneBars(minutes: zoneMinutes)
+                ZoneBars(minutes: zoneMinutes, track: DS.Colors.muted)
             }
         }
-        .card()
+        .monoCard()
     }
+
+    private var workoutList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTitle(title: "Workouts", trailing: "Last 14 days")
+            if recent.isEmpty {
+                Text("No workouts yet. They will appear here automatically.")
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .padding(.top, DS.Space.s)
+            }
+            ForEach(groupedByDay) { group in
+                Text(dayTitle(group.day))
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .padding(.top, DS.Space.l)
+                ForEach(Array(group.items.enumerated()), id: \.element.id) { index, workout in
+                    if index > 0 { Hairline() }
+                    NavigationLink(value: workout.id) {
+                        ActivityRow(workout: workout, showsChevron: true)
+                    }
+                    .buttonStyle(.pressable)
+                }
+            }
+        }
+    }
+
+    // MARK: - Helpers
 
     private var recent: [WorkoutRecord] {
         let cutoff = Calendar.current.date(byAdding: .day, value: -14, to: .now) ?? .now
@@ -126,7 +154,14 @@ struct ActivityView: View {
     }
 }
 
-#Preview {
+#Preview("Light") {
+    ActivityView()
+        .modelContainer(PulseStore.previewContainer)
+        .environment(DemoDataLoader())
+        .preferredColorScheme(.light)
+}
+
+#Preview("Dark") {
     ActivityView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DemoDataLoader())

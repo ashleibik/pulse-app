@@ -1,9 +1,10 @@
 import SwiftUI
 import SwiftData
-import Charts
 import PulseCore
 
 /// "Why is my recovery what it is?": the factors, today's strain target, and the last 14 days.
+/// Mono design (ios/design/DESIGN.md): helped / hurt is shown by the direction of a bar and a
+/// signed number, never by green / red.
 struct RecoveryDetailView: View {
     let day: DaySummaryRecord
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
@@ -14,122 +15,138 @@ struct RecoveryDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.spacing) {
-                VStack(spacing: 12) {
-                    RecoveryRing(score: day.recoveryScore, size: 170, lineWidth: 14)
-                    if let zone = day.zone {
-                        Text(zone.headline)
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(Theme.color(for: zone))
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-
-                factorsCard
-                targetCard
-                historyCard
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("How it's calculated").font(.headline)
-                    Text(MetricKind.recovery.method)
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .card()
-
-                Text("Pulse is for general wellness, not medical advice.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.secondaryText)
-                    .padding(.horizontal, 4)
+            VStack(alignment: .leading, spacing: DS.Space.xxl) {
+                hero.riseIn(0)
+                factors.riseIn(1)
+                target.riseIn(2)
+                history.riseIn(3)
+                method.riseIn(4)
             }
-            .padding(.horizontal)
-            .padding(.bottom, 24)
+            .padding(.horizontal, DS.Space.side)
+            .padding(.top, DS.Space.m)
+            .padding(.bottom, DS.Space.xxl)
         }
-        .screenBackground()
+        // Only the screenshot job sets this (to capture the lower half of the screen).
+        .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
+        .monoBackground()
         .navigationTitle("Recovery")
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    @ViewBuilder
-    private var factorsCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "What moved your score")
+    // MARK: - Sections
+
+    private var hero: some View {
+        VStack(spacing: DS.Space.l) {
+            RecoveryDial(score: day.recoveryScore, diameter: 184, lineWidth: 10)
+            VStack(spacing: DS.Space.xs) {
+                Text(day.zone?.word ?? "Learning")
+                    .textStyle(.display)
+                    .foregroundStyle(DS.Colors.primary)
+                    .accessibilityHidden(true)      // the ring already reads this word
+                Text(RecoveryExplainer.oneLine(breakdown))
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var factors: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTitle(title: "What moved it")
+                .padding(.bottom, DS.Space.s)
             if let breakdown {
-                ForEach(breakdown.factors) { factor in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(factor.title).font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Text(pointsText(factor.points))
-                                .font(.subheadline.weight(.bold).monospacedDigit())
-                                .foregroundStyle(factor.points >= 0 ? Theme.recoveryGreen : Theme.recoveryRed)
-                        }
-                        ContributionBar(points: factor.points)
-                        Text(factor.detail)
-                            .font(.caption)
-                            .foregroundStyle(Theme.secondaryText)
-                    }
-                    .accessibilityElement(children: .combine)
+                ForEach(Array(breakdown.factors.enumerated()), id: \.element.id) { index, factor in
+                    if index > 0 { Hairline() }
+                    factorRow(factor)
                 }
-                Text("Points compared with a night exactly at your normal (which scores 50%).")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.secondaryText)
+                Text("Points compared with a night exactly at your normal, which scores 50%.")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, DS.Space.s)
             } else {
-                Label {
-                    Text(day.explanation)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "hourglass")
-                }
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondaryText)
+                // No baseline yet: the stored explanation says how many nights are still needed.
+                Text(day.explanation)
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .card()
     }
 
-    private var targetCard: some View {
-        let target = StrainGuidance.targetRange(recovery: day.recoveryScore)
-        return VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Today's strain target", trailing: "\(Int(target.lowerBound))–\(Int(target.upperBound))")
-            StrainTargetBar(strain: day.strain, target: target)
+    private func factorRow(_ factor: RecoveryFactor) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(factor.title)
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.primary)
+                Spacer(minLength: DS.Space.s)
+                Text(pointsText(factor.points))
+                    .textStyle(.bodyStrong)
+                    .monospacedDigit()
+                    .foregroundStyle(DS.Colors.primary)
+            }
+            ContributionBar(points: factor.points)
+            Text(factor.detail)
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+        }
+        .padding(.vertical, DS.Space.m)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(factor.title)
+        .accessibilityValue("\(factor.detail). \(pointsText(factor.points)) points.")
+    }
+
+    private var target: some View {
+        let range = StrainGuidance.targetRange(recovery: day.recoveryScore)
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Strain target",
+                         trailing: "\(Int(range.lowerBound))–\(Int(range.upperBound)) of 21")
+            StrainMeter(strain: day.strain, target: range)
             Text(StrainGuidance.advice(strain: day.strain, recovery: day.recoveryScore))
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondaryText)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .card()
     }
 
-    private var historyCard: some View {
-        let recent = days.prefix(14).reversed().filter { $0.recoveryScore != nil }
-        return VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Last 14 days")
-            Chart {
-                ForEach(recent) { d in
-                    BarMark(x: .value("Day", d.date, unit: .day), y: .value("Recovery", d.recoveryScore ?? 0))
-                        .foregroundStyle(Theme.color(for: d.zone))
-                        .cornerRadius(3)
-                        .opacity(Calendar.current.isDate(d.date, inSameDayAs: day.date) ? 1 : 0.6)
-                }
-                RuleMark(y: .value("Your normal", 50))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .annotation(position: .top, alignment: .leading) {
-                        Text("your normal").font(.caption2).foregroundStyle(Theme.secondaryText)
-                    }
-            }
-            .chartYScale(domain: 0...100)
-            .frame(height: 160)
-            .accessibilityLabel("Recovery over the last 14 days. Bars above the dashed line are better than your normal.")
+    /// The one card on this screen.
+    private var history: some View {
+        let recent = Array(days.prefix(14).reversed())      // oldest first
+        let scores = recent.compactMap(\.recoveryScore)
+        let average: Double? = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
+        let bars = DayBarsChart.Bar.from(recent, highlight: day.date) { $0.recoveryScore }
+        let summary = "Recovery over the last \(recent.count) days. "
+            + (average.map { "Average \(PulseFormat.percent($0))." } ?? "No scores yet.")
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Last 14 days",
+                         trailing: average.map { "Avg \(PulseFormat.percent($0))" })
+            DayBarsChart(bars: bars, domain: 0...100, height: 120, summary: summary)
         }
-        .card()
+        .monoCard()
     }
 
+    private var method: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            SectionTitle(title: "How it's calculated")
+            Text(MetricKind.recovery.method)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Pulse is for general wellness, not medical advice.")
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+                .padding(.top, DS.Space.s)
+        }
+    }
+
+    /// "+3", "-18" or "±0". A real minus sign (−) lines up better than a hyphen.
     private func pointsText(_ points: Double) -> String {
         let rounded = Int(points.rounded())
         if rounded == 0 { return "±0" }
-        return rounded > 0 ? "+\(rounded)" : "\(rounded)"
+        return rounded > 0 ? "+\(rounded)" : "−\(-rounded)"
     }
 }

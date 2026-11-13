@@ -22,8 +22,7 @@ ios/
                        (a fake band that speaks the protocol), MinuteBuilder (1 Hz records -> minutes)
     Tests/PulseCoreTests/
   Pulse/               the SwiftUI app (needs Xcode)
-    App/               PulseApp, RootView (tabs), Design (DS tokens = DESIGN.md in code),
-                       Theme (old dark design, used until every screen is rebuilt)
+    App/               PulseApp, RootView (tabs), Design (DS tokens = DESIGN.md in code)
     Data/              SwiftData models, PulseStore, DemoDataLoader
     Features/          Today, Recovery (detail), Sleep, Activity (+ workout detail), Trends,
                        Settings (profile + recalculate), Welcome (first launch), Shared components

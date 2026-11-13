@@ -3,6 +3,7 @@ import SwiftData
 import PulseCore
 
 /// Settings: profile (feeds the formulas), demo data, upcoming connections, about.
+/// Mono design (ios/design/DESIGN.md): plain rows separated by hairlines instead of a grouped form.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
@@ -11,68 +12,66 @@ struct SettingsView: View {
     @State private var confirmRegenerate = false
 
     var body: some View {
-        NavigationStack {
-            Form {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.xxl) {
                 if let profile = profiles.first {
                     ProfileSection(profile: profile) {
                         Task { await loader.recompute(context: context) }
                     }
                 }
 
-                Section {
-                    LabeledContent("Status", value: "Not paired")
+                SettingsSection("Band", footer: "Bluetooth pairing arrives in Phase 5. Until then Pulse shows simulated data run through the real metrics engine.") {
+                    ValueRow(label: "Status", value: "Not paired")
+                    Hairline()
                     Button("Pair your band") {}
+                        .buttonStyle(.secondaryPill)
                         .disabled(true)
-                } header: {
-                    Text("Band")
-                } footer: {
-                    Text("Bluetooth pairing arrives in Phase 5. Until then Pulse shows simulated data run through the real metrics engine.")
+                        .padding(.top, DS.Space.m)
                 }
 
-                Section("Demo data") {
-                    LabeledContent("State", value: stateText)
-                    Button("Generate a new month", role: .destructive) { confirmRegenerate = true }
+                SettingsSection("Demo data") {
+                    ValueRow(label: "State", value: stateText)
+                    Hairline()
+                    Button("Generate a new month") { confirmRegenerate = true }
+                        .buttonStyle(.secondaryPill)
                         .disabled(loader.isBusy)
+                        .padding(.top, DS.Space.m)
                 }
 
-                Section("Connections") {
-                    comingSoon("Apple Health", systemImage: "heart.text.square", phase: 6)
-                    comingSoon("Strava", systemImage: "figure.run.square.stack", phase: 7)
-                    comingSoon("Claude", systemImage: "bubble.left.and.text.bubble.right", phase: 8)
+                SettingsSection("Connections") {
+                    ValueRow(label: "Apple Health", value: "Phase 6", symbol: "heart.text.square", emphasized: false)
+                    Hairline()
+                    ValueRow(label: "Strava", value: "Phase 7", symbol: "figure.run", emphasized: false)
+                    Hairline()
+                    ValueRow(label: "Claude", value: "Phase 8", symbol: "bubble.left.and.text.bubble.right", emphasized: false)
                 }
 
-                Section {
-                    LabeledContent("Version", value: appVersion)
-                    LabeledContent("Metrics", value: "algorithm v\(MetricsEngine.algorithmVersion)")
-                    LabeledContent("Your data", value: "Stored on this iPhone")
-                } header: {
-                    Text("About")
-                } footer: {
-                    Text("Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.")
+                SettingsSection("About", footer: "Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.") {
+                    ValueRow(label: "Version", value: appVersion)
+                    Hairline()
+                    ValueRow(label: "Metrics", value: "Algorithm v\(MetricsEngine.algorithmVersion)")
+                    Hairline()
+                    ValueRow(label: "Your data", value: "Stored on this iPhone")
                 }
             }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
-            .confirmationDialog("Replace all demo data with a new random month?",
-                                isPresented: $confirmRegenerate, titleVisibility: .visible) {
-                Button("Generate new data", role: .destructive) {
-                    Task { await loader.regenerate(context: context) }
-                }
-            }
-            .task {
-                if profiles.isEmpty { _ = ProfileStore.current(in: context) }
+            .padding(.horizontal, DS.Space.side)
+            .padding(.top, DS.Space.m)
+            .padding(.bottom, DS.Space.xxl)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ScreenHeader(title: "Settings", isSheet: true) {
+                IconButton(systemName: "xmark", label: "Close") { dismiss() }
             }
         }
-    }
-
-    private func comingSoon(_ title: String, systemImage: String, phase: Int) -> some View {
-        LabeledContent {
-            Text("Phase \(phase)").foregroundStyle(.secondary)
-        } label: {
-            Label(title, systemImage: systemImage)
+        .monoSheet()
+        .confirmationDialog("Replace all demo data with a new random month?",
+                            isPresented: $confirmRegenerate, titleVisibility: .visible) {
+            Button("Generate new data") {
+                Task { await loader.regenerate(context: context) }
+            }
+        }
+        .task {
+            if profiles.isEmpty { _ = ProfileStore.current(in: context) }
         }
     }
 
@@ -94,6 +93,35 @@ struct SettingsView: View {
     }
 }
 
+/// A titled group of rows with an optional small note under it.
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    let footer: String?
+    let content: Content
+
+    init(_ title: String, footer: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.footer = footer
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTitle(title: title)
+                .padding(.bottom, DS.Space.s)
+            content
+            if let footer {
+                Text(footer)
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, DS.Space.m)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// Edits the profile in place (@Bindable writes straight to SwiftData, which autosaves).
 private struct ProfileSection: View {
     @Bindable var profile: ProfileRecord
@@ -102,44 +130,91 @@ private struct ProfileSection: View {
     @State private var changed = false
 
     private static let currentYear = Calendar.current.component(.year, from: .now)
-    private let years: [Int] = Array(((Self.currentYear - 90)...(Self.currentYear - 13)).reversed())
+    private static let years: [Int] = Array(((currentYear - 90)...(currentYear - 13)).reversed())
 
     var body: some View {
-        Section {
-            Picker("Birth year", selection: Binding(
-                get: { profile.birthYear ?? 0 },
-                set: { profile.birthYear = $0 == 0 ? nil : $0; changed = true })) {
-                Text("Not set").tag(0)
-                ForEach(years, id: \.self) { Text(String($0)).tag($0) }
+        SettingsSection("Profile", footer: "Used only for the formulas: max heart rate is estimated from age (208 − 0.7 × age), sex picks the strain coefficients, and the goal is your baseline sleep need. Stays on this iPhone.") {
+            pickerRow("Birth year") {
+                Picker("Birth year", selection: Binding(
+                    get: { profile.birthYear ?? 0 },
+                    set: { profile.birthYear = $0 == 0 ? nil : $0; changed = true })) {
+                    Text("Not set").tag(0)
+                    ForEach(Self.years, id: \.self) { Text(String($0)).tag($0) }
+                }
             }
-            Picker("Sex", selection: Binding(
-                get: { profile.sex },
-                set: { profile.sex = $0; changed = true })) {
-                Text("Not specified").tag(BiologicalSex.unspecified)
-                Text("Female").tag(BiologicalSex.female)
-                Text("Male").tag(BiologicalSex.male)
+            Hairline()
+            pickerRow("Sex") {
+                Picker("Sex", selection: Binding(
+                    get: { profile.sex },
+                    set: { profile.sex = $0; changed = true })) {
+                    Text("Not specified").tag(BiologicalSex.unspecified)
+                    Text("Female").tag(BiologicalSex.female)
+                    Text("Male").tag(BiologicalSex.male)
+                }
             }
-            Stepper(value: Binding(
-                get: { profile.sleepGoalMinutes },
-                set: { profile.sleepGoalMinutes = $0; changed = true }), in: 360...600, step: 15) {
-                LabeledContent("Sleep goal", value: PulseFormat.duration(minutes: profile.sleepGoalMinutes))
-            }
-            LabeledContent("Max heart rate", value: "\(Int(profile.estimatedMaxHeartRate())) bpm")
+            Hairline()
+            sleepGoalRow
+            Hairline()
+            ValueRow(label: "Max heart rate", value: "\(Int(profile.estimatedMaxHeartRate())) bpm")
+            Hairline()
             Button {
                 onRecalculate()
                 changed = false
             } label: {
                 if loader.state == .recalculating {
-                    HStack { ProgressView(); Text("Recalculating…") }
+                    HStack(spacing: DS.Space.s) {
+                        ProgressView()
+                        Text("Recalculating…")
+                    }
                 } else {
                     Text("Recalculate my metrics")
                 }
             }
+            .buttonStyle(.secondaryPill)
             .disabled(!changed || loader.isBusy || !loader.rawDataReady)
-        } header: {
-            Text("Profile")
-        } footer: {
-            Text("Used only for the formulas: max heart rate is estimated from age (208 − 0.7 × age), sex picks the strain coefficients, and the goal is your baseline sleep need. Stays on this iPhone.")
+            .padding(.top, DS.Space.m)
         }
+    }
+
+    /// "Label ........ [menu]". The menu shows the current choice.
+    private func pickerRow<P: View>(_ label: String, @ViewBuilder picker: () -> P) -> some View {
+        HStack(spacing: DS.Space.m) {
+            Text(label)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+            Spacer(minLength: DS.Space.s)
+            picker()
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .tint(DS.Colors.primary)
+        }
+        .frame(minHeight: 52)
+    }
+
+    /// Sleep goal with minus / plus buttons (15-minute steps, 6 to 10 hours).
+    private var sleepGoalRow: some View {
+        HStack(spacing: DS.Space.s) {
+            Text("Sleep goal")
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+            Spacer(minLength: DS.Space.s)
+            Text(PulseFormat.duration(minutes: profile.sleepGoalMinutes))
+                .textStyle(.bodyStrong)
+                .monospacedDigit()
+                .foregroundStyle(DS.Colors.primary)
+                .padding(.trailing, DS.Space.xs)
+            IconButton(systemName: "minus", label: "Less sleep goal") {
+                profile.sleepGoalMinutes = max(360, profile.sleepGoalMinutes - 15)
+                changed = true
+            }
+            .disabled(profile.sleepGoalMinutes <= 360)
+            IconButton(systemName: "plus", label: "More sleep goal") {
+                profile.sleepGoalMinutes = min(600, profile.sleepGoalMinutes + 15)
+                changed = true
+            }
+            .disabled(profile.sleepGoalMinutes >= 600)
+        }
+        .frame(minHeight: 60)
+        .accessibilityElement(children: .contain)
     }
 }

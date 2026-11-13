@@ -21,6 +21,9 @@ enum DS {
         static let muted = dynamic(light: 0xD4D4D4, dark: 0x333333)
         /// Text on top of a `primary` fill.
         static let onPrimary = dynamic(light: 0xFFFFFF, dark: 0x000000)
+        /// Background of sheets. In dark mode a sheet is one step lighter than the screen under
+        /// it, otherwise black on black would hide where the sheet starts.
+        static let sheet = dynamic(light: 0xFFFFFF, dark: 0x111111)
 
         /// One color that switches by itself between light and dark mode.
         private static func dynamic(light: UInt32, dark: UInt32) -> Color {
@@ -111,6 +114,14 @@ extension View {
         background(DS.Colors.background.ignoresSafeArea())
     }
 
+    /// Sheet look: `sheet` background behind everything, drag handle visible.
+    func monoSheet() -> some View {
+        background(DS.Colors.sheet.ignoresSafeArea())
+            .environment(\.isOnSheet, true)
+            .presentationBackground(DS.Colors.sheet)
+            .presentationDragIndicator(.visible)
+    }
+
     /// The one card shape: soft gray fill, big radius, no border, no shadow.
     func monoCard(padding: CGFloat = DS.Space.l) -> some View {
         self.padding(padding)
@@ -153,23 +164,59 @@ private struct RiseIn: ViewModifier {
     }
 }
 
+// MARK: - Sheets
+
+private struct OnSheetKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// `true` inside a sheet. Gray fills (secondary pills, icon buttons) then use the next
+    /// lighter gray, because in dark mode the sheet itself already has the `surface` color.
+    var isOnSheet: Bool {
+        get { self[OnSheetKey.self] }
+        set { self[OnSheetKey.self] = newValue }
+    }
+}
+
+extension DS.Colors {
+    /// The quiet gray fill behind secondary buttons and icon buttons.
+    static func quietFill(onSheet: Bool) -> Color {
+        onSheet ? border : surface
+    }
+}
+
 // MARK: - Buttons
 
 /// Fully rounded button. Primary = black fill, white text. Secondary = light gray fill, black text.
-/// (Colors flip in dark mode.)
+/// (Colors flip in dark mode.) Disabled buttons fade out.
 struct PillButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary }
     var kind: Kind = .primary
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .textStyle(.bodyStrong)
-            .foregroundStyle(kind == .primary ? DS.Colors.onPrimary : DS.Colors.primary)
-            .padding(.horizontal, DS.Space.l)
-            .frame(minHeight: 52)
-            .background(kind == .primary ? DS.Colors.primary : DS.Colors.surface, in: Capsule())
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(DS.Motion.press, value: configuration.isPressed)
+        PillBody(configuration: configuration, kind: kind)
+    }
+
+    /// A separate view, because only views (not button styles) can read the environment.
+    private struct PillBody: View {
+        let configuration: ButtonStyleConfiguration
+        let kind: PillButtonStyle.Kind
+        @Environment(\.isOnSheet) private var isOnSheet
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .textStyle(.bodyStrong)
+                .foregroundStyle(kind == .primary ? DS.Colors.onPrimary : DS.Colors.primary)
+                .padding(.horizontal, DS.Space.l)
+                .frame(minHeight: 52)
+                .background(kind == .primary ? DS.Colors.primary : DS.Colors.quietFill(onSheet: isOnSheet),
+                            in: Capsule())
+                .opacity(isEnabled ? 1 : 0.4)
+                .scaleEffect(configuration.isPressed ? 0.96 : 1)
+                .animation(DS.Motion.press, value: configuration.isPressed)
+        }
     }
 }
 
@@ -193,11 +240,14 @@ extension ButtonStyle where Self == PressableStyle {
     static var pressable: PressableStyle { PressableStyle() }
 }
 
-/// Round 44 pt button with one SF Symbol (regular weight, monochrome).
+/// Round 44 pt button with one SF Symbol (regular weight, monochrome). Fades when disabled.
 struct IconButton: View {
     let systemName: String
     let label: String
     let action: () -> Void
+
+    @Environment(\.isOnSheet) private var isOnSheet
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
@@ -205,7 +255,8 @@ struct IconButton: View {
                 .font(.body)
                 .foregroundStyle(DS.Colors.primary)
                 .frame(width: 44, height: 44)
-                .background(DS.Colors.surface, in: Circle())
+                .background(DS.Colors.quietFill(onSheet: isOnSheet), in: Circle())
+                .opacity(isEnabled ? 1 : 0.35)
         }
         .buttonStyle(.pressable)
         .accessibilityLabel(label)

@@ -16,8 +16,8 @@ The app is called **Pulse**.
 
 Status: **Phase 5a done** (band protocol + history sync in Swift, tested with a simulated band;
 waiting for the real band for 5b). The app is built and screenshotted on a cloud Mac by GitHub
-Actions. A monochrome redesign is in progress ([ios/design/DESIGN.md](ios/design/DESIGN.md)): the
-Today screen is done, the other screens follow. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
+Actions. The whole app uses the monochrome "Mono" design system
+([ios/design/DESIGN.md](ios/design/DESIGN.md)). See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
 [docs/METRICS.md](docs/METRICS.md), [ios/README.md](ios/README.md), [re-toolkit/README.md](re-toolkit/README.md)
 and [re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).
 

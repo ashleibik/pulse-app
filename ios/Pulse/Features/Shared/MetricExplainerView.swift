@@ -1,5 +1,4 @@
 import SwiftUI
-import Charts
 import PulseCore
 
 /// Every number in the app can be tapped. This sheet explains it in plain language.
@@ -17,13 +16,14 @@ enum MetricKind: String, Identifiable, CaseIterable {
         }
     }
 
-    var color: Color {
+    /// For chart headings, where the long name would not fit next to the average.
+    var shortTitle: String {
         switch self {
-        case .recovery: Theme.recoveryGreen
-        case .strain: Theme.strain
-        case .sleep: Theme.sleep
-        case .hrv: Theme.recoveryGreen
-        case .restingHeartRate: Theme.heart
+        case .recovery: "Recovery"
+        case .strain: "Strain"
+        case .sleep: "Sleep"
+        case .hrv: "HRV"
+        case .restingHeartRate: "Resting HR"
         }
     }
 
@@ -80,13 +80,8 @@ enum MetricKind: String, Identifiable, CaseIterable {
     }
 }
 
-/// One point on a per-day chart.
-struct DayValue: Identifiable {
-    let date: Date
-    let value: Double
-    var id: Date { date }
-}
-
+/// The sheet behind every tappable number: what it means, the last 14 days, how it's calculated.
+/// Mono design (ios/design/DESIGN.md).
 struct MetricExplainerView: View {
     let kind: MetricKind
     let today: DaySummaryRecord?
@@ -94,60 +89,68 @@ struct MetricExplainerView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if let today, let value = kind.value(of: today) {
-                        Text(kind.format(value))
-                            .font(.system(size: 48, weight: .bold, design: .rounded))
-                            .foregroundStyle(kind.color)
-                            .monospacedDigit()
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.xl) {
+                if let today, let value = kind.value(of: today) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Today")
+                            .textStyle(.caption)
+                            .foregroundStyle(DS.Colors.secondary)
+                        HeroNumber(value: value) { kind.format($0) }
                     }
-                    block("What it means", kind.meaning)
-                    if kind == .recovery, let today {
-                        block("Why it's this today", today.explanation)
+                    .accessibilityElement(children: .combine)
+                }
+                block("What it means", kind.meaning)
+                if kind == .recovery, let today {
+                    block("Why it's this today", today.explanation)
+                }
+                if !history.isEmpty {
+                    VStack(alignment: .leading, spacing: DS.Space.m) {
+                        SectionTitle(title: "Last 14 days")
+                        DayBarsChart(bars: DayBarsChart.Bar.from(Array(history.reversed())) { kind.value(of: $0) },
+                                     domain: chartDomain,
+                                     height: 120,
+                                     summary: "\(kind.title) over the last 14 days")
                     }
-                    if !chartPoints.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Last 14 days").font(.headline)
-                            Chart(chartPoints) { point in
-                                BarMark(x: .value("Day", point.date, unit: .day), y: .value(kind.title, point.value))
-                                    .foregroundStyle(kind.color.gradient)
-                                    .cornerRadius(3)
-                            }
-                            .frame(height: 140)
-                            .accessibilityLabel("Chart of \(kind.title) over the last 14 days")
-                        }
-                    }
-                    block("How we calculate it", kind.method)
+                }
+                block("How we calculate it", kind.method)
+                VStack(alignment: .leading, spacing: DS.Space.s) {
                     if today?.isSimulated == true {
                         Text("Until your band is paired, the heartbeats are simulated, but every number here is calculated by the real engine.")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.secondaryText)
                     }
                     Text("Pulse is for general wellness, not medical advice.")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.secondaryText)
                 }
-                .padding()
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
             }
-            .screenBackground()
-            .navigationTitle(kind.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            .padding(.horizontal, DS.Space.side)
+            .padding(.top, DS.Space.s)
+            .padding(.bottom, DS.Space.xxl)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            ScreenHeader(title: kind.title, isSheet: true) {
+                IconButton(systemName: "xmark", label: "Close") { dismiss() }
             }
+        }
+        .monoSheet()
+    }
+
+    /// Recovery and strain have a fixed scale. The others start at 0 and end at the biggest value.
+    private var chartDomain: ClosedRange<Double>? {
+        switch kind {
+        case .recovery: return 0...100
+        case .strain: return 0...Strain.maximum
+        case .sleep, .hrv, .restingHeartRate: return nil
         }
     }
 
-    private var chartPoints: [DayValue] {
-        history.reversed().compactMap { day in kind.value(of: day).map { DayValue(date: day.date, value: $0) } }
-    }
-
     private func block(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline)
-            Text(text).foregroundStyle(Theme.secondaryText).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            SectionTitle(title: title)
+            Text(text)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

@@ -102,22 +102,30 @@ jobs:
             xcrun simctl io "$UDID" screenshot "screenshots/$1.png"
           }
 
-          # The simulator is in LIGHT mode here. Today is in the new Mono design (light + dark).
-          # The other screens are still the old dark design and must stay dark by themselves
-          # (legacyDarkTheme / legacyDarkSheet), so capturing them in light mode tests that.
-          shot 0-welcome 6
+          SEEN="-hasSeenWelcome YES"
+          shot 0-welcome-light 6
           # First real launch generates 30 days of demo data (debug build: give it time).
-          shot 1-today-light 45 -hasSeenWelcome YES -screenshotTab today
-          shot 1-today-light-lower 8 -hasSeenWelcome YES -screenshotTab today -screenshotScroll bottom
-          shot 2-recovery 8 -hasSeenWelcome YES -screenshotTab today -screenshotRoute recovery
-          shot 3-sleep 8 -hasSeenWelcome YES -screenshotTab sleep
-          shot 4-activity 8 -hasSeenWelcome YES -screenshotTab activity
-          shot 5-trends 8 -hasSeenWelcome YES -screenshotTab trends
-          shot 6-settings 8 -hasSeenWelcome YES -screenshotTab today -screenshotRoute settings
+          # This shot is taken again below, once the data is there.
+          shot 1-today-light 45 $SEEN -screenshotTab today
 
-          xcrun simctl ui "$UDID" appearance dark
-          shot 1-today-dark 8 -hasSeenWelcome YES -screenshotTab today
-          shot 1-today-dark-lower 8 -hasSeenWelcome YES -screenshotTab today -screenshotScroll bottom
+          capture() {   # capture <light|dark>: every screen in one appearance
+            xcrun simctl ui "$UDID" appearance "$1"
+            shot "1-today-$1" 7 $SEEN -screenshotTab today
+            shot "1-today-lower-$1" 7 $SEEN -screenshotTab today -screenshotScroll bottom
+            shot "2-recovery-$1" 7 $SEEN -screenshotTab today -screenshotRoute recovery
+            shot "2-recovery-lower-$1" 7 $SEEN -screenshotTab today -screenshotRoute recovery -screenshotScroll bottom
+            shot "3-sleep-$1" 7 $SEEN -screenshotTab sleep
+            shot "3-sleep-lower-$1" 7 $SEEN -screenshotTab sleep -screenshotScroll bottom
+            shot "4-activity-$1" 7 $SEEN -screenshotTab activity
+            shot "4-workout-$1" 7 $SEEN -screenshotTab activity -screenshotRoute workout
+            shot "5-trends-$1" 7 $SEEN -screenshotTab trends
+            shot "5-trends-lower-$1" 7 $SEEN -screenshotTab trends -screenshotScroll bottom
+            shot "6-settings-$1" 7 $SEEN -screenshotTab today -screenshotRoute settings
+            shot "7-explainer-$1" 7 $SEEN -screenshotTab today -screenshotRoute explainer
+          }
+          capture light
+          capture dark
+          shot 0-welcome-dark 6
           ls -la screenshots
 
       - uses: actions/upload-artifact@v4

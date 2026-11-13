@@ -16,7 +16,7 @@ struct TodayView: View {
 
     @State private var showSettings = LaunchOptions.route == "settings"
     @State private var showRecovery = LaunchOptions.route == "recovery"
-    @State private var explaining: MetricKind?
+    @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
     /// Goes up by one on every tap that opens something. Drives the light haptic.
     @State private var taps = 0
 
@@ -36,9 +36,6 @@ struct TodayView: View {
             // background also covers the status bar, so scrolled content never runs under the clock.
             .safeAreaInset(edge: .top, spacing: 0) {
                 header
-                    .padding(.horizontal, DS.Space.side)
-                    .padding(.vertical, DS.Space.s)
-                    .background(DS.Colors.background)
             }
             // Only the screenshot job sets this (to capture the lower half of the screen).
             .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
@@ -46,17 +43,15 @@ struct TodayView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showRecovery) {
                 if let today = days.first {
-                    RecoveryDetailView(day: today).legacyDarkTheme()
+                    RecoveryDetailView(day: today)
                 }
             }
             .sheet(isPresented: $showSettings) {
-                SettingsView().legacyDarkSheet()
+                SettingsView()
             }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                    .legacyDarkSheet()
             }
             .sensoryFeedback(.impact(weight: .light), trigger: taps)
         }
@@ -76,14 +71,7 @@ struct TodayView: View {
 
     /// Date on the left, data source + settings on the right.
     private var header: some View {
-        HStack(spacing: DS.Space.s) {
-            Text(Date.now.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-                .textStyle(.bodyStrong)
-                .foregroundStyle(DS.Colors.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: DS.Space.s)
+        ScreenHeader(title: Date.now.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())) {
             StatusPill()
             IconButton(systemName: "gearshape", label: "Settings") {
                 open { showSettings = true }
@@ -197,12 +185,10 @@ struct TodayView: View {
     private var week: some View {
         let recent = Array(days.prefix(7).reversed())       // oldest first
         let scores = recent.compactMap(\.recoveryScore)
-        let chartDays = recent.enumerated().map { index, day in
-            WeekRecoveryChart.Day(id: "\(day.date.timeIntervalSince1970)",
-                                  letter: day.date.formatted(.dateTime.weekday(.narrow)),
-                                  score: day.recoveryScore,
-                                  isToday: index == recent.count - 1)
-        }
+        let average: Double? = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
+        let bars = DayBarsChart.Bar.from(recent) { $0.recoveryScore }
+        let summary = "Recovery, last \(recent.count) days. "
+            + (average.map { "Average \(PulseFormat.percent($0))." } ?? "No scores yet.")
         return Button {
             open { explaining = .recovery }
         } label: {
@@ -212,13 +198,13 @@ struct TodayView: View {
                         .textStyle(.heading)
                         .foregroundStyle(DS.Colors.primary)
                     Spacer()
-                    if !scores.isEmpty {
-                        Text("Avg \(Int((scores.reduce(0, +) / Double(scores.count)).rounded()))%")
+                    if let average {
+                        Text("Avg \(PulseFormat.percent(average))")
                             .textStyle(.caption)
                             .foregroundStyle(DS.Colors.secondary)
                     }
                 }
-                WeekRecoveryChart(days: chartDays)
+                DayBarsChart(bars: bars, domain: 0...100, summary: summary)
             }
             .monoCard()
         }
