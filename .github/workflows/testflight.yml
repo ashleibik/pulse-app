@@ -1,0 +1,122 @@
+# Builds, signs and uploads Pulse to TestFlight from a GitHub-hosted Mac, so the app can be
+# installed on an iPhone without owning a Mac.
+#
+# ⚠ NEVER RUN YET: it needs an Apple Developer Program membership ($99/year) and the secrets
+#   below. Expect to fix a detail or two on the first run.
+#
+# One-time setup:
+#   1. Join the Apple Developer Program. Note your Team ID (developer.apple.com > Membership).
+#   2. App Store Connect > Apps > "+": create an app with your own bundle id (for example
+#      com.yourname.pulse). Turn on the HealthKit capability for that id at
+#      developer.apple.com > Identifiers.
+#   3. App Store Connect > Users and Access > Integrations > App Store Connect API: create a key
+#      with the "App Manager" role. Download the .p8 file (only possible once).
+#   4. In this GitHub repo: Settings > Secrets and variables > Actions, add
+#        secrets:   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (the whole text of the .p8 file),
+#                   APPLE_TEAM_ID
+#        variable:  BUNDLE_ID (the bundle id from step 2)
+#   5. Actions tab > "TestFlight" > Run workflow. About 15 minutes later the build appears in the
+#      TestFlight app on your iPhone (add yourself as an internal tester in App Store Connect).
+#
+# Security: the signing key exists only as a GitHub secret. It is written to the runner's disk
+# for the build and deleted afterwards; the runner itself is thrown away after the job.
+
+name: TestFlight
+
+on:
+  workflow_dispatch:        # only ever started by hand
+
+permissions:
+  contents: read
+
+jobs:
+  testflight:
+    name: Build, sign, upload
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      KEY_PATH: ${{ github.workspace }}/private_keys/AuthKey.p8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check setup
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+        run: |
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$BUNDLE_ID" ]; then
+            echo "::error::Secrets or the BUNDLE_ID variable are missing. See the steps at the top of .github/workflows/testflight.yml"
+            exit 1
+          fi
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Write the App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p "$(dirname "$KEY_PATH")"
+          printf '%s' "$ASC_KEY_P8" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+
+      - name: Archive (signed automatically)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project ios/Pulse.xcodeproj -scheme Pulse \
+            -destination "generic/platform=iOS" \
+            -archivePath build/Pulse.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            2>&1 | tee archive.log | grep -E "error:|warning: .*Pulse/|ARCHIVE (SUCCEEDED|FAILED)" || true
+          grep -q "ARCHIVE SUCCEEDED" archive.log
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath build/Pulse.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Remove the key
+        if: always()
+        run: rm -f "$KEY_PATH"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: archive-log
+          path: archive.log
+          if-no-files-found: ignore

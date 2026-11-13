@@ -122,7 +122,9 @@ jobs:
             shot "5-trends-lower-$1" 7 $SEEN -screenshotTab trends -screenshotScroll bottom
             shot "6-settings-$1" 7 $SEEN -screenshotTab today -screenshotRoute settings
             shot "7-explainer-$1" 7 $SEEN -screenshotTab today -screenshotRoute explainer
+            shot "6-settings-lower-$1" 7 $SEEN -screenshotTab today -screenshotRoute settings -screenshotScroll bottom
             shot "8-pairing-$1" 7 $SEEN -screenshotTab today -screenshotRoute pairing
+            shot "8-coach-$1" 7 $SEEN -screenshotTab today -screenshotRoute coach
           }
           capture light
           capture dark

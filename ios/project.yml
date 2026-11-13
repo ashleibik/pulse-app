@@ -39,6 +39,10 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Pulse connects to your band over Bluetooth to read your heart rate, sleep and activity data."
+        INFOPLIST_KEY_NSHealthUpdateUsageDescription: "Pulse can save your sleep, resting heart rate and workouts to Apple Health."
+        INFOPLIST_KEY_NSHealthShareUsageDescription: "Pulse does not read from Apple Health. It only saves your sleep, resting heart rate and workouts there."
+        CODE_SIGN_ENTITLEMENTS: Pulse/Pulse.entitlements
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # DEVELOPMENT_TEAM is set in Xcode (Signing & Capabilities), never committed.

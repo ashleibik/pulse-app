@@ -15,7 +15,9 @@ ios/
       Insights/        everything the screens need that's more than formatting, tested on Windows:
                        RecoveryExplainer (factor points), StrainGuidance (targets + advice),
                        SleepTimeline (restful/light/awake), HeartRateZones, SleepNeedBreakdown,
-                       TrendInsights (period comparisons + plain-language insights)
+                       TrendInsights (period comparisons + plain-language insights),
+                       HealthExport (what may be written to Apple Health: never simulated data)
+      Cloud/           CloudRows (the only data that may leave the phone), StravaExport (TCX file)
       Protocol/        Swift port of re-toolkit/protocol (Whoop namespace): CRCs, frames, reassembler,
                        allowlisted command builders, packet decoder, 0x2A37 parser
                        -> must match re-toolkit/protocol on shared/test-vectors/protocol_v1.json
@@ -27,6 +29,8 @@ ios/
     App/               PulseApp, RootView (tabs), Design (DS tokens = DESIGN.md in code)
     Data/              SwiftData models, PulseStore (+ BandImporter), DemoDataLoader
     Band/              BandLink (CoreBluetooth + simulated band), BandManager (pairing and syncing)
+    Health/            HealthExporter (writes sleep, resting HR and workouts to Apple Health)
+    Cloud/             CloudClient (URLSession + Keychain), CloudManager (upload, Strava, coach)
     Features/          Today, Recovery (detail), Sleep, Activity (+ workout detail), Trends,
                        Settings (profile, band, recalculate), Pairing (+ hidden band log),
                        Welcome (first launch), Shared components
@@ -81,6 +85,23 @@ band  --Bluetooth-->  BandLink        bytes in / out                 (app, CoreB
   (service UUID, ack token, whether stored history contains RR intervals). Run the Python toolkit
   against the band first; it is the safer place to find surprises.
 - **Not built yet:** background reconnect, live heart rate screen.
+
+## Apple Health (Phase 6)
+
+Settings > Apple Health > *Turn on*. Pulse asks for **write access only** and never reads from
+Apple Health.
+
+| Written | Not written, and why |
+|---|---|
+| Sleep: in bed, asleep, awake | Sleep stages (REM / deep): Pulse does not measure them |
+| Resting heart rate, one per day | HRV: Apple Health stores SDNN, Pulse calculates RMSSD (different numbers) |
+| Workouts: type, start, end | Calories: only a rough guess |
+
+- **Demo and simulated data are never exported** (rule and test: `HealthExport` in PulseCore).
+- Exporting twice does not duplicate: Pulse first deletes what it wrote before for the same time span.
+- After every band sync the last 3 days are exported again. *Export all* sends the whole history.
+- **Not tested on a real iPhone yet.** It needs the signed app with the HealthKit capability
+  (`Pulse/Pulse.entitlements`); the unsigned CI builds can't exercise it.
 
 ## On a Mac (when you have one)
 

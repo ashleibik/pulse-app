@@ -18,6 +18,7 @@ struct TodayView: View {
     @State private var showRecovery = LaunchOptions.route == "recovery"
     /// Only opened from here by the screenshot job. Normally pairing starts in Settings.
     @State private var showPairing = LaunchOptions.route == "pairing" || LaunchOptions.route == "pairing-sim"
+    @State private var showCoach = LaunchOptions.route == "coach"
     @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
     /// Goes up by one on every tap that opens something. Drives the light haptic.
     @State private var taps = 0
@@ -54,6 +55,9 @@ struct TodayView: View {
             .sheet(isPresented: $showPairing) {
                 PairingView()
             }
+            .sheet(isPresented: $showCoach) {
+                CoachView()
+            }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
@@ -78,6 +82,9 @@ struct TodayView: View {
     private var header: some View {
         ScreenHeader(title: Date.now.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())) {
             StatusPill()
+            IconButton(systemName: "bubble.left", label: "Coach") {
+                open { showCoach = true }
+            }
             IconButton(systemName: "gearshape", label: "Settings") {
                 open { showSettings = true }
             }
@@ -309,6 +316,7 @@ struct TrailingIconLabelStyle: LabelStyle {
         .modelContainer(PulseStore.previewContainer)
         .environment(DemoDataLoader())
         .environment(BandManager())
+        .environment(CloudManager())
         .preferredColorScheme(.light)
 }
 
@@ -317,5 +325,6 @@ struct TrailingIconLabelStyle: LabelStyle {
         .modelContainer(PulseStore.previewContainer)
         .environment(DemoDataLoader())
         .environment(BandManager())
+        .environment(CloudManager())
         .preferredColorScheme(.dark)
 }

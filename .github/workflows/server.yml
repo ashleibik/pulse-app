@@ -1,0 +1,25 @@
+# Tests the server-side code (supabase/). Runs on Linux, so it costs almost nothing.
+
+name: Server tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "supabase/**"
+      - ".github/workflows/server.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mcp:
+    name: MCP server logic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test
+        run: node --experimental-strip-types --test supabase/tests/mcp-core.test.mjs

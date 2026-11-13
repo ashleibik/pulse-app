@@ -98,7 +98,9 @@ final class WorkoutRecord {
     var sourceRaw: String
     // Filled in by later phases:
     var healthKitID: UUID?          // Phase 6
-    var stravaActivityID: Int?      // Phase 7
+    var stravaActivityID: Int?      // unused: Strava's ids are not stored (its 7-day cache rule)
+    /// When Pulse sent this workout to Strava (Phase 7). Our own mark, not Strava data.
+    var stravaUploadedAt: Date?
 
     init(_ w: Workout) {
         id = w.id
@@ -114,6 +116,13 @@ final class WorkoutRecord {
     }
 
     var kind: WorkoutKind { WorkoutKind(rawValue: kindRaw) ?? .other }
+    var isSimulated: Bool { sourceRaw == DataSource.simulated.rawValue }
+
+    var value: Workout {
+        Workout(id: id, kind: kind, start: start, end: end, averageHeartRate: averageHeartRate,
+                maxHeartRate: maxHeartRate, strain: strain, zoneSeconds: zoneSeconds, calories: calories,
+                source: DataSource(rawValue: sourceRaw) ?? .history)
+    }
     var durationMinutes: Int { Int(end.timeIntervalSince(start) / 60) }
 }
 

@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @Environment(DemoDataLoader.self) private var loader
     @Environment(BandManager.self) private var band
+    @Environment(HealthExporter.self) private var health
     @Query private var profiles: [ProfileRecord]
     @Query private var bands: [BandRecord]
     @State private var confirmRegenerate = false
@@ -38,13 +39,31 @@ struct SettingsView: View {
                         .padding(.top, DS.Space.m)
                 }
 
-                SettingsSection("Connections") {
-                    ValueRow(label: "Apple Health", value: "Phase 6", symbol: "heart.text.square", emphasized: false)
+                SettingsSection("Apple Health", footer: healthFooter) {
+                    ValueRow(label: "Export", value: health.isEnabled ? "On" : "Off",
+                             symbol: "heart.text.square", emphasized: health.isEnabled)
                     Hairline()
-                    ValueRow(label: "Strava", value: "Phase 7", symbol: "figure.run", emphasized: false)
-                    Hairline()
-                    ValueRow(label: "Claude", value: "Phase 8", symbol: "bubble.left.and.text.bubble.right", emphasized: false)
+                    HStack(spacing: DS.Space.s) {
+                        Button(health.isEnabled ? "Turn off" : "Turn on") {
+                            if health.isEnabled {
+                                health.disable()
+                            } else {
+                                Task { await health.enable(context: context) }
+                            }
+                        }
+                        .buttonStyle(.secondaryPill)
+                        if health.isEnabled {
+                            Button("Export all") {
+                                Task { await health.export(context: context, everything: true) }
+                            }
+                            .buttonStyle(.secondaryPill)
+                        }
+                    }
+                    .disabled(health.status == .working || !health.isAvailable)
+                    .padding(.top, DS.Space.m)
                 }
+
+                CloudSettingsView()
 
                 SettingsSection("About", footer: "Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.") {
                     ValueRow(label: "Version", value: appVersion)
@@ -66,6 +85,8 @@ struct SettingsView: View {
             .padding(.top, DS.Space.m)
             .padding(.bottom, DS.Space.xxl)
         }
+        // Only the screenshot job sets this (to capture the lower half of the screen).
+        .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
         .safeAreaInset(edge: .top, spacing: 0) {
             ScreenHeader(title: "Settings", isSheet: true) {
                 IconButton(systemName: "xmark", label: "Close") { dismiss() }
@@ -87,6 +108,16 @@ struct SettingsView: View {
         .sheet(isPresented: $showLog) { BandLogView() }
         .task {
             if profiles.isEmpty { _ = ProfileStore.current(in: context) }
+        }
+    }
+
+    /// What happened last, or what the export does.
+    private var healthFooter: String {
+        switch health.status {
+        case .working: "Exporting…"
+        case .done(let message): message
+        case .failed(let message): message
+        case .idle: "Saves sleep, resting heart rate and workouts to Apple Health. Pulse never reads from Apple Health, and demo data is never written there."
         }
     }
 

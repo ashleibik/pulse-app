@@ -1,0 +1,19 @@
+# Supabase project settings that live in git (no secrets in here).
+# Used by `supabase functions deploy`. See supabase/README.md for the full setup.
+
+project_id = "pulse"
+
+# mcp: Claude calls it. The platform's own token check is OFF only because an unauthenticated
+# request must get OUR 401 answer (with the header that starts Claude's sign-in). The function
+# verifies every token itself.
+[functions.mcp]
+verify_jwt = false
+
+# strava: Strava redirects the browser here after sign-in (no token possible on that request).
+# Every other route of the function verifies the token itself.
+[functions.strava]
+verify_jwt = false
+
+# coach: only ever called by the signed-in app, so the platform checks the token first.
+[functions.coach]
+verify_jwt = true

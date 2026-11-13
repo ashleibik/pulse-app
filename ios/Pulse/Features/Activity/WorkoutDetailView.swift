@@ -7,6 +7,7 @@ import PulseCore
 struct WorkoutDetailView: View {
     let workout: WorkoutRecord
     @Environment(\.modelContext) private var context
+    @Environment(CloudManager.self) private var cloud
     @State private var heartRate: [ChartPoint] = []
 
     var body: some View {
@@ -16,9 +17,7 @@ struct WorkoutDetailView: View {
                 stats.riseIn(1)
                 heart.riseIn(2)
                 zones.riseIn(3)
-                Text("Apple Health and Strava export arrive in Phases 6 and 7.")
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
+                share.riseIn(4)
             }
             .padding(.horizontal, DS.Space.side)
             .padding(.top, DS.Space.m)
@@ -33,6 +32,33 @@ struct WorkoutDetailView: View {
     }
 
     // MARK: - Sections
+
+    /// Send this workout to Strava (only shown once Strava is connected in Settings).
+    @ViewBuilder
+    private var share: some View {
+        if workout.isSimulated {
+            Text("This is a simulated workout. It is never sent to Strava or Apple Health.")
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+        } else if cloud.stravaConnected {
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                Button(workout.stravaUploadedAt == nil ? "Send to Strava" : "Sent to Strava") {
+                    Task { _ = await cloud.uploadToStrava(workout, context: context) }
+                }
+                .buttonStyle(.secondaryPill)
+                .disabled(cloud.isWorking || workout.stravaUploadedAt != nil)
+                if let message = cloud.message {
+                    Text(message)
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                }
+            }
+        } else {
+            Text("Connect Strava in Settings to send workouts there.")
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+        }
+    }
 
     /// The answer: how hard this workout was.
     private var hero: some View {

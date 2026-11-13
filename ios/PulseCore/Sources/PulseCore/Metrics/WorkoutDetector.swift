@@ -82,7 +82,9 @@ public enum WorkoutDetector {
         return Workout(id: stableID(start: start), kind: .other, start: start, end: end,
                        averageHeartRate: Int((averages.reduce(0, +) / Double(averages.count)).rounded()),
                        maxHeartRate: Int(peak), strain: Strain.fromTRIMP(trimp),
-                       zoneSeconds: zones.map { $0 * 60 }, calories: Int(calories.rounded()), source: .history)
+                       zoneSeconds: zones.map { $0 * 60 }, calories: Int(calories.rounded()),
+                       // Found in simulated data = still simulated (and so never sent to Apple Health).
+                       source: minutes.allSatisfy { $0.source == .simulated } ? .simulated : .history)
     }
 
     /// The same workout must get the same ID every time detection runs (after each sync), otherwise

@@ -138,6 +138,8 @@ struct SessionHarness {
     }
     // And it must not invent a crowd of workouts out of normal daily life.
     #expect(detected.count <= dataset.workouts.count + 6, "\(detected.count) detected vs \(dataset.workouts.count) planned")
+    // Found in simulated minutes = still simulated, so it can never be exported as real.
+    #expect(detected.allSatisfy { $0.source == .simulated })
     for workout in detected {
         #expect(workout.durationMinutes >= WorkoutDetector.minimumMinutes)
         #expect(workout.strain > 0 && workout.strain <= 21)
@@ -165,6 +167,7 @@ struct SessionHarness {
     #expect(detected.first?.start == minutes[30].start)
     #expect(detected.first?.durationMinutes == 18)              // the trailing easy minutes are not counted
     #expect(detected.first?.kind == .other)
+    #expect(detected.first?.source == .history)
 }
 
 @Test func workoutIDsAreStableAcrossRuns() {
