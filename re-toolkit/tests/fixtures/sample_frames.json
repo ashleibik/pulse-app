@@ -1,0 +1,14 @@
+{
+  "_comment": "Real frames captured by other researchers. Source [BW] = https://github.com/bWanShiTong/reverse-engineering-whoop-post (README tables). Add frames from MY band below as 'mine_*' once captured.",
+  "frames": {
+    "hr_broadcast_off_seq7":  {"hex": "aa0800a823070e00c7e40f08", "source": "BW", "meaning": "SET_GENERIC_HR_PROFILE off, seq 0x07"},
+    "hr_broadcast_on_seq8":   {"hex": "aa0800a823080e016c935474", "source": "BW", "meaning": "SET_GENERIC_HR_PROFILE on, seq 0x08"},
+    "hr_broadcast_off_seq9":  {"hex": "aa0800a823090e00cdc99102", "source": "BW", "meaning": "SET_GENERIC_HR_PROFILE off, seq 0x09"},
+    "realtime_on_seq8c":      {"hex": "aa0800a8238c03017d5ec627", "source": "BW", "meaning": "TOGGLE_REALTIME_HR on, seq 0x8c"},
+    "reboot_seqd4":           {"hex": "aa0800a823d41d003c2e2fe6", "source": "BW", "meaning": "REBOOT. Used ONLY to test CRC, never sent"},
+    "realtime_packet":        {"hex": "aa1800ff2802ad896566f0654201670600000000000001013ba00d4d", "source": "BW", "meaning": "REALTIME_DATA, HR 66"},
+    "alarm_set":              {"hex": "aa10005723704201126d6566000000003d59d8fd", "source": "BW", "meaning": "SET_ALARM_TIME"},
+    "history_end":            {"hex": "aa1c00ab311802f65c7066804043000000 2e470100 04000000000000 7f873cf3", "source": "BW", "meaning": "METADATA HISTORY_END with batch token"},
+    "erase_seqcf":            {"hex": "aa10005723cf19fefefefefefefefe002f8744f6", "source": "BW", "meaning": "FORCE_TRIM (erase). Used ONLY to test CRC, never sent"}
+  }
+}

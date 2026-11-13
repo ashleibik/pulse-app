@@ -12,5 +12,5 @@ Personal learning project. Not affiliated with or endorsed by WHOOP, Inc.
 | `backend/` | Supabase: Postgres + RLS, edge functions (MCP server, Strava, coach) |
 | `docs/` | Plans and design notes |
 
-Status: **Phase 0 (plan)**. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md) and
-[re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).
+Status: **Phase 1 (reverse-engineering toolkit)**. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
+[re-toolkit/README.md](re-toolkit/README.md) and [re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).

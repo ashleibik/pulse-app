@@ -1,163 +1,213 @@
 # WHOOP 4.0 BLE Protocol: Working Notes
 
-Living document. Every fact has a **confidence tag**:
+This document changes as we learn. The code in `re-toolkit/protocol/` implements exactly what's written here.
+Every fact has a **confidence tag**:
 
 | Tag | Meaning |
 |---|---|
-| ✅ **VERIFIED** | We checked it ourselves (math on sample packets, or a capture from my band) |
-| 🟢 **CONFIRMED (2 sources)** | Two independent reference projects agree, not yet tested on my band |
-| 🟡 **REPORTED (1 source)** | One reference says so. Plausible, untested |
+| ✅ **VERIFIED** | We checked it ourselves (math on real packets, or a capture from my band) |
+| 🟢 **CONFIRMED** | Two independent sources agree, or one source matches a real sample packet |
+| 🟡 **REPORTED** | One source says so. Plausible, untested |
 | 🔴 **UNKNOWN / CONFLICTING** | Nobody knows, or sources disagree |
 
 Sources:
-- **[BW]** bWanShiTong, reverse-engineering-whoop-post. https://github.com/bWanShiTong/reverse-engineering-whoop-post
-- **[OS]** OpenStrap protocol (Dart, AGPL-3.0). https://github.com/OpenStrap/protocol (`constants.dart`, `crc.dart`, README)
+- **[BW]** bWanShiTong, reverse-engineering-whoop-post (real captures). https://github.com/bWanShiTong/reverse-engineering-whoop-post
+- **[OS]** OpenStrap protocol (Dart, AGPL-3.0): `constants.dart`, `framing.dart`, `crc.dart`, `commands.dart`, `control.dart`, `live.dart`, `band.dart`. https://github.com/OpenStrap/protocol
 - **[CM]** christianmeurer, whoop-reader (Python, MIT). https://github.com/christianmeurer/whoop-reader
 
 > **License note:** OpenStrap is AGPL-3.0. We use it as a **reference for facts** (opcode numbers, byte offsets),
-> which are not copyrightable, but we **write our own code** and do not copy theirs. That keeps this repo's license our choice.
+> which aren't copyrightable, and **write all code ourselves**. That keeps this repo's license our choice.
+
+> **Offset convention:** unless stated otherwise, offsets are into the **inner** bytes (see §2), where `inner[0]` = packet type.
+> Frame offset = inner offset + 4.
 
 ---
 
+## 0. Verification log
+
+| Date | What | Result |
+|---|---|---|
+| 2026-11-12 | CRC-8 + CRC-32 on 9 [BW] frames | ✅ all pass (`tests/test_crc.py`) |
+| 2026-11-13 | Our command builder vs [BW] captured HR-broadcast and realtime-on frames | ✅ byte-identical (`tests/test_frames.py`) |
+| 2026-11-13 | [OS] 0x28 realtime layout vs [BW] realtime sample | 🟢 timestamp, HR, RR count and wearing byte all land on sane values |
+| 2026-11-13 | [OS] HISTORY_END layout vs [BW] sync-end sample | 🟢 timestamp (2024-06-17), count 67, token all sane |
+| _TBD_ | First capture from **my** band | |
+
 ## 1. GATT layout
 
-| Name (from decompiled app, per [BW]) | UUID | Props | Tag |
+| Name | UUID | Props | Tag |
 |---|---|---|---|
-| Custom service | `61080000-8d6d-82b8-614a-1c8cb0f8dcc6` | n/a | 🟢 [CM] + prompt notes |
-| CMD_TO_STRAP | `61080002-8d6d-82b8-614a-1c8cb0f8dcc6` | write | 🟢 [BW] [CM] |
-| CMD_FROM_STRAP | `61080003-…` | notify | 🟡 [BW] |
-| EVENTS_FROM_STRAP | `61080004-…` | notify | 🔴 [BW] says events; [CM] says this is the **data** stream |
-| DATA_FROM_STRAP | `61080005-8d6d-82b8-614a-1c8cb0f8dcc6` | notify | 🟡 [BW] |
-| MEMFAULT (crash logs) | `61080007-…` | notify | 🟡 [BW] |
-| Std Heart Rate Measurement | `0x2A37` | notify | 🟢 works only after HR broadcast is enabled |
+| Custom service | `61080000-…` **or** `61080001-8d6d-82b8-614a-1c8cb0f8dcc6` | n/a | 🔴 your notes + [CM] say `…0000`, [OS] says `…0001`. **sniff.py prints the real one** |
+| CMD_TO_STRAP | `61080002-8d6d-82b8-614a-1c8cb0f8dcc6` | write (with response) | 🟢 [BW][OS] |
+| CMD_FROM_STRAP | `61080003-…` | notify: command responses | 🟢 [BW][OS] |
+| EVENTS_FROM_STRAP | `61080004-…` | notify: events | 🟢 [BW][OS] ([CM] calls it data; outvoted) |
+| DATA_FROM_STRAP | `61080005-…` | notify: realtime + history | 🟢 [BW][OS] |
+| MEMFAULT | `61080007-…` | notify: crash logs | 🟡 [BW][OS] |
+| Std Heart Rate Measurement | `0x2A37` | notify | 🟢 sends data only after HR broadcast is on (§4) |
 
-Phase 1 `sniff.py` will subscribe to **all** notify characteristics and log which packet types appear on which one,
-which settles the 0004 vs 0005 conflict.
-
-The band uses a **random BLE address** (it can change), so we identify it by advertised name or service UUID, not by MAC.
+The band uses a **random BLE address**, so the tools identify it by name / service UUID prefix `6108`, not by address.
 
 ## 2. Frame format ✅ VERIFIED
 
 ```
- byte:  0      1   2      3        4      5     6     7 … n-5     n-4 … n-1
-      ┌────┬─────────┬───────┬──────┬─────┬─────┬────────────┬──────────────┐
-      │ AA │ len (LE)│ CRC8  │ type │ seq │ cmd │  payload…  │ CRC32 (LE)   │
-      └────┴─────────┴───────┴──────┴─────┴─────┴────────────┴──────────────┘
-        SOF  u16       of len  └──────── "inner" ─────────────┘
+ frame byte:  0      1   2      3      4 ...................... n-5   n-4 ... n-1
+            ┌────┬─────────┬──────┬────────────────────────────┬──────────────┐
+            │ AA │ len (LE)│ CRC8 │ inner (zero-padded to ×4)  │ CRC32 (LE)   │
+            └────┴─────────┴──────┴────────────────────────────┴──────────────┘
+ inner byte:                        0      1      2      3…
+                                   type   seq    opcode body…      (commands & responses)
+                                   type   ver    …                 (data records)
 ```
 
-- `len` = number of bytes **after** the 4-byte header, including the CRC32.
-- **CRC-8**: poly `0x07`, init `0x00`, no reflection, no final XOR, computed over the 2 length bytes only. [OS]
-- **CRC-32**: standard zlib/IEEE CRC-32 (poly `0x04C11DB7`, reflected form `0xEDB88320`, init `0xFFFFFFFF`,
-  final XOR `0xFFFFFFFF`). Python: `zlib.crc32(inner)`. Computed over `type … payload`. Stored little-endian. [OS]
-- `seq` = rolling counter. The band does not appear to check it. [BW]
+- `len` = `len(inner) + 4` (everything after the header, including the CRC32).
+- **CRC-8:** poly `0x07`, init `0`, no reflection, no final XOR (CRC-8/SMBUS), over the 2 length bytes.
+- **CRC-32:** standard zlib/IEEE (`zlib.crc32(inner)`), over the padded inner, stored little-endian.
+- **Padding:** inner is zero-padded to a multiple of 4. 🟢 [OS], and every [BW] sample has this property.
+- **Reassembly:** frames can span several notifications, or share one. Reassemble by **length**, not by
+  searching for `0xAA` (which can appear inside data). Zero bytes between frames are padding. [OS]
+- `seq` is a rolling counter. The band doesn't check it [BW], but responses echo it (§5).
 
-**How we verified it:** 9 sample frames from [BW] (HR on/off, start activity, reboot, realtime, alarm, sync-end, erase)
-all pass both CRCs. 
+**Conflict resolved:** [BW] lists CRC-32 params "init 0x0, xorout 0xF43F44AC" (found with a CRC brute-forcer), and
+[CM] mixes init 0xFFFFFFFF with that xorout. Plain zlib CRC-32 over the inner bytes matches every sample, so those
+parameter sets are brute-forcing artifacts.
 
-**Conflict resolved:** [BW] lists CRC-32 params "init 0x0, xorout 0xF43F44AC", found with a CRC brute-forcer.
-[CM] mixes init 0xFFFFFFFF with that xorout. The plain zlib CRC over the inner bytes matches every sample,
-so we treat the [BW]/[CM] parameter sets as artifacts of brute-forcing over a different byte range.
+## 3. Packet types (`inner[0]`)
 
-## 3. Packet types (byte 4)
-
-From [OS] `constants.dart`. Rows marked ✅ also appear in [BW] sample packets with the same meaning.
-
-| Hex | Name | Tag |
-|---|---|---|
-| 0x23 | command (phone → band) | ✅ |
-| 0x24 | command response | 🟡 |
-| 0x28 | realtime data (compact HR) | ✅ ([BW] realtime sample) |
-| 0x2B | realtime raw data | 🟡 |
-| 0x2F | historical data (record per second) | ✅ ([BW] 96-byte sync packets `aa5c00f02f…`) |
-| 0x30 | event | ✅ ([BW] events `…30`) |
-| 0x31 | metadata (history start/end/complete) | ✅ ([BW] sync-end `…31`) |
-| 0x32 | console logs | 🟡 |
-| 0x33 / 0x34 | realtime / historical IMU stream | 🟡 |
-
-## 4. Commands (byte 6, when type = 0x23)
-
-### Allowlist: the toolkit may send these
-
-| Hex | Name [OS] | What [BW] saw | Tag |
+| Hex | Name | Direction / characteristic | Tag |
 |---|---|---|---|
-| 0x01 | linkValid | n/a | 🟡 |
-| 0x03 | toggleRealtimeHr | "start/stop activity", then ~1/s packets on DATA | 🟢 |
-| 0x07 | reportVersionInfo (firmware version) | n/a | 🟡 **we want this first: check firmware** |
-| 0x0B | getClock | n/a | 🟡 |
-| 0x0E | setGenericHrProfile | **HR broadcast on/off** (enables 0x2A37) | 🟢 ⚠️ see below |
-| 0x16 | sendHistoricalData | triggers history download | 🟢 |
-| 0x17 | historicalDataResult (ack a batch) | "request next batch" with batch token | 🟢 |
-| 0x1A | getBatteryLevel | n/a | 🟡 response format 🔴 unknown |
-| 0x22 | getDataRange | n/a | 🟡 |
-| 0x73/0x74 | getConfigKeyCount / getConfigKeyName | sent at end of sync | 🟢 |
-| 0x91 | getHello | n/a | 🟡 |
+| 0x23 | COMMAND | phone → band (CMD_TO) | ✅ |
+| 0x24 | COMMAND_RESPONSE | CMD_FROM | 🟡 |
+| 0x28 | REALTIME_DATA (HR + RR) | DATA | 🟢 |
+| 0x2B | REALTIME_RAW | DATA | 🟡 |
+| 0x2F | HISTORICAL_DATA (1 Hz record) | DATA | 🟢 |
+| 0x30 | EVENT | EVENTS | 🟢 |
+| 0x31 | METADATA (history markers) | DATA | 🟢 |
+| 0x32 | CONSOLE_LOGS | ? | 🟡 |
+| 0x33 / 0x34 | REALTIME_IMU / HISTORICAL_IMU | DATA | 🟡 |
 
-⚠️ **0x0E is on OpenStrap's "dangerous" list** because it writes a persistent setting on the band. But it is exactly
-what [BW] used (and what the official app's "HR broadcast" toggle does), with verified frames:
-- ON: `aa0800a823080e016c935474`
-- OFF: `aa0800a823070e00c7e40f08`
+## 4. Commands (`inner[2]` when type = 0x23)
 
-We'll allow it, with a confirmation prompt the first time.
+Builders are in `protocol/frames.py`. **Allowlist** in `protocol/constants.py`: anything not listed can't be built.
 
-### Needed but payload unknown 🔴
-- **0x0A setClock.** The band's clock can be unset, which gives garbage timestamps [OS]. Payload format is TBD; we'll read OpenStrap `commands.dart` in Phase 1.
+### Read-only (sent automatically by sniff.py)
 
-### Blocklist: the toolkit refuses to send these
-`0x0F` forgetBonds, `0x19` forceTrim (**erases data**), `0x1D` reboot, `0x20` powerCycle, `0x21` setReadPointer,
-`0x24–0x26` firmware update, `0x8A`, `0x94`, `0x95`, `0x99`, `0x9A`, `0x77`, `0x78`. Source: [OS] `dangerousCmds`.
-
-## 5. Realtime packet (type 0x28) 🟡
-
-[BW] sample: `aa1800ff 28 02 ad896566 f065 42 01 6706 0000000000000101 3ba00d4d`
-
-| Offset | Bytes | Meaning | Tag |
+| Hex | Name [OS] | Payload | Tag |
 |---|---|---|---|
-| 6–9 | `ad896566` | Unix time LE = 1716947373 (2024-05-29) | 🟢 plausible date |
-| 10–11 | `f065` | sub-seconds? | 🔴 |
-| 12 | `42` | heart rate = 66 bpm | 🟡 |
-| 13 | `01` | RR interval count | 🟡 |
-| 14–… | `6706…` | RR values | 🔴 `0x0667` = 1639, which doesn't fit 66 bpm (~909 ms). Units/offset unknown |
+| 0x07 | REPORT_VERSION_INFO | (none) | 🟡 response layout 🔴 unknown |
+| 0x0B | GET_CLOCK | `00` | 🟡 |
+| 0x1A | GET_BATTERY_LEVEL | (none) | 🟡 |
+| 0x22 | GET_DATA_RANGE | `00` | 🟡 |
+| 0x23 | GET_HELLO_HARVARD | `00` | 🟡 first packet of the official app's start-up sequence |
+| 0x01, 0x43, 0x4C, 0x54, 0x62, 0x91 | other GET_* queries | | 🟡 allowed, not used yet |
 
-Phase 1 will capture 0x28 and standard 0x2A37 (which has well-defined RR in 1/1024 s) **at the same time** to solve this.
+### Stateful (sent only with an explicit flag)
 
-## 6. Historical sync 🟢 ([BW] flow matches [OS] constants)
+| Hex | Name | Payload | Tag |
+|---|---|---|---|
+| 0x03 | TOGGLE_REALTIME_HR | `01` on / `00` off | ✅ builder matches [BW] capture |
+| 0x0E | SET_GENERIC_HR_PROFILE ("HR broadcast") | `01` / `00` | ✅ builder matches [BW] captures. ⚠️ persistent setting, [OS] lists it as dangerous. We ask first and turn it back off |
+| 0x0A | SET_CLOCK | u32 secs LE · u16 subsec (1/32768 s) LE · `00 00` (exactly 8 bytes) | 🟡 [OS]: a wrong length is ACKed but ignored |
+| 0x16 | SEND_HISTORICAL_DATA | `00` | 🟢 |
+| 0x17 | HISTORICAL_DATA_RESULT (ack) | `01` + 8-byte token (§7) | 🟢 layout [BW]+[OS], token contents 🔴 see §7 |
+| 0x14 | ABORT_HISTORICAL | | 🟡 |
 
-1. Connect, subscribe to all notify characteristics, raise the MTU.
-2. Set the clock (0x0A). 🔴 payload TBD
-3. Send `sendHistoricalData` (0x16).
-4. Band streams `0x2F` records (1 Hz), then a `0x31` metadata packet where byte 6 = `02` (**historyEnd**) carrying a batch token.
-   - [BW] sample: `aa1c00ab 31 18 02 f65c7066 804043000000 2e470100 04000000000000 7f873cf3`
-5. Phone **saves the batch first**, then acks with `historicalDataResult` (0x17) + the token.
-   **Without the ack, the band resends the same batch forever** [OS]. If we ack before saving, we can lose data.
-6. Repeat until `historyComplete` (metadata byte 6 = `03`). 🟡
+### Refused (not on the allowlist)
+`0x0F` forget bonds · `0x19` force trim (**erases data**) · `0x1D` reboot · `0x20` power cycle · `0x21` set read pointer ·
+`0x24–0x26` firmware update · `0x8A` · `0x94` · `0x95` · `0x99` · `0x9A` · gen5 `0x77`/`0x78`, plus **every undocumented opcode**.
 
-The band reportedly stores **~2 weeks** of ~1 Hz data while away from a phone. This matters for the app design (see the plan).
+## 5. Command response (type 0x24) 🟡 [OS]
 
-## 7. Historical record (type 0x2F, "R24", 1 Hz) 🟡 [OS]
+| Offset | Meaning |
+|---|---|
+| `[2]` | opcode being answered |
+| `[3]` | seq of our request (echo) |
+| `[4]` | status: 0 failed · 1 ok · 2 deferred · 3 not implemented |
+| `[5:]` | body |
 
-Offsets into the inner payload: `[1]` record version · `[3:7]` counter · `[7:11]` unix ts · `[11:13]` sub-seconds ·
-**`[17]` HR bpm (0 = off wrist)** · `[29]` green PPG ADC · `[36:48]` 3× float32 accel (g) · `[64]` red ADC · `[66]` IR ADC · `[70]` ambient light.
-SpO2/temperature/ambient are **raw, uncalibrated ADC counts**, not percentages or °C.
+| Response to | Body decoding |
+|---|---|
+| GET_BATTERY_LEVEL | u16 LE at `[5:7]` ÷ 10 = percent (gen4 uses deci-percent) |
+| GET_CLOCK | u32 LE at `[5:9]` = unix seconds (a garbage value means the clock isn't set) |
+| GET_DATA_RANGE | `[14:18]` write page · `[18:22]` trim page · `[22:26]` wrap count · `[26:30]` capacity · `[30:34]` used · `[34:38]` free · `[38:42]` oldest record time · `[62:66]` newest record time |
+| REPORT_VERSION_INFO | 🔴 unknown. sniff.py prints hex + ASCII. **Also try standard Device Information char `2a26` (Firmware Revision)**, which sniff.py reads automatically |
 
-RR intervals in history records: 🔴 **unknown**. This is the biggest open question for overnight HRV
-(see the plan, risk R3).
+## 6. Realtime packet (type 0x28) 🟢 [OS] layout, consistent with [BW] sample
 
-## 8. Low-confidence source warning ⚠️
+[BW] sample inner: `28 02 | ad896566 | f065 | 42 | 01 | 6706 0000 0000 0000 | 01 | 01`
 
-[CM] whoop-reader's 96-byte table (HR at bytes 1–2, SpO2 % at 5, skin temp °C at 6) **contradicts** [BW] and [OS].
-Those offsets would land inside the frame header. The README also has internal inconsistencies.
-We **do not** use [CM]'s field map until a capture from my band backs it up. (Security lesson: verify sources,
-even ones that look authoritative.)
+| Offset | Sample | Meaning | Tag |
+|---|---|---|---|
+| `[2:6]` | `ad896566` | u32 unix secs = 1717930413 = 2024-06-09 10:53 UTC | 🟢 |
+| `[6:8]` | `f065` | sub-seconds | 🔴 units unknown |
+| `[8]` | `42` | HR = 66 bpm (0 = no reading) | 🟢 |
+| `[9]` | `01` | RR count (max 4) | 🟢 |
+| `[10+2i]` | `6706` | RR i16 LE in **ms** [OS] = 1639 ms | 🔴 1639 ms means a 37 bpm beat, odd at 66 bpm. Could be a skipped beat. **Test:** capture 0x28 and 0x2A37 together, then `decode_helper hr` |
+| `[18]` | `01` | wearing flag | 🟡 |
 
-## 9. Firmware risk ⚠️
+## 7. Historical sync 🟢
 
-- [OS] warns that some newer firmware withholds history/live data without a WHOOP-signed membership token,
-  and advises **keeping the band away from the official WHOOP app** so it can't auto-update.
-  I could **not** independently confirm the specific version numbers.
-- **Action:** read the firmware version (0x07) as the very first thing in Phase 1 and record it here.
+1. Connect, subscribe to every notify characteristic.
+2. (Optional) SET_CLOCK. [OS] says a fresh band's clock is unset, which gives bad timestamps. Check GET_CLOCK first.
+3. SEND_HISTORICAL_DATA (0x16).
+4. The band streams 0x2F records, then a METADATA packet:
+
+   | Offset | Meaning | [BW] sample value |
+   |---|---|---|
+   | `[2]` | meta type: 1 start · **2 end of batch** · 3 complete | `02` |
+   | `[3:7]` | u32 timestamp | `f65c7066` = 2024-06-17 15:57 UTC |
+   | `[7:9]` | sub-seconds | `8040` |
+   | `[9:13]` | u32 records in this batch | `43000000` = 67 |
+   | `[13:21]` | **8-byte ack token**: u32 trim page + u32 wrap count | `2e470100 04000000` |
+
+5. **Save the batch to disk, then** ack with `0x17`, payload `01` + token. If you don't ack, the band resends the
+   same batch forever [OS]. If you ack before saving and then crash, that data may be gone.
+6. Repeat until meta type 3 (complete).
+
+🔴 **Token conflict:** [OS] echoes all 8 token bytes (`2e470100 04000000`). [BW]'s captured ack showed
+`2e470100 00000000`. We follow [OS] (more recent, more thorough). If the band ignores our ack, this is the first
+thing to check.
+
+The band reportedly stores **~2 weeks** of ~1 Hz data.
+
+## 8. Historical record (type 0x2F) 🟡 [OS]
+
+`inner[1]` is the **record version** here, not seq. [BW]'s samples are version `0x0c` (12). [OS] decodes 12 and 24 directly.
+
+| Offset | Meaning |
+|---|---|
+| `[1]` | record version |
+| `[3:7]` | u32 record counter |
+| `[7:11]` | u32 unix timestamp |
+| `[11:13]` | sub-seconds |
+| `[17]` | **HR bpm** (0 = off wrist) |
+| `[29]` | green PPG ADC |
+| `[36:48]` | 3 × float32 accelerometer (g). Gravity vector: magnitude should be about 1 when still |
+| `[64]`, `[66]`, `[70]` | red, IR, ambient ADC (raw counts, **not** SpO₂ % or °C) |
+
+🔴 **Do history records contain RR intervals?** Unknown, and it's **the most important open question**: no RR in
+history means overnight HRV only works while the phone is connected. The parser tries the R10 layout
+(count at `[18]`, i16 ms from `[19]`) and reports it as `rr_ms_unverified`. Confirm with `decode_helper`.
+
+## 9. Events (type 0x30) 🟡 [OS]
+
+`[2:4]` u16 event id · `[4:8]` u32 timestamp · `[8:10]` sub-seconds · `[10:12]` u16 body length · `[12:]` body.
+Notable IDs: 3 battery · 7/8 charging on/off · 9/10 wrist on/off · 13 RTC lost · 14 double tap · 33/34 realtime HR on/off.
+Battery body: `[1:5]` u32 deci-percent · `[5:9]` u32 millivolts · `[9]` charging.
+
+## 10. Low-confidence source ⚠️
+
+[CM] whoop-reader's 96-byte table (HR at bytes 1–2, SpO₂ % at 5, skin temp °C at 6) contradicts [BW] and [OS]: those
+offsets fall inside the frame header. Its README is also internally inconsistent. **We don't use it.**
+(Security lesson: an authoritative-looking README is a claim, not evidence. Check it against real data.)
+
+## 11. Firmware risk ⚠️
+
+[OS] says some newer firmware withholds data without a WHOOP-signed membership token, and advises keeping the band
+**away from the official WHOOP app** so it can't auto-update. I could not independently confirm which versions are affected.
 
 | Field | Value |
 |---|---|
-| My band firmware | _TBD (Phase 1)_ |
+| My band firmware | _TBD: run sniff.py_ |
 | Advertised name | _TBD_ |
+| Real service UUID | _TBD_ |
+| Battery % at first connect | _TBD_ |
