@@ -40,10 +40,10 @@ public enum RecoveryExplainer {
         let normalRHR = Stats.mean(baseRHR)
         var factors = [
             RecoveryFactor(kind: .hrv, title: "Heart rate variability",
-                           detail: "\(Int(hrv.rounded())) ms vs your normal \(Int(normalHRV.rounded())) ms",
+                           detail: comparison(hrv, normalHRV, unit: "ms"),
                            points: c.hrvPoints),
             RecoveryFactor(kind: .restingHeartRate, title: "Resting heart rate",
-                           detail: "\(Int(rhr.rounded())) bpm vs your normal \(Int(normalRHR.rounded())) bpm",
+                           detail: comparison(rhr, normalRHR, unit: "bpm"),
                            points: c.restingHRPoints),
             RecoveryFactor(kind: .sleep, title: "Sleep",
                            detail: day.sleepMinutes.map {
@@ -53,6 +53,16 @@ public enum RecoveryExplainer {
         ]
         factors.sort { abs($0.points) > abs($1.points) }
         return RecoveryBreakdown(components: c, factors: factors)
+    }
+
+    /// "68 ms vs your normal 61 ms". If both round to the same whole number, show one decimal
+    /// ("53.6 bpm vs your normal 54.4 bpm"); otherwise "54 vs 54, +3 points" looks like a contradiction.
+    /// (Found in the first real screenshots.)
+    static func comparison(_ value: Double, _ normal: Double, unit: String) -> String {
+        if Int(value.rounded()) == Int(normal.rounded()) && abs(value - normal) >= 0.05 {
+            return String(format: "%.1f %@ vs your normal %.1f %@", value, unit, normal, unit)
+        }
+        return "\(Int(value.rounded())) \(unit) vs your normal \(Int(normal.rounded())) \(unit)"
     }
 }
 

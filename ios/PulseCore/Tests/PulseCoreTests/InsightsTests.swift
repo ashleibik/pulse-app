@@ -29,6 +29,12 @@ import Testing
     #expect(atNormal.hrvPoints == 0)
 }
 
+@Test func factorDetailNeverShowsEqualNumbersForADifference() {
+    #expect(RecoveryExplainer.comparison(68.2, 61.4, unit: "ms") == "68 ms vs your normal 61 ms")
+    #expect(RecoveryExplainer.comparison(53.6, 54.4, unit: "bpm") == "53.6 bpm vs your normal 54.4 bpm")
+    #expect(RecoveryExplainer.comparison(54.0, 54.02, unit: "bpm") == "54 bpm vs your normal 54 bpm")
+}
+
 @Test func breakdownNeedsABaseline() {
     #expect(RecoveryExplainer.breakdown(for: computed.days[2], history: computed.days) == nil)
 }

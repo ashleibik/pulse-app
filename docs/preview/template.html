@@ -1,0 +1,494 @@
+<title>Pulse Preview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Nunito:wght@700;800&display=swap">
+<style>
+/* Layout: an iPhone-sized frame running Pulse's screens, with notes beside it (stacked on phones).
+   Single dark theme on purpose: it mirrors the app, which is dark-only (Theme.swift). */
+:root {
+  color-scheme: dark;
+  --bg: rgb(10, 13, 18);            /* Theme.background */
+  --page: rgb(16, 19, 26);
+  --card: rgb(26, 28, 36);          /* Theme.card */
+  --stroke: rgba(255, 255, 255, 0.07);
+  --fg: rgb(244, 246, 250);
+  --muted: rgba(255, 255, 255, 0.6);
+  --faint: rgba(255, 255, 255, 0.08);
+  --accent: rgb(69, 199, 245);
+  --green: rgb(41, 219, 122);
+  --yellow: rgb(255, 204, 56);
+  --red: rgb(255, 82, 82);
+  --strain: rgb(74, 143, 255);
+  --sleep: rgb(163, 133, 255);
+  --heart: rgb(255, 92, 115);
+  --z1: rgb(140, 153, 179);
+  --font: -apple-system, "SF Pro Text", Inter, system-ui, "Segoe UI", sans-serif;
+  --rounded: ui-rounded, "SF Pro Rounded", Nunito, Inter, system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+body { background: var(--page); color: var(--fg); font-family: var(--font); }
+.wrap { max-width: 1060px; margin: 0 auto; padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+header h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -0.02em; }
+header p { margin: 0; color: var(--muted); max-width: 64ch; line-height: 1.5; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip { font-size: 12px; padding: 5px 10px; border-radius: 999px; background: var(--faint); color: var(--muted); }
+.chip b { color: var(--fg); font-weight: 600; }
+.stage { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); gap: 32px; align-items: start; }
+@media (max-width: 820px) { .stage { grid-template-columns: minmax(0, 1fr); justify-items: center; } }
+
+/* ---------- phone ---------- */
+.phone { width: 100%; max-width: 400px; height: 820px; border-radius: 52px; padding: 12px;
+  background: linear-gradient(145deg, rgb(52, 56, 66), rgb(22, 24, 30)); box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+.device { position: relative; height: 100%; border-radius: 42px; overflow: hidden; background: var(--bg);
+  display: flex; flex-direction: column; }
+.statusbar { flex: none; height: 46px; display: flex; justify-content: space-between; align-items: center;
+  padding: 0 30px 0 34px; font-size: 15px; font-weight: 600; }
+.island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 112px; height: 32px;
+  border-radius: 20px; background: #000; }
+.screen { flex: 1; overflow-y: auto; padding: 4px 16px 20px; scrollbar-width: none; }
+.screen::-webkit-scrollbar { display: none; }
+.tabbar { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); padding: 8px 6px 26px;
+  background: rgba(20, 22, 28, .94); border-top: 1px solid var(--stroke); }
+.tab { background: none; border: 0; color: var(--muted); font: 500 10px var(--font); display: grid;
+  justify-items: center; gap: 3px; cursor: pointer; padding: 2px 0; border-radius: 10px; }
+.tab svg { width: 24px; height: 24px; }
+.tab[aria-selected="true"] { color: var(--accent); }
+.tab:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- app content ---------- */
+.navrow { display: flex; justify-content: space-between; align-items: center; height: 36px; margin-bottom: 4px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 5px 10px;
+  border-radius: 999px; background: var(--faint); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); }
+.iconbtn { background: none; border: 0; color: var(--accent); font: 600 15px var(--font); cursor: pointer; padding: 4px; }
+.large { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin: 2px 0 0; }
+.sub { font-size: 14px; color: var(--muted); margin: 2px 0 12px; }
+.stack { display: grid; gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--stroke); border-radius: 20px; padding: 16px; display: grid; gap: 10px; }
+.card.center { justify-items: center; text-align: center; }
+.tap { cursor: pointer; transition: transform .15s ease; }
+.tap:hover { transform: translateY(-1px); }
+.label { font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  display: flex; justify-content: space-between; gap: 8px; }
+.label span:last-child { letter-spacing: 0; text-transform: none; font-weight: 400; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; line-height: 1.45; }
+.tiny { font-size: 11px; line-height: 1.4; }
+.headline { font-size: 20px; font-weight: 700; }
+.num { font-family: var(--rounded); font-weight: 800; font-variant-numeric: tabular-nums; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tile { background: var(--card); border: 1px solid var(--stroke); border-radius: 20px; padding: 14px; display: grid; gap: 4px; min-width: 0; }
+.tile .t { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 5px; }
+.tile .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tile .v small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 2px; }
+.tile .c { font-size: 11px; color: var(--muted); }
+.link { color: var(--accent); font-size: 13px; font-weight: 600; }
+.row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.row .grow { flex: 1; min-width: 0; }
+.badge { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  background: color-mix(in srgb, var(--strain) 16%, transparent); color: var(--strain); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--faint); border-radius: 9px; padding: 2px; }
+.seg button { border: 0; background: none; color: var(--fg); font: 600 13px var(--font); padding: 6px; border-radius: 7px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: rgb(64, 67, 77); }
+svg text { font-family: var(--font); }
+.factor { display: grid; gap: 6px; }
+.factor .top { display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+.needrow { display: flex; justify-content: space-between; font-size: 14px; font-variant-numeric: tabular-nums; }
+
+/* ---------- notes ---------- */
+.notes { display: grid; gap: 18px; font-size: 15px; line-height: 1.55; min-width: 0; }
+.notes h2 { font-size: 17px; margin: 0 0 6px; }
+.notes p, .notes li { color: var(--muted); max-width: 62ch; }
+.notes ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.notes code { font-size: 13px; background: var(--faint); padding: 1px 6px; border-radius: 6px; color: var(--fg); }
+@media (prefers-reduced-motion: reduce) { .tap { transition: none; } .ring-arc { transition: none !important; } }
+</style>
+
+<main class="wrap">
+  <header>
+    <h1>Pulse, running on demo data</h1>
+    <p>A clickable look-alike of the iOS app's screens. Every number is computed by the real PulseCore code
+      (metrics engine v<span id="algo"></span>, recovery breakdown, sleep timeline, insights) from a simulated month of
+      heartbeats. The layout copies the SwiftUI screens; the real app's screenshots come from the macOS build.</p>
+    <div class="chips">
+      <span class="chip"><b>30 days</b> simulated band data</span>
+      <span class="chip">Generated <b id="gen"></b></span>
+      <span class="chip">Times shown in UTC (the simulation's clock)</span>
+    </div>
+  </header>
+
+  <div class="stage">
+    <div class="phone" aria-label="Pulse app preview">
+      <div class="device">
+        <div class="island" aria-hidden="true"></div>
+        <div class="statusbar" aria-hidden="true"><span>9:41</span><span style="letter-spacing:2px;font-size:11px">●●● ▮▮</span></div>
+        <div class="screen" id="screen" tabindex="-1"></div>
+        <nav class="tabbar" role="tablist" aria-label="Pulse tabs" id="tabbar"></nav>
+      </div>
+    </div>
+
+    <aside class="notes">
+      <section>
+        <h2>Try it</h2>
+        <ul>
+          <li>Tap the <b>recovery ring</b> on Today to see what moved the score.</li>
+          <li>Tap the tabs: Sleep has the night timeline, Activity has heart-rate zones, Trends has insights.</li>
+          <li>On Trends, switch between 7 and 30 days.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>What's real and what isn't</h2>
+        <ul>
+          <li><b>Real:</b> every metric, explanation, factor point, target, timeline segment and insight. They come
+            from <code>MetricsEngine</code>, <code>RecoveryExplainer</code>, <code>SleepTimeline</code> and
+            <code>TrendInsights</code>, the same functions the app calls.</li>
+          <li><b>Simulated:</b> the heartbeats and movement. The band hasn't arrived yet.</li>
+          <li><b>Approximated:</b> the visuals. Fonts, spacing and chart styling are close to the SwiftUI code, not
+            pixel-identical. Settings and the welcome screens aren't recreated here.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Regenerate</h2>
+        <p>Run <code>.\ios\scripts\build-preview.ps1</code>. It re-runs the export with today's date and rebuilds
+          this page.</p>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<script type="application/json" id="data">/*__DATA__*/</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const C = {
+    green: "var(--green)", yellow: "var(--yellow)", red: "var(--red)", strain: "var(--strain)",
+    sleep: "var(--sleep)", heart: "var(--heart)", accent: "var(--accent)", muted: "var(--muted)",
+    zones: ["var(--z1)", "var(--accent)", "var(--green)", "var(--yellow)", "var(--red)"],
+  };
+  const days = D.days;
+  const today = days[days.length - 1];
+
+  // ---------- formatting (mirrors PulseFormat) ----------
+  const dur = m => { m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h === 0 ? `${r}m` : (r === 0 ? `${h}h` : `${h}h ${r}m`); };
+  const pct = v => `${Math.round(v)}%`;
+  const s1 = v => v.toFixed(1);
+  const utc = (iso, opts) => new Date(iso).toLocaleString("en-US", { timeZone: "UTC", ...opts });
+  const time = iso => utc(iso, { hour: "numeric", minute: "2-digit" });
+  const zoneColor = z => z === "green" ? C.green : z === "yellow" ? C.yellow : z === "red" ? C.red : C.muted;
+  const headline = z => ({ green: "Ready to push", yellow: "Take it steady", red: "Prioritise rest" })[z] || "";
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+  // ---------- icons (simple stand-ins for SF Symbols) ----------
+  const ico = {
+    today: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4.5"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M5.2 18.8l1.4-1.4M17.4 6.6l1.4-1.4"/></g></svg>',
+    sleep: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.5 3.5a8.5 8.5 0 1 0 6 14.4A7 7 0 0 1 14.5 3.5z"/></svg>',
+    activity: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 4 5 6 5 11a5 5 0 0 1-10 0c0-2.4 1.2-4 2.5-5 .2 2 1 3 2 3.5C11 9 11.5 5 12 2z"/></svg>',
+    trends: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M6 15l4-5 4 3 5-7"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm9 4.6v-2.2l-2.4-.5a7 7 0 0 0-.7-1.7l1.3-2-1.6-1.6-2 1.3a7 7 0 0 0-1.7-.7L13.1 3h-2.2l-.5 2.4a7 7 0 0 0-1.7.7l-2-1.3-1.6 1.6 1.3 2a7 7 0 0 0-.7 1.7L3 10.9v2.2l2.4.5c.2.6.4 1.2.7 1.7l-1.3 2 1.6 1.6 2-1.3c.5.3 1.1.5 1.7.7l.5 2.4h2.2l.5-2.4c.6-.2 1.2-.4 1.7-.7l2 1.3 1.6-1.6-1.3-2c.3-.5.5-1.1.7-1.7z"/></svg>',
+  };
+  const kindIcon = { run: "🏃", ride: "🚴", strength: "🏋", walk: "🚶", hiit: "🔥", other: "♥" };
+
+  // ---------- drawing helpers (SVG, one scale per chart) ----------
+  function ring(score, zone, size = 200, width = 16) {
+    const r = (size - width) / 2 - 6, c = 2 * Math.PI * r, frac = score == null ? 0 : score / 100;
+    const col = zoneColor(zone);
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img"
+      aria-label="Recovery ${score == null ? "not available" : pct(score)}">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${col}" stroke-opacity=".15" stroke-width="${width}"/>
+      <circle class="ring-arc" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${col}" stroke-width="${width}"
+        stroke-linecap="round" stroke-dasharray="${c * frac} ${c}" transform="rotate(-90 ${size / 2} ${size / 2})"
+        style="filter: drop-shadow(0 0 8px ${col});"/>
+      <text x="50%" y="${size / 2 + 4}" text-anchor="middle" fill="var(--fg)" font-family="var(--rounded)"
+        font-weight="800" font-size="${size * 0.26}">${score == null ? "--" : pct(score)}</text>
+      <text x="50%" y="${size / 2 + size * 0.17}" text-anchor="middle" fill="var(--muted)" font-size="11"
+        font-weight="600" letter-spacing="1.6">RECOVERY</text></svg>`;
+  }
+
+  function strainBar(strain, target) {
+    const w = 100, x = v => (Math.min(v, 21) / 21) * w;
+    return `<svg viewBox="0 0 100 4" preserveAspectRatio="none" width="100%" height="12" role="img"
+      aria-label="Strain ${s1(strain)} of 21, target ${target[0]} to ${target[1]}">
+      <rect x="0" y="0" width="100" height="4" rx="2" fill="var(--faint)"/>
+      <rect x="${x(target[0])}" y="0" width="${x(target[1]) - x(target[0])}" height="4" rx="2" fill="var(--strain)" fill-opacity=".28"/>
+      <rect x="0" y="0" width="${Math.max(2, x(strain))}" height="4" rx="2" fill="var(--strain)"/></svg>`;
+  }
+
+  function hbar(fraction, color) {
+    return `<svg viewBox="0 0 100 4" preserveAspectRatio="none" width="100%" height="10" aria-hidden="true">
+      <rect width="100" height="4" rx="2" fill="var(--faint)"/>
+      <rect width="${Math.max(2, Math.min(1, fraction) * 100)}" height="4" rx="2" fill="${color}"/></svg>`;
+  }
+
+  function contribution(points, full = 30) {
+    const len = Math.max(1.5, Math.min(1, Math.abs(points) / full) * 50);
+    const x = points >= 0 ? 50 : 50 - len;
+    return `<svg viewBox="0 0 100 4" preserveAspectRatio="none" width="100%" height="8" aria-hidden="true">
+      <rect width="100" height="4" rx="2" fill="var(--faint)"/>
+      <rect x="49.8" width=".4" height="4" fill="rgba(255,255,255,.35)"/>
+      <rect x="${x}" width="${len}" height="4" rx="2" fill="${points >= 0 ? "var(--green)" : "var(--red)"}"/></svg>`;
+  }
+
+  /** Bar chart: items [{v, color}], yMax, optional dashed reference line. */
+  function bars(items, { yMax, ref, height = 140, unit = "" } = {}) {
+    const W = 320, H = height, padL = 28, padB = 18, padT = 8, n = items.length;
+    const max = yMax ?? (Math.max(...items.map(i => i.v ?? 0)) * 1.15 || 1);
+    const y = v => padT + (H - padT - padB) * (1 - v / max);
+    const bw = (W - padL) / n;
+    const ticks = [0, max / 2, max].map(t => `<text x="${padL - 6}" y="${y(t) + 4}" text-anchor="end" font-size="10" fill="var(--muted)">${Math.round(t)}${unit}</text>
+      <line x1="${padL}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--faint)"/>`).join("");
+    const rects = items.map((it, i) => it.v == null ? "" : `<rect x="${padL + i * bw + bw * 0.18}" y="${y(it.v)}" width="${bw * 0.64}"
+      height="${Math.max(1, y(0) - y(it.v))}" rx="${Math.min(3, bw * 0.2)}" fill="${it.color}" ${it.dim ? 'opacity=".55"' : ""}/>`).join("");
+    const refLine = ref == null ? "" : `<line x1="${padL}" x2="${W}" y1="${y(ref)}" y2="${y(ref)}" stroke="rgba(255,255,255,.45)" stroke-dasharray="4 4"/>`;
+    const labels = items.map((it, i) => (i % Math.ceil(n / 7) === 0) ? `<text x="${padL + i * bw + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="9" fill="var(--muted)">${it.label}</text>` : "").join("");
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img">${ticks}${rects}${refLine}${labels}</svg>`;
+  }
+
+  /** Line chart over [{x (ms), v}], y auto-scaled without zero. */
+  function line(points, { color, ref, height = 130, xLabels = [] } = {}) {
+    const W = 320, H = height, padL = 28, padB = 18, padT = 8;
+    const vs = points.map(p => p.v), lo = Math.min(...vs, ref ?? Infinity), hi = Math.max(...vs, ref ?? -Infinity);
+    const span = Math.max(1, hi - lo), min = lo - span * 0.15, max = hi + span * 0.15;
+    const xs = points.map(p => p.x), x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const x = t => padL + (W - padL - 6) * ((t - x0) / Math.max(1, x1 - x0));
+    const y = v => padT + (H - padT - padB) * (1 - (v - min) / (max - min));
+    const path = points.map((p, i) => `${i ? "L" : "M"}${x(p.x).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+    const ticks = [min + (max - min) * 0.15, (min + max) / 2, max - (max - min) * 0.15].map(t => `
+      <text x="${padL - 6}" y="${y(t) + 4}" text-anchor="end" font-size="10" fill="var(--muted)">${Math.round(t)}</text>
+      <line x1="${padL}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--faint)"/>`).join("");
+    const refLine = ref == null ? "" : `<line x1="${padL}" x2="${W}" y1="${y(ref)}" y2="${y(ref)}" stroke="rgba(255,255,255,.45)" stroke-dasharray="4 4"/>`;
+    const last = points[points.length - 1];
+    const dots = points.length <= 10 ? points.map(p => `<circle cx="${x(p.x)}" cy="${y(p.v)}" r="2.5" fill="${color}"/>`).join("") : "";
+    const xl = xLabels.map(l => `<text x="${x(l.x)}" y="${H - 4}" text-anchor="middle" font-size="9" fill="var(--muted)">${l.text}</text>`).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img">${ticks}${refLine}
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      ${dots}<circle cx="${x(last.x)}" cy="${y(last.v)}" r="3.5" fill="${color}"/>${xl}</svg>`;
+  }
+
+  function timeline(night) {
+    const W = 320, H = 116, padL = 52, rowH = 26, rows = ["awake", "light", "restful"];
+    const names = { awake: "Awake", light: "Light", restful: "Restful" };
+    const col = { awake: C.yellow, light: "rgba(163,133,255,.5)", restful: C.sleep };
+    const t0 = Date.parse(night.start), t1 = Date.parse(night.end);
+    const x = t => padL + (W - padL - 4) * ((t - t0) / (t1 - t0));
+    const rects = night.segments.map(s => `<rect x="${x(Date.parse(s.start))}" y="${rows.indexOf(s.phase) * rowH + 4}"
+      width="${Math.max(1, x(Date.parse(s.end)) - x(Date.parse(s.start)))}" height="${rowH - 8}" rx="2" fill="${col[s.phase]}"/>`).join("");
+    const labels = rows.map((r, i) => `<text x="0" y="${i * rowH + rowH / 2 + 4}" font-size="11" fill="var(--muted)">${names[r]}</text>`).join("");
+    const hours = [];
+    const first = new Date(t0); first.setUTCMinutes(0, 0, 0);
+    for (let t = first.getTime() + 3600e3; t < t1; t += 2 * 3600e3) {
+      hours.push(`<line x1="${x(t)}" x2="${x(t)}" y1="0" y2="${rowH * 3}" stroke="var(--faint)"/>
+        <text x="${x(t)}" y="${H - 4}" text-anchor="middle" font-size="9" fill="var(--muted)">${utc(new Date(t).toISOString(), { hour: "numeric" })}</text>`);
+    }
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Sleep timeline: restful ${dur(night.totals.restful || 0)}, light ${dur(night.totals.light || 0)}, awake ${dur(night.totals.awake || 0)}">${hours.join("")}${labels}${rects}</svg>`;
+  }
+
+  const dayLabel = iso => utc(iso, { weekday: "narrow" });
+  const avg = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
+
+  // ---------- screens ----------
+  const S = {};
+
+  S.today = () => {
+    const t = today, z = t.zone, target = D.strainTarget;
+    const isToday = w => w.start.slice(0, 10) === t.date.slice(0, 10);
+    const todays = D.workouts.filter(isToday);
+    const base = (v, b) => v == null || b == null ? "building baseline" : (() => { const d = Math.round(v - b); return d === 0 ? "at your normal" : d > 0 ? `▲ ${d} vs normal` : `▼ ${-d} vs normal`; })();
+    const hour = new Date(D.generatedAt).getUTCHours();
+    const greet = hour >= 5 && hour < 12 ? "Good morning" : hour < 18 && hour >= 12 ? "Good afternoon" : "Good evening";
+    return `
+      <div class="navrow"><span class="pill"><span class="dot"></span>Demo data</span><button class="iconbtn" aria-label="Settings (not in preview)">${ico.gear}</button></div>
+      <h2 class="large">${greet}</h2>
+      <p class="sub">${utc(t.date, { weekday: "long", month: "long", day: "numeric" })}</p>
+      <div class="stack">
+        <div class="card center tap" data-go="recovery" role="button" tabindex="0">
+          ${ring(t.recovery, z)}
+          ${z ? `<div class="headline" style="color:${zoneColor(z)}">${headline(z)}</div>` : ""}
+          <div class="small muted">${esc(t.explanation)}</div>
+          <div class="link">See what moved your score ›</div>
+        </div>
+        <div class="card">
+          <div class="row"><span style="color:var(--strain);font-weight:600;font-size:14px">🔥 Strain</span><span class="grow"></span>
+            <span class="num" style="font-size:24px">${s1(t.strain)}</span><span class="muted tiny">/ 21</span></div>
+          ${strainBar(t.strain, target)}
+          <div class="tiny muted">${esc(D.strainAdvice)}</div>
+        </div>
+        <div class="grid2">
+          ${tile("Sleep", "moon", C.sleep, t.sleepMinutes == null ? "--" : dur(t.sleepMinutes), "", t.sleepMinutes == null ? "no data" : `${Math.round(t.sleepMinutes / t.sleepNeedMinutes * 100)}% of need`)}
+          ${tile("Need tonight", "bed", C.sleep, dur(D.tonightNeed), "", "go to bed in time")}
+          ${tile("HRV", "hrv", C.green, t.hrv == null ? "--" : Math.round(t.hrv), "ms", base(t.hrv, t.baselineHRV))}
+          ${tile("Resting HR", "heart", C.heart, t.restingHR == null ? "--" : Math.round(t.restingHR), "bpm", base(t.restingHR, t.baselineRHR))}
+        </div>
+        <div class="label" style="margin-top:6px"><span>Today's activity</span><span>${todays.length || ""}</span></div>
+        <div class="card">${todays.length ? todays.map(workoutRow).join("") : '<span class="small muted">No workouts yet today.</span>'}</div>
+      </div>`;
+  };
+
+  function tile(title, icon, color, value, unit, caption) {
+    const glyph = { moon: "☾", bed: "🛏", hrv: "∿", heart: "♥" }[icon];
+    return `<div class="tile"><div class="t" style="color:${color}">${glyph} ${title}</div>
+      <div class="v">${value}${unit ? `<small>${unit}</small>` : ""}</div><div class="c">${caption}</div></div>`;
+  }
+
+  function workoutRow(w) {
+    return `<div class="row"><div class="badge" aria-hidden="true">${kindIcon[w.kind] || "♥"}</div>
+      <div class="grow"><div style="font-weight:600">${w.name}</div>
+      <div class="tiny muted">${time(w.start)} · ${dur(w.minutes)} · avg ${w.avgHR} bpm</div></div>
+      <div style="text-align:right"><div class="num" style="font-size:19px">${s1(w.strain)}</div><div class="tiny muted">strain</div></div></div>`;
+  }
+
+  S.recovery = () => {
+    const t = today, recent = days.slice(-14);
+    const factors = D.factors.length ? D.factors.map(f => {
+      const p = Math.round(f.points);
+      return `<div class="factor"><div class="top"><span>${f.title}</span>
+        <span style="color:${f.points >= 0 ? "var(--green)" : "var(--red)"}">${p === 0 ? "±0" : (p > 0 ? "+" : "") + p}</span></div>
+        ${contribution(f.points)}<div class="tiny muted">${esc(f.detail)}</div></div>`;
+    }).join("") + '<div class="tiny muted">Points compared with a night exactly at your normal (which scores 50%).</div>'
+      : `<div class="small muted">${esc(t.explanation)}</div>`;
+    return `
+      <div class="navrow"><button class="iconbtn" data-go="today">‹ Today</button><strong>Recovery</strong><span style="width:60px"></span></div>
+      <div class="stack">
+        <div class="card center" style="background:none;border:0">${ring(t.recovery, t.zone, 170, 14)}
+          ${t.zone ? `<div class="headline" style="color:${zoneColor(t.zone)}">${headline(t.zone)}</div>` : ""}</div>
+        <div class="card"><div class="label"><span>What moved your score</span></div>${factors}</div>
+        <div class="card"><div class="label"><span>Today's strain target</span><span>${D.strainTarget[0]}–${D.strainTarget[1]}</span></div>
+          ${strainBar(t.strain, D.strainTarget)}<div class="small muted">${esc(D.strainAdvice)}</div></div>
+        <div class="card"><div class="label"><span>Last 14 days</span><span>dashed = your normal</span></div>
+          ${bars(recent.map((d, i) => ({ v: d.recovery, color: zoneColor(d.zone), dim: i !== recent.length - 1, label: dayLabel(d.date) })), { yMax: 100, ref: 50, height: 150 })}</div>
+        <div class="card"><div style="font-weight:600">How it's calculated</div><div class="small muted">Last night's HRV and resting heart
+          rate are compared with your own average over the previous 14 nights, and your sleep with what you needed. Being at your
+          normal scores 50%. Pulse needs 4 nights before it shows a score.</div></div>
+        <div class="tiny muted">Pulse is for general wellness, not medical advice.</div>
+      </div>`;
+  };
+
+  S.sleep = () => {
+    const n = D.lastNight;
+    if (!n) return '<h2 class="large">Sleep</h2><p class="sub">No sleep yet.</p>';
+    const need = today.sleepNeedMinutes;
+    const hr = n.heartRate.map(p => ({ x: Date.parse(p.t), v: p.bpm }));
+    const low = Math.min(...hr.map(p => p.v));
+    const hrLabels = [];
+    for (let t = Math.ceil(hr[0].x / 7200e3) * 7200e3; t < hr[hr.length - 1].x; t += 7200e3) hrLabels.push({ x: t, text: utc(new Date(t).toISOString(), { hour: "numeric" }) });
+    const capped = n.needGoal + n.needStrain + n.needDebt > n.needTotal + 0.5;
+    return `
+      <h2 class="large">Sleep</h2>
+      <div class="navrow" style="margin:6px 0 10px"><span class="iconbtn" aria-hidden="true">‹</span>
+        <div style="text-align:center"><div style="font-weight:600">Last night</div><div class="tiny muted">${time(n.start)} – ${time(n.end)}</div></div>
+        <span class="iconbtn muted" aria-hidden="true">›</span></div>
+      <div class="stack">
+        <div class="card"><div class="row"><span class="num" style="font-size:36px">${dur(n.asleep)}</span><span class="muted">asleep</span></div>
+          ${hbar(n.asleep / need, C.sleep)}<div class="small muted">${Math.round(n.asleep / need * 100)}% of the ${dur(need)} you needed</div></div>
+        <div class="card"><div class="label"><span>Your night</span></div>${timeline(n)}
+          <div class="legend"><span><i style="background:var(--sleep)"></i>Restful ${dur(n.totals.restful || 0)}</span>
+            <span><i style="background:rgba(163,133,255,.5)"></i>Light ${dur(n.totals.light || 0)}</span>
+            <span><i style="background:var(--yellow)"></i>Awake ${dur(n.totals.awake || 0)}</span></div>
+          <div class="tiny muted">Restful = very still with a low heart rate. Pulse doesn't guess REM or deep sleep: heart rate and motion alone can't measure them reliably.</div></div>
+        <div class="card"><div class="label"><span>Heart rate</span><span>lowest ${Math.round(low)} bpm</span></div>
+          ${line(hr, { color: C.heart, height: 140, xLabels: hrLabels })}</div>
+        <div class="grid2">${tile("Efficiency", "bed", C.sleep, pct(n.efficiency * 100), "", "asleep / in bed")}
+          ${tile("Wake-ups", "moon", C.sleep, n.disturbances, "", `${n.awake} min awake`)}</div>
+        <div class="card"><div class="label"><span>Why you needed ${dur(n.needTotal)}</span></div>
+          <div class="needrow"><span>Your baseline</span><span>${dur(n.needGoal)}</span></div>
+          <div class="needrow"><span>Yesterday's strain</span><span class="${n.needStrain > 0 ? "" : "muted"}">+${dur(n.needStrain)}</span></div>
+          <div class="needrow"><span>Recent sleep debt</span><span class="${n.needDebt > 0 ? "" : "muted"}">+${dur(n.needDebt)}</span></div>
+          ${capped ? '<div class="tiny muted">Capped at 10 hours.</div>' : ""}</div>
+      </div>`;
+  };
+
+  S.activity = () => {
+    const t = today, zones = D.todayZoneMinutes, total = zones.reduce((a, b) => a + b, 0) || 1;
+    const groups = {};
+    D.workouts.forEach(w => (groups[w.start.slice(0, 10)] ||= []).push(w));
+    const keys = Object.keys(groups).sort().reverse();
+    const dayTitle = k => k === t.date.slice(0, 10) ? "Today" : utc(k + "T12:00:00Z", { weekday: "long", month: "short", day: "numeric" });
+    return `
+      <h2 class="large">Activity</h2><p class="sub"></p>
+      <div class="stack">
+        <div class="card"><div class="row"><div class="grow"><div style="font-weight:600">Day strain</div>
+          <div class="tiny muted">Target ${D.strainTarget[0]}–${D.strainTarget[1]} based on your recovery</div></div>
+          <span class="num" style="font-size:34px">${s1(t.strain)}</span></div>
+          ${strainBar(t.strain, D.strainTarget)}<div class="small muted">${esc(D.strainAdvice)}</div></div>
+        <div class="card"><div class="label"><span>Heart rate zones today</span><span>max HR ${D.maxHR}</span></div>
+          ${zones.reduce((a, b) => a + b, 0) === 0 ? '<div class="small muted">No time above 50% of your max heart rate yet today.</div>' :
+            zones.map((m, i) => `<div class="row"><b class="tiny" style="width:22px">Z${i + 1}</b><div class="grow">${hbar(m / total, C.zones[i])}</div>
+              <span class="tiny muted" style="width:48px;text-align:right">${dur(m)}</span></div>`).join("")}</div>
+        <div class="label" style="margin-top:6px"><span>Workouts</span><span>last 14 days</span></div>
+        ${keys.map(k => `<div class="card"><div class="small muted" style="font-weight:600">${dayTitle(k)}</div>${groups[k].map(workoutRow).join("")}</div>`).join("")}
+      </div>`;
+  };
+
+  let period = 7;
+  S.trends = () => {
+    const win = days.slice(-period);
+    const w = D.week;
+    const badge = (d, fmt) => d == null || Math.abs(d) < 0.05 ? '<span class="tiny muted">no change</span>'
+      : `<span class="tiny" style="color:${d > 0 ? "var(--green)" : "var(--yellow)"};font-weight:600">${d > 0 ? "▲" : "▼"} ${fmt(Math.abs(d))}</span>`;
+    const stat = (title, v, delta, fmt) => `<div class="tile"><div class="t muted">${title}</div><div class="v" style="font-size:17px">${v}</div>${badge(delta, fmt)}</div>`;
+    const toneColor = { positive: "var(--green)", neutral: "var(--accent)", caution: "var(--yellow)" };
+    const series = (key) => win.filter(d => d[key] != null).map(d => ({ x: Date.parse(d.date), v: d[key] }));
+    const xl = win.filter((_, i) => i % Math.ceil(win.length / 7) === 0).map(d => ({ x: Date.parse(d.date), text: dayLabel(d.date) }));
+    const chartCard = (title, html, a) => `<div class="card"><div class="label"><span>${title}</span><span>${a ?? ""}</span></div>${html}</div>`;
+    const hrv = series("hrv"), rhr = series("restingHR");
+    const sleepItems = win.map(d => ({ v: d.sleepMinutes == null ? null : d.sleepMinutes / 60, color: "var(--sleep)", label: dayLabel(d.date) }));
+    const strainItems = win.map(d => ({ v: d.strain, color: "var(--strain)", label: dayLabel(d.date) }));
+    const recItems = win.map(d => ({ v: d.recovery, color: zoneColor(d.zone), label: dayLabel(d.date) }));
+    const a = (arr) => avg(arr.filter(v => v != null));
+    return `
+      <h2 class="large">Trends</h2><p class="sub"></p>
+      <div class="stack">
+        <div class="seg" role="group" aria-label="Period">
+          <button data-period="7" aria-pressed="${period === 7}">7 days</button>
+          <button data-period="30" aria-pressed="${period === 30}">30 days</button></div>
+        <div class="grid2" style="grid-template-columns:1fr 1fr 1fr">
+          ${stat("Recovery", w.recovery.current == null ? "--" : pct(w.recovery.current), w.recovery.delta, v => Math.round(v))}
+          ${stat("HRV", w.hrv.current == null ? "--" : Math.round(w.hrv.current) + " ms", w.hrv.delta, v => Math.round(v))}
+          ${stat("Sleep", w.sleep.current == null ? "--" : dur(w.sleep.current), w.sleep.delta, v => dur(v))}
+        </div>
+        <div class="tiny muted">This week's averages vs the week before</div>
+        <div class="label" style="margin-top:4px"><span>Insights</span></div>
+        ${D.insights.map(i => `<div class="card"><div class="row" style="align-items:flex-start">
+          <div class="badge" style="background:color-mix(in srgb, ${toneColor[i.tone]} 16%, transparent);color:${toneColor[i.tone]}">●</div>
+          <div class="grow"><div style="font-weight:600">${esc(i.title)}</div><div class="small muted">${esc(i.detail)}</div></div></div></div>`).join("")}
+        <div class="label" style="margin-top:4px"><span>Charts</span></div>
+        ${chartCard("Recovery", bars(recItems, { yMax: 100, ref: a(recItems.map(i => i.v)) }), a(recItems.map(i => i.v)) == null ? "" : "avg " + pct(a(recItems.map(i => i.v))))}
+        ${hrv.length ? chartCard("Heart rate variability", line(hrv, { color: C.green, ref: avg(hrv.map(p => p.v)), xLabels: xl }), "avg " + Math.round(avg(hrv.map(p => p.v))) + " ms") : ""}
+        ${rhr.length ? chartCard("Resting heart rate", line(rhr, { color: C.heart, ref: avg(rhr.map(p => p.v)), xLabels: xl }), "avg " + Math.round(avg(rhr.map(p => p.v))) + " bpm") : ""}
+        ${chartCard("Sleep", bars(sleepItems, { ref: a(sleepItems.map(i => i.v)), unit: "h" }), "avg " + dur(a(sleepItems.map(i => i.v)) * 60))}
+        ${chartCard("Strain", bars(strainItems, { yMax: 21, ref: a(strainItems.map(i => i.v)) }), "avg " + s1(a(strainItems.map(i => i.v))))}
+      </div>`;
+  };
+
+  // ---------- navigation ----------
+  const tabs = [["today", "Today"], ["sleep", "Sleep"], ["activity", "Activity"], ["trends", "Trends"]];
+  const tabbar = document.getElementById("tabbar"), screen = document.getElementById("screen");
+  let current = "today";
+  tabbar.innerHTML = tabs.map(([id, name]) =>
+    `<button class="tab" role="tab" data-tab="${id}" aria-selected="${id === current}">${ico[id]}<span>${name}</span></button>`).join("");
+
+  function show(view) {
+    current = view;
+    screen.innerHTML = S[view]();
+    screen.scrollTop = 0;
+    const tab = view === "recovery" ? "today" : view;
+    tabbar.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  }
+  tabbar.addEventListener("click", e => { const b = e.target.closest(".tab"); if (b) show(b.dataset.tab); });
+  screen.addEventListener("click", e => {
+    const go = e.target.closest("[data-go]"); if (go) { show(go.dataset.go); return; }
+    const p = e.target.closest("[data-period]"); if (p) { period = Number(p.dataset.period); show("trends"); }
+  });
+  screen.addEventListener("keydown", e => {
+    const go = e.target.closest("[data-go]");
+    if (go && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); show(go.dataset.go); }
+  });
+
+  document.getElementById("algo").textContent = D.algorithmVersion;
+  document.getElementById("gen").textContent = utc(D.generatedAt, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " UTC";
+  show("today");
+})();
+</script>

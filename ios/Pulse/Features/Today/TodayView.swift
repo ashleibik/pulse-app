@@ -28,7 +28,8 @@ struct TodayView: View {
             .screenBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { SyncStatusChip() }
+                // The status pill lives in the header, not here: on iOS 26 toolbar items become
+                // small round "glass" buttons and the pill's text was cut off (seen in CI screenshots).
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape.fill") }
                         .accessibilityLabel("Settings")
@@ -63,13 +64,16 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(greeting)
                 .font(.largeTitle.weight(.bold))
-            Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondaryText)
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 10) {
+                Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.secondaryText)
+                SyncStatusChip()
+                    .fixedSize()
+            }
         }
         .padding(.top, 4)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
     }
 
     private func recoveryCard(_ today: DaySummaryRecord) -> some View {

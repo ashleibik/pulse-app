@@ -22,5 +22,8 @@ let package = Package(
     targets: [
         .target(name: "PulseCore"),
         .testTarget(name: "PulseCoreTests", dependencies: ["PulseCore"]),
+        // `swift run PulseDemoExport > demo.json`: the demo month as computed by the real engine,
+        // used by the web preview (docs/preview) while the app can't run on Windows.
+        .executableTarget(name: "PulseDemoExport", dependencies: ["PulseCore"]),
     ]
 )
