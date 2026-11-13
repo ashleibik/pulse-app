@@ -62,13 +62,18 @@ struct RecomputeOutput: Sendable {
     let days: [DailySummary]
     let sleeps: [SleepSession]
     let workoutStrain: [UUID: Double]
+    /// Workouts found in the raw data (only after a band sync; `nil` = leave workouts alone).
+    var detectedWorkouts: [Workout]? = nil
 }
 
 /// Re-runs the metrics engine over every stored raw minute, in the background.
 /// Used after profile changes, and in Phase 5 after each band sync.
 @ModelActor
 actor MetricsRecomputer {
-    func run(profile: MetricsProfile, calendar: Calendar, now: Date) throws -> RecomputeOutput {
+    /// - Parameter detectWorkouts: also look for workouts in the raw data (used after a band sync;
+    ///   the demo month brings its own workouts).
+    func run(profile: MetricsProfile, calendar: Calendar, now: Date,
+             detectWorkouts: Bool = false) throws -> RecomputeOutput {
         let records = try modelContext.fetch(FetchDescriptor<MinuteRecord>(sortBy: [SortDescriptor(\.start)]))
         let minutes = records.map(\.value)
         let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now)
@@ -78,7 +83,37 @@ actor MetricsRecomputer {
             strain[workout.id] = MetricsEngine.strain(of: minutes, from: workout.start, to: workout.end,
                                                       restingHR: rest, profile: profile)
         }
-        return RecomputeOutput(days: result.days, sleeps: result.sleeps, workoutStrain: strain)
+        var output = RecomputeOutput(days: result.days, sleeps: result.sleeps, workoutStrain: strain)
+        if detectWorkouts {
+            output.detectedWorkouts = WorkoutDetector.detect(minutes: minutes, profile: profile) { date in
+                result.days.first { calendar.isDate($0.date, inSameDayAs: date) }?.restingHeartRate
+            }
+        }
+        return output
+    }
+}
+
+/// Saves history downloaded from the band, on a background thread (its own ModelContext).
+@ModelActor
+actor BandImporter {
+    /// Turns ~1 Hz records into minutes and stores them. When this returns, the data is on disk,
+    /// and only then may the batch be acknowledged to the band.
+    func save(_ records: [Whoop.HistoryRecord], source: DataSource) throws {
+        let minutes = MinuteBuilder.minutes(from: records, source: source)
+        guard let first = minutes.first?.start, let last = minutes.last?.start else { return }
+        let end = last.addingTimeInterval(60)
+        let stored = try modelContext.fetch(FetchDescriptor<MinuteRecord>(
+            predicate: #Predicate<MinuteRecord> { record in record.start >= first && record.start < end }))
+        var byStart: [Date: MinuteRecord] = [:]
+        for record in stored { byStart[record.start] = record }
+        for minute in minutes {
+            if let existing = byStart[minute.start] {
+                existing.merge(minute)
+            } else {
+                modelContext.insert(MinuteRecord(minute))
+            }
+        }
+        try modelContext.save()
     }
 }
 
@@ -92,8 +127,33 @@ extension PulseStore {
             context.insert(DaySummaryRecord(day, algorithmVersion: MetricsEngine.algorithmVersion))
         }
         for sleep in output.sleeps { context.insert(SleepRecord(sleep)) }
-        for workout in try context.fetch(FetchDescriptor<WorkoutRecord>()) {
+        let workouts = try context.fetch(FetchDescriptor<WorkoutRecord>())
+        for workout in workouts {
             if let strain = output.workoutStrain[workout.id] { workout.strain = strain }
+        }
+        if let detected = output.detectedWorkouts {
+            // Planned demo workouts are kept as they are. Detected ones are added, updated, or
+            // removed if the detector no longer finds them. IDs are stable (WorkoutDetector.stableID),
+            // so a workout keeps its Apple Health / Strava marks across syncs.
+            let demo = workouts.filter { $0.sourceRaw == DataSource.simulated.rawValue }
+            var fromBand: [UUID: WorkoutRecord] = [:]
+            for workout in workouts where workout.sourceRaw != DataSource.simulated.rawValue {
+                fromBand[workout.id] = workout
+            }
+            for found in detected {
+                if demo.contains(where: { $0.start < found.end && $0.end > found.start }) { continue }
+                if let existing = fromBand.removeValue(forKey: found.id) {
+                    existing.end = found.end
+                    existing.averageHeartRate = found.averageHeartRate
+                    existing.maxHeartRate = found.maxHeartRate
+                    existing.strain = found.strain
+                    existing.zoneSeconds = found.zoneSeconds
+                    existing.calories = found.calories
+                } else {
+                    context.insert(WorkoutRecord(found))
+                }
+            }
+            for stale in fromBand.values { context.delete(stale) }
         }
         try context.save()
     }

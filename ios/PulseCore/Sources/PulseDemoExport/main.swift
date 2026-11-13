@@ -9,6 +9,7 @@ struct Export: Encodable {
         let date: String
         let recovery: Double?
         let zone: String?
+        let word: String?          // "Ready" / "Steady" / "Rest"
         let strain: Double
         let sleepMinutes: Int?
         let sleepNeedMinutes: Int
@@ -31,13 +32,15 @@ struct Export: Encodable {
         let needGoal: Double; let needStrain: Double; let needDebt: Double; let needTotal: Double
     }
     struct InsightOut: Encodable { let title: String; let detail: String; let tone: String; let symbol: String }
-    struct Comparison: Encodable { let current: Double?; let delta: Double? }
+    /// `caption` is the change in words ("▲ 3 better"), from TrendInsights.changeCaption.
+    struct Comparison: Encodable { let current: Double?; let delta: Double?; let caption: String }
 
     let generatedAt: String
     let algorithmVersion: Int
     let maxHR: Double
     let days: [Day]
     let factors: [Factor]
+    let reason: String             // the one line under the recovery word on Today
     let strainTarget: [Double]
     let strainAdvice: String
     let tonightNeed: Int
@@ -45,7 +48,8 @@ struct Export: Encodable {
     let workouts: [WorkoutOut]
     let todayZoneMinutes: [Int]
     let insights: [InsightOut]
-    let week: [String: Comparison]
+    let week: [String: Comparison]     // last 7 days vs the 7 before
+    let month: [String: Comparison]    // last 30 days vs the 30 before
 }
 
 let calendar = Calendar.current
@@ -107,9 +111,19 @@ let todayZones = HeartRateZones.minutesPerZone(data.minutes.filter { $0.start >=
 let insights = TrendInsights.insights(days).map {
     Export.InsightOut(title: $0.title, detail: $0.detail, tone: $0.tone.rawValue, symbol: $0.symbolName)
 }
-func cmp(_ f: (DailySummary) -> Double?) -> Export.Comparison {
-    let c = TrendInsights.compare(days, period: 7, f)
-    return Export.Comparison(current: c.current, delta: c.delta)
+let wholeNumber: (Double) -> String = { String(format: "%.0f", $0) }
+let asDuration: (Double) -> String = { PulseFormat.duration(minutes: Int($0.rounded())) }
+@MainActor func cmp(_ period: Int, higherIsBetter: Bool = true, format: (Double) -> String,
+         _ f: (DailySummary) -> Double?) -> Export.Comparison {
+    let c = TrendInsights.compare(days, period: period, f)
+    return Export.Comparison(current: c.current, delta: c.delta,
+                             caption: TrendInsights.changeCaption(c.delta, higherIsBetter: higherIsBetter, format: format))
+}
+@MainActor func comparisons(_ period: Int) -> [String: Export.Comparison] {
+    ["recovery": cmp(period, format: wholeNumber) { $0.recoveryScore },
+     "hrv": cmp(period, format: wholeNumber) { $0.hrvRMSSD },
+     "restingHR": cmp(period, higherIsBetter: false, format: wholeNumber) { $0.restingHeartRate },
+     "sleep": cmp(period, format: asDuration) { $0.sleepMinutes.map { Double($0) } }]
 }
 
 let export = Export(
@@ -117,12 +131,14 @@ let export = Export(
     algorithmVersion: MetricsEngine.algorithmVersion,
     maxHR: profile.maxHeartRate,
     days: days.map { d in
-        Export.Day(date: s(d.date), recovery: d.recoveryScore, zone: d.recoveryZone?.rawValue, strain: d.strain,
+        Export.Day(date: s(d.date), recovery: d.recoveryScore, zone: d.recoveryZone?.rawValue,
+                   word: d.recoveryZone?.word, strain: d.strain,
                    sleepMinutes: d.sleepMinutes, sleepNeedMinutes: d.sleepNeedMinutes, restingHR: d.restingHeartRate,
                    hrv: d.hrvRMSSD, baselineRHR: d.baselineRestingHeartRate, baselineHRV: d.baselineHRV,
                    explanation: d.explanation)
     },
     factors: breakdown?.factors.map { Export.Factor(title: $0.title, detail: $0.detail, points: $0.points) } ?? [],
+    reason: RecoveryExplainer.oneLine(breakdown),
     strainTarget: [target.lowerBound, target.upperBound],
     strainAdvice: StrainGuidance.advice(strain: today.strain, recovery: today.recoveryScore),
     tonightNeed: Int(tonight.rounded()),
@@ -130,7 +146,8 @@ let export = Export(
     workouts: workouts,
     todayZoneMinutes: todayZones,
     insights: insights,
-    week: ["recovery": cmp(\.recoveryScore), "hrv": cmp(\.hrvRMSSD), "sleep": cmp { $0.sleepMinutes.map { Double($0) } }]
+    week: comparisons(7),
+    month: comparisons(30)
 )
 
 let encoder = JSONEncoder()

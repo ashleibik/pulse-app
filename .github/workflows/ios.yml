@@ -106,7 +106,7 @@ jobs:
           shot 0-welcome-light 6
           # First real launch generates 30 days of demo data (debug build: give it time).
           # This shot is taken again below, once the data is there.
-          shot 1-today-light 45 $SEEN -screenshotTab today
+          shot 1-today-light 60 $SEEN -screenshotTab today
 
           capture() {   # capture <light|dark>: every screen in one appearance
             xcrun simctl ui "$UDID" appearance "$1"
@@ -122,10 +122,15 @@ jobs:
             shot "5-trends-lower-$1" 7 $SEEN -screenshotTab trends -screenshotScroll bottom
             shot "6-settings-$1" 7 $SEEN -screenshotTab today -screenshotRoute settings
             shot "7-explainer-$1" 7 $SEEN -screenshotTab today -screenshotRoute explainer
+            shot "8-pairing-$1" 7 $SEEN -screenshotTab today -screenshotRoute pairing
           }
           capture light
           capture dark
           shot 0-welcome-dark 6
+          # Last, because it writes data: a full pairing + history download from the simulated band.
+          shot 9-pairing-simulated-dark 40 $SEEN -screenshotTab today -screenshotRoute pairing-sim
+          shot 9-today-after-sync-dark 7 $SEEN -screenshotTab today
+          shot 9-settings-paired-dark 7 $SEEN -screenshotTab today -screenshotRoute settings
           ls -la screenshots
 
       - uses: actions/upload-artifact@v4

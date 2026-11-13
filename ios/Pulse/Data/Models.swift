@@ -28,6 +28,25 @@ final class MinuteRecord {
         sourceRaw = sample.source.rawValue
     }
 
+    /// Adds band data to a minute that is already stored. Needed because a history batch can end
+    /// in the middle of a minute (the next batch brings the other seconds), and because the band
+    /// sends a batch again if our ack got lost. A second with a reading wins over one without.
+    func merge(_ sample: MinuteSample) {
+        var hr = [UInt8](heartRate)
+        var movement = [UInt8](activity)
+        let count = min(min(hr.count, movement.count), min(sample.heartRate.count, sample.activity.count))
+        for second in 0..<count where sample.heartRate[second] > 0 {
+            hr[second] = sample.heartRate[second]
+            movement[second] = sample.activity[second]
+        }
+        heartRate = Data(hr)
+        activity = Data(movement)
+        if !sample.rrIntervalsMs.isEmpty {
+            rrIntervals = BinaryCoding.encode(BinaryCoding.decodeUInt16(rrIntervals) + sample.rrIntervalsMs)
+        }
+        sourceRaw = sample.source.rawValue
+    }
+
     var value: MinuteSample {
         MinuteSample(start: start, heartRate: [UInt8](heartRate),
                      rrIntervalsMs: BinaryCoding.decodeUInt16(rrIntervals),

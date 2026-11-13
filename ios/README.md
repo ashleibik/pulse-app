@@ -9,7 +9,8 @@ ios/
       Models/          MinuteSample, SleepSession, Workout, DailySummary, BinaryCoding
       FakeData/        SeededRandom, FakeDataGenerator (30 realistic days)
       Text/            PulseFormat (durations, plain-language explanations)
-      Metrics/         Stats, HRV, SleepDetector, Load (strain/recovery), MetricsEngine, DemoData
+      Metrics/         Stats, HRV, SleepDetector, Load (strain/recovery), MetricsEngine, DemoData,
+                       WorkoutDetector (finds workouts in raw band data; our own heuristic)
                        -> spec: docs/METRICS.md, must match re-toolkit/metrics on shared/test-vectors
       Insights/        everything the screens need that's more than formatting, tested on Windows:
                        RecoveryExplainer (factor points), StrainGuidance (targets + advice),
@@ -19,13 +20,16 @@ ios/
                        allowlisted command builders, packet decoder, 0x2A37 parser
                        -> must match re-toolkit/protocol on shared/test-vectors/protocol_v1.json
                        HistorySync (download state machine: never acks before save), SimulatedBand
-                       (a fake band that speaks the protocol), MinuteBuilder (1 Hz records -> minutes)
+                       (a fake band that speaks the protocol), MinuteBuilder (1 Hz records -> minutes),
+                       BandSession (hello + clock check + history download as one tested state machine)
     Tests/PulseCoreTests/
   Pulse/               the SwiftUI app (needs Xcode)
     App/               PulseApp, RootView (tabs), Design (DS tokens = DESIGN.md in code)
-    Data/              SwiftData models, PulseStore, DemoDataLoader
+    Data/              SwiftData models, PulseStore (+ BandImporter), DemoDataLoader
+    Band/              BandLink (CoreBluetooth + simulated band), BandManager (pairing and syncing)
     Features/          Today, Recovery (detail), Sleep, Activity (+ workout detail), Trends,
-                       Settings (profile + recalculate), Welcome (first launch), Shared components
+                       Settings (profile, band, recalculate), Pairing (+ hidden band log),
+                       Welcome (first launch), Shared components
     Resources/         Assets.xcassets
   scripts/             swift-env.ps1, test-core.ps1 (Windows helpers)
 ```
@@ -56,6 +60,27 @@ The SwiftUI app **can't** be built on Windows. It's written against iOS 17 APIs 
 
 The workflow (`.github/workflows/ios.yml`) also runs the Python tests and the PulseCore tests on macOS.
 Each run costs about 5 macOS minutes (counted 10x against a private repo's free minutes).
+
+## The band (Phase 5b)
+
+How a sync works, and which part is tested where:
+
+```
+band  --Bluetooth-->  BandLink        bytes in / out                 (app, CoreBluetooth)
+                      BandSession     protocol: hello, clock, history (PulseCore, tested on Windows)
+                      BandImporter    saves minutes, THEN the ack     (app, SwiftData)
+                      MetricsEngine + WorkoutDetector, then the screens update
+```
+
+- **Try it without a band:** Settings > Pair your band > *Try a simulated band*. It replays the last
+  two days through the exact same protocol code (this is what the CI screenshots show).
+- **With the real band:** Settings > Pair your band > *Search for my band*. The demo month is
+  deleted and replaced by the band's history.
+- **Debug log:** Settings > tap the *Version* row 7 times.
+- **Not tested with a real band yet.** Open questions are listed in `re-toolkit/docs/PROTOCOL.md`
+  (service UUID, ack token, whether stored history contains RR intervals). Run the Python toolkit
+  against the band first; it is the safer place to find surprises.
+- **Not built yet:** background reconnect, live heart rate screen.
 
 ## On a Mac (when you have one)
 

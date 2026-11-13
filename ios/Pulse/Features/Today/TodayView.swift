@@ -16,6 +16,8 @@ struct TodayView: View {
 
     @State private var showSettings = LaunchOptions.route == "settings"
     @State private var showRecovery = LaunchOptions.route == "recovery"
+    /// Only opened from here by the screenshot job. Normally pairing starts in Settings.
+    @State private var showPairing = LaunchOptions.route == "pairing" || LaunchOptions.route == "pairing-sim"
     @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
     /// Goes up by one on every tap that opens something. Drives the light haptic.
     @State private var taps = 0
@@ -48,6 +50,9 @@ struct TodayView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showPairing) {
+                PairingView()
             }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
@@ -303,6 +308,7 @@ struct TrailingIconLabelStyle: LabelStyle {
     TodayView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DemoDataLoader())
+        .environment(BandManager())
         .preferredColorScheme(.light)
 }
 
@@ -310,5 +316,6 @@ struct TrailingIconLabelStyle: LabelStyle {
     TodayView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DemoDataLoader())
+        .environment(BandManager())
         .preferredColorScheme(.dark)
 }

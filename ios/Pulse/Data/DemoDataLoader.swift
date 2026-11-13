@@ -15,16 +15,41 @@ final class DemoDataLoader {
     private(set) var state: State = .idle
     /// True once raw minutes are saved (charts that need per-minute data wait for this).
     private(set) var rawDataReady = false
+    /// Goes up whenever the stored data changes (demo month regenerated, band synced). Screens
+    /// that read raw minutes use it to know when to read again.
+    private(set) var revision = 0
+
+    /// Set once the raw minutes of the demo month are completely saved. Without it, closing the
+    /// app during that save (it takes a few seconds) left the month without per-minute data
+    /// forever: the night and workout charts never loaded. (Found in the CI screenshots.)
+    private static let importCompleteKey = "demoRawImportComplete"
+
+    /// Call after a band sync changed the stored data.
+    func dataChanged() {
+        rawDataReady = true
+        state = .ready
+        revision += 1
+    }
 
     var isBusy: Bool { state == .generating || state == .recalculating }
 
     func loadIfEmpty(context: ModelContext) async {
         guard state == .idle else { return }
         let existing = (try? context.fetchCount(FetchDescriptor<DaySummaryRecord>())) ?? 0
-        if existing > 0 {
+        if DataSourceSetting.current == .band {
+            // A real band is the source now: never fill in demo data, even if it has no data yet.
             state = .ready
             rawDataReady = true
             return
+        }
+        if existing > 0 {
+            if UserDefaults.standard.bool(forKey: Self.importCompleteKey) {
+                state = .ready
+                rawDataReady = true
+                return
+            }
+            // The app was closed while the raw minutes were still being saved. Start the demo month again.
+            try? PulseStore.deleteAllHealthData(in: context)
         }
         await load(seed: 42, context: context)
     }
@@ -38,6 +63,7 @@ final class DemoDataLoader {
             return
         }
         rawDataReady = false
+        DataSourceSetting.current = .demo
         await load(seed: UInt64.random(in: 1...UInt64.max), context: context)
     }
 
@@ -58,6 +84,7 @@ final class DemoDataLoader {
 
     private func load(seed: UInt64, context: ModelContext) async {
         state = .generating
+        UserDefaults.standard.set(false, forKey: Self.importCompleteKey)
         let config = FakeDataConfig(days: 30, seed: seed)
         let profile = ProfileStore.current(in: context).metricsProfile
         // Simulated raw heartbeats + motion, then the REAL metrics engine computes every summary.
@@ -69,7 +96,9 @@ final class DemoDataLoader {
             try PulseStore.insertSummaries(data, into: context)
             state = .ready
             try await MinuteImporter(modelContainer: context.container).insert(data.minutes)
+            UserDefaults.standard.set(true, forKey: Self.importCompleteKey)
             rawDataReady = true
+            revision += 1
         } catch {
             state = .failed(error.localizedDescription)
         }

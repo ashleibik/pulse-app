@@ -6,6 +6,7 @@ struct RootView: View {
     @Environment(\.modelContext) private var context
     @State private var tab: Tab = Tab(rawValue: LaunchOptions.tab ?? "") ?? .today
     @State private var loader = DemoDataLoader()
+    @State private var band = BandManager()
     /// Per-device UI preference (not health data), so UserDefaults is fine here.
     /// (UserDefaults also reads launch arguments, so `-hasSeenWelcome YES` skips it for screenshots.)
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
@@ -30,11 +31,13 @@ struct RootView: View {
         .sensoryFeedback(.selection, trigger: tab)                    // light tick when switching tabs
         .sensoryFeedback(.success, trigger: loader.state == .ready)   // when demo data finishes loading
         .environment(loader)
+        .environment(band)
         .fullScreenCover(isPresented: Binding(get: { !hasSeenWelcome }, set: { hasSeenWelcome = !$0 })) {
             WelcomeView { hasSeenWelcome = true }
         }
         .task {
             // Until the band is paired, fill the app with demo data on first launch.
+            band.onDataChanged = { [loader] in loader.dataChanged() }
             await loader.loadIfEmpty(context: context)
         }
     }

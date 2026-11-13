@@ -38,8 +38,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Pulse
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Pulse connects to your band over Bluetooth to read your heart rate, sleep and activity data."
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # DEVELOPMENT_TEAM is set in Xcode (Signing & Capabilities), never committed.
-        # Later phases add: NSBluetoothAlwaysUsageDescription + bluetooth-central (Phase 5),
-        # HealthKit entitlement + usage strings (Phase 6).
+        # Not yet: the bluetooth-central background mode (reconnect while the app is closed).

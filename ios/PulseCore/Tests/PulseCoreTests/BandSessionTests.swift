@@ -1,0 +1,174 @@
+import Foundation
+import Testing
+@testable import PulseCore
+
+/// The whole "connected -> history saved" conversation, against the simulated band.
+/// `samples(_:start:)` comes from HistorySyncTests.swift; `dataset` / `computed` from the metrics tests.
+
+struct SessionHarness {
+    var band: SimulatedBand
+    var session = BandSession()
+    var now: Double
+    var saved: [Whoop.HistoryRecord] = []
+    var writes: [String] = []
+    var finishedRecords: Int?
+    var failure: String?
+    var lastInfo: BandSession.Info?
+    var logLines = 0
+    var progressReports = 0
+
+    init(band: SimulatedBand, now: Double) {
+        self.band = band
+        self.now = now
+    }
+
+    /// Runs until nothing is left to do. `answerClock: false` simulates a band that ignores GET_CLOCK.
+    mutating func run(answerClock: Bool = true, maxSteps: Int = 200_000) {
+        var queue = session.start()
+        var steps = 0
+        while steps < maxSteps {
+            steps += 1
+            if queue.isEmpty {
+                // Nothing pending. If we are still waiting for the clock, the app's timer would fire now.
+                guard session.phase == .hello else { break }
+                queue += session.clockTimedOut()
+                continue
+            }
+            switch queue.removeFirst() {
+            case .write(let bytes, let description):
+                writes.append(description)
+                if !answerClock && description == "GET_CLOCK" { continue }
+                for n in band.receive(write: bytes) {
+                    queue += session.receive(characteristic: n.characteristic, bytes: n.bytes, now: now)
+                }
+            case .persist(let records, let token):
+                #expect(!band.acksReceived.contains(token))     // never acked before it is saved
+                saved += records
+                queue += session.didPersist(token: token, recordCount: records.count)
+            case .info(let info): lastInfo = info
+            case .progress: progressReports += 1
+            case .liveHeartRate: break
+            case .finished(let records): finishedRecords = records
+            case .failed(let message): failure = message
+            case .log: logLines += 1
+            }
+        }
+    }
+}
+
+@Test func sessionSaysHelloThenDownloadsEverything() {
+    let start: UInt32 = 1_750_000_000
+    var h = SessionHarness(band: SimulatedBand(samples: samples(250, start: start), batchSize: 100, mtuPayload: 20,
+                                               clock: start + 250), now: Double(start) + 251)
+    h.run()
+    #expect(h.failure == nil)
+    #expect(h.finishedRecords == 250)
+    #expect(h.saved.map(\.timestamp) == (0..<250).map { start + UInt32($0) })
+    #expect(h.session.phase == .finished)
+    #expect(h.lastInfo?.batteryPercent == 76.5)
+    #expect(h.lastInfo?.clockWasSet == false)                   // the band's clock was right: leave it alone
+    #expect(h.writes.prefix(4) == ["GET_BATTERY_LEVEL", "REPORT_VERSION_INFO", "GET_CLOCK", "SEND_HISTORICAL_DATA"])
+    #expect(h.writes.filter { $0 == "HISTORY_ACK" }.count == 3)
+    #expect(h.progressReports == 3)
+    #expect(h.session.badFrames == 0)
+}
+
+@Test func sessionFixesAWrongClockBeforeDownloading() {
+    // A band whose clock was never set reports a tiny number. History timestamps would be garbage.
+    var h = SessionHarness(band: SimulatedBand(samples: samples(50), clock: 12_345), now: 1_750_000_100)
+    h.run()
+    #expect(h.lastInfo?.clockWasSet == true)
+    #expect(h.band.clock == 1_750_000_100)
+    let setClock = h.writes.firstIndex(of: "SET_CLOCK") ?? Int.max
+    let download = h.writes.firstIndex(of: "SEND_HISTORICAL_DATA") ?? -1
+    #expect(setClock < download)
+    #expect(h.finishedRecords == 50)
+}
+
+@Test func sessionStillDownloadsIfTheClockIsNeverAnswered() {
+    var h = SessionHarness(band: SimulatedBand(samples: samples(120), batchSize: 100), now: 1_750_000_200)
+    h.run(answerClock: false)
+    #expect(h.finishedRecords == 120)
+    #expect(!h.writes.contains("SET_CLOCK"))                    // unknown clock: leave it alone
+    #expect(h.writes.filter { $0 == "SEND_HISTORICAL_DATA" }.count == 1)   // and it starts exactly once
+}
+
+@Test func sessionCountsCorruptedFramesInsteadOfUsingThem() {
+    var session = BandSession()
+    _ = session.start()
+    var frame = Whoop.buildFrame(inner: [Whoop.PacketType.event.rawValue, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    frame[frame.count - 1] ^= 0xFF                              // break the checksum
+    let effects = session.receive(characteristic: Whoop.eventsUUID.uppercased(), bytes: frame, now: 0)
+    #expect(session.badFrames == 1)
+    #expect(effects.count == 1)
+    if case .log(let entry) = effects[0] {
+        #expect(!entry.crcOK && entry.channel == "EVENT")
+    } else {
+        Issue.record("expected a log line")
+    }
+}
+
+@Test func simulatedBandReplaysMinutesExactly() {
+    // minutes -> per-second samples -> history records -> minutes must be a round trip.
+    let window = Array(dataset.minutes.prefix(90))
+    let band = SimulatedBand.samples(from: window)
+    #expect(band.count == 90 * 60)
+    let records = band.map { s in
+        Whoop.HistoryRecord(version: 24, counter: 0, timestamp: s.timestamp, subsec: 0, heartRate: Int(s.heartRate),
+                            accelG: s.accel.map { Double($0) }, rrMsUnverified: [], length: 88)
+    }
+    let rebuilt = MinuteBuilder.minutes(from: records)
+    #expect(rebuilt.map(\.heartRate) == window.map(\.heartRate))
+    #expect(rebuilt.map(\.activity) == window.map(\.activity))
+}
+
+// MARK: - Workout detection
+
+@Test func detectorFindsTheHardWorkoutsInTheDemoMonth() {
+    let rest: (Date) -> Double? = { date in
+        computed.days.first { utcCalendar.isDate($0.date, inSameDayAs: date) }?.restingHeartRate
+    }
+    let detected = WorkoutDetector.detect(minutes: dataset.minutes, restingHeartRate: rest)
+    // Every clearly hard session the generator planned (average HR 125+ for 20+ minutes) must be found.
+    let hard = dataset.workouts.filter { $0.averageHeartRate >= 125 && $0.durationMinutes >= 20 }
+    #expect(hard.count >= 5)
+    for workout in hard {
+        let hit = detected.contains { $0.start < workout.end && $0.end > workout.start }
+        #expect(hit, "missed \(workout.kind) at \(workout.start)")
+    }
+    // And it must not invent a crowd of workouts out of normal daily life.
+    #expect(detected.count <= dataset.workouts.count + 6, "\(detected.count) detected vs \(dataset.workouts.count) planned")
+    for workout in detected {
+        #expect(workout.durationMinutes >= WorkoutDetector.minimumMinutes)
+        #expect(workout.strain > 0 && workout.strain <= 21)
+        #expect(workout.zoneSeconds.count == 5)
+    }
+}
+
+@Test func detectorIgnoresShortBurstsAndKeepsShortPauses() {
+    func minute(_ index: Int, hr: UInt8) -> MinuteSample {
+        MinuteSample(start: Date(timeIntervalSince1970: 1_750_000_020 + Double(index) * 60),
+                     heartRate: [UInt8](repeating: hr, count: 60), rrIntervalsMs: [],
+                     activity: [UInt8](repeating: 40, count: 60), source: .history)
+    }
+    // 6 hard minutes (too short), a long rest, then 8 hard + 2 easy + 8 hard (one workout with a pause).
+    var minutes: [MinuteSample] = []
+    for i in 0..<6 { minutes.append(minute(i, hr: 150)) }
+    for i in 6..<30 { minutes.append(minute(i, hr: 70)) }
+    for i in 30..<38 { minutes.append(minute(i, hr: 150)) }
+    for i in 38..<40 { minutes.append(minute(i, hr: 80)) }
+    for i in 40..<48 { minutes.append(minute(i, hr: 150)) }
+    for i in 48..<60 { minutes.append(minute(i, hr: 70)) }
+
+    let detected = WorkoutDetector.detect(minutes: minutes) { _ in 60 }
+    #expect(detected.count == 1)
+    #expect(detected.first?.start == minutes[30].start)
+    #expect(detected.first?.durationMinutes == 18)              // the trailing easy minutes are not counted
+    #expect(detected.first?.kind == .other)
+}
+
+@Test func workoutIDsAreStableAcrossRuns() {
+    let start = Date(timeIntervalSince1970: 1_750_000_020)
+    #expect(WorkoutDetector.stableID(start: start) == WorkoutDetector.stableID(start: start))
+    #expect(WorkoutDetector.stableID(start: start) != WorkoutDetector.stableID(start: start.addingTimeInterval(60)))
+}

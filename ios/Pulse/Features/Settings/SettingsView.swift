@@ -8,8 +8,15 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Environment(DemoDataLoader.self) private var loader
+    @Environment(BandManager.self) private var band
     @Query private var profiles: [ProfileRecord]
+    @Query private var bands: [BandRecord]
     @State private var confirmRegenerate = false
+    @State private var confirmForget = false
+    @State private var showPairing = false
+    @State private var showLog = false
+    /// Tapping the version row 7 times opens the band log (a hidden debug screen).
+    @State private var versionTaps = 0
 
     var body: some View {
         ScrollView {
@@ -20,14 +27,7 @@ struct SettingsView: View {
                     }
                 }
 
-                SettingsSection("Band", footer: "Bluetooth pairing arrives in Phase 5. Until then Pulse shows simulated data run through the real metrics engine.") {
-                    ValueRow(label: "Status", value: "Not paired")
-                    Hairline()
-                    Button("Pair your band") {}
-                        .buttonStyle(.secondaryPill)
-                        .disabled(true)
-                        .padding(.top, DS.Space.m)
-                }
+                bandSection
 
                 SettingsSection("Demo data") {
                     ValueRow(label: "State", value: stateText)
@@ -48,6 +48,14 @@ struct SettingsView: View {
 
                 SettingsSection("About", footer: "Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.") {
                     ValueRow(label: "Version", value: appVersion)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            versionTaps += 1
+                            if versionTaps >= 7 {
+                                versionTaps = 0
+                                showLog = true
+                            }
+                        }
                     Hairline()
                     ValueRow(label: "Metrics", value: "Algorithm v\(MetricsEngine.algorithmVersion)")
                     Hairline()
@@ -70,8 +78,53 @@ struct SettingsView: View {
                 Task { await loader.regenerate(context: context) }
             }
         }
+        .confirmationDialog("Forget this band?", isPresented: $confirmForget, titleVisibility: .visible) {
+            Button("Forget band") { band.forget(context: context) }
+        } message: {
+            Text("The data already downloaded stays on this iPhone.")
+        }
+        .sheet(isPresented: $showPairing) { PairingView() }
+        .sheet(isPresented: $showLog) { BandLogView() }
         .task {
             if profiles.isEmpty { _ = ProfileStore.current(in: context) }
+        }
+    }
+
+    /// Paired: what we know about the band + sync / forget. Not paired: the way in.
+    @ViewBuilder
+    private var bandSection: some View {
+        if let record = bands.first {
+            SettingsSection("Band", footer: "Pulse talks to the band directly over Bluetooth and never to WHOOP's servers.") {
+                ValueRow(label: "Name", value: record.name)
+                Hairline()
+                ValueRow(label: "Battery", value: record.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "Unknown",
+                         emphasized: record.batteryPercent != nil)
+                Hairline()
+                ValueRow(label: "Last sync",
+                         value: record.lastHistorySyncAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never",
+                         emphasized: record.lastHistorySyncAt != nil)
+                Hairline()
+                HStack(spacing: DS.Space.s) {
+                    Button("Sync now") {
+                        band.syncNow(context: context)
+                        showPairing = true
+                    }
+                    .buttonStyle(.secondaryPill)
+                    .disabled(band.isBusy)
+                    Button("Forget") { confirmForget = true }
+                        .buttonStyle(.secondaryPill)
+                        .disabled(band.isBusy)
+                }
+                .padding(.top, DS.Space.m)
+            }
+        } else {
+            SettingsSection("Band", footer: "Until a band is paired, Pulse shows a simulated month run through the real metrics engine.") {
+                ValueRow(label: "Status", value: "Not paired", emphasized: false)
+                Hairline()
+                Button("Pair your band") { showPairing = true }
+                    .buttonStyle(.secondaryPill)
+                    .padding(.top, DS.Space.m)
+            }
         }
     }
 

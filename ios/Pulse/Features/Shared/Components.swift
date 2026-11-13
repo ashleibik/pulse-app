@@ -518,10 +518,12 @@ extension String {
 /// Says where the numbers come from, in words. Outline only, so it stays quiet.
 struct StatusPill: View {
     @Environment(DemoDataLoader.self) private var loader
+    @Environment(BandManager.self) private var band
+    @Query private var bands: [BandRecord]
 
     var body: some View {
         HStack(spacing: 6) {
-            if loader.isBusy {
+            if loader.isBusy || band.isBusy {
                 ProgressView().controlSize(.mini)
             }
             Text(text)
@@ -536,12 +538,19 @@ struct StatusPill: View {
     }
 
     private var text: String {
+        if band.isBusy { return "Syncing…" }
         switch loader.state {
-        case .idle, .generating: "Preparing…"
-        case .recalculating: "Recalculating…"
-        case .ready: "Demo data"
-        case .failed: "Data error"
+        case .idle, .generating: return "Preparing…"
+        case .recalculating: return "Recalculating…"
+        case .failed: return "Data error"
+        case .ready: break
         }
+        guard let record = bands.first else {
+            return DataSourceSetting.current == .band ? "Band data" : "Demo data"
+        }
+        if record.peripheralID == SimulatedBandLink.bandID { return "Simulated band" }
+        guard let synced = record.lastHistorySyncAt else { return "Not synced yet" }
+        return "Synced \(synced.formatted(date: .omitted, time: .shortened))"
     }
 }
 

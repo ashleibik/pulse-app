@@ -37,7 +37,7 @@ struct ActivityView: View {
                     WorkoutDetailView(workout: workout)
                 }
             }
-            .task(id: "\(loader.rawDataReady)-\(days.first?.strain ?? 0)") { loadZones() }
+            .task(id: "\(loader.rawDataReady)-\(loader.revision)-\(days.first?.strain ?? 0)") { loadZones() }
             .task {
                 // Only the screenshot job sets this: open the hardest workout straight away.
                 if LaunchOptions.route == "workout", path.isEmpty,

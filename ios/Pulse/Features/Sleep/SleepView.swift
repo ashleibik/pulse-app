@@ -38,7 +38,7 @@ struct SleepView: View {
         // Only the screenshot job sets this (to capture the lower half of the screen).
         .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
         .monoBackground()
-        .task(id: "\(nightIndex)-\(loader.rawDataReady)-\(sleeps.count)") { loadNight() }
+        .task(id: "\(nightIndex)-\(loader.rawDataReady)-\(loader.revision)-\(sleeps.count)") { loadNight() }
         .sensoryFeedback(.selection, trigger: nightIndex)
     }
 
