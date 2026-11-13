@@ -26,16 +26,23 @@ struct TodayView: View {
                 if let today = days.first {
                     content(today)
                         .padding(.horizontal, DS.Space.side)
-                        .padding(.top, DS.Space.s)
+                        .padding(.top, DS.Space.l)
                         .padding(.bottom, DS.Space.xxl)
                 } else {
                     loadingState
                 }
             }
+            // The header stays pinned at the top (it replaces the navigation bar). Its solid
+            // background also covers the status bar, so scrolled content never runs under the clock.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                header
+                    .padding(.horizontal, DS.Space.side)
+                    .padding(.vertical, DS.Space.s)
+                    .background(DS.Colors.background)
+            }
             // Only the screenshot job sets this (to capture the lower half of the screen).
             .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
             .monoBackground()
-            // The header below replaces the navigation bar on this screen.
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showRecovery) {
                 if let today = days.first {
@@ -59,10 +66,7 @@ struct TodayView: View {
 
     private func content(_ today: DaySummaryRecord) -> some View {
         VStack(alignment: .leading, spacing: DS.Space.xxl) {
-            VStack(spacing: DS.Space.xl) {
-                header.riseIn(0)
-                hero(today).riseIn(1)
-            }
+            hero(today).riseIn(1)
             strain(today).riseIn(2)
             stats(today).riseIn(3)
             week.riseIn(4)

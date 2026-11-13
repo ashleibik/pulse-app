@@ -75,6 +75,8 @@ Rules:
 - Prefer white space, then a hairline (`border`, 1 pt), then a card. In that order.
 - At most **one or two cards per screen**.
 - Minimum tap target 44 × 44 pt.
+- No navigation bar on main screens. A slim header (title left, actions right) is pinned at the
+  top on a solid `background`, so content scrolls under it cleanly.
 
 ## 5. Shapes
 

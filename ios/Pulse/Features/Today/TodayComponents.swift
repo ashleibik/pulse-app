@@ -246,7 +246,7 @@ struct WeekRecoveryChart: View {
                 }
             }
         }
-        .frame(height: 132)
+        .frame(height: 104)
         .onAppear {
             if reduceMotion {
                 grown = true
