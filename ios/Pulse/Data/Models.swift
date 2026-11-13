@@ -132,6 +132,14 @@ final class DaySummaryRecord {
 
     var zone: RecoveryZone? { recoveryScore.map(RecoveryZone.init(score:)) }
     var isSimulated: Bool { sourceRaw == DataSource.simulated.rawValue }
+
+    /// Plain value for PulseCore's insight functions.
+    var value: DailySummary {
+        DailySummary(date: date, recoveryScore: recoveryScore, strain: strain, sleepMinutes: sleepMinutes,
+                     sleepNeedMinutes: sleepNeedMinutes, restingHeartRate: restingHeartRate, hrvRMSSD: hrvRMSSD,
+                     baselineRestingHeartRate: baselineRestingHeartRate, baselineHRV: baselineHRV,
+                     explanation: explanation, source: DataSource(rawValue: sourceRaw) ?? .history)
+    }
 }
 
 // MARK: - Device, profile, debug
@@ -155,14 +163,47 @@ final class BandRecord {
     }
 }
 
+/// The few personal details the formulas need. Stored only on this phone.
 @Model
 final class ProfileRecord {
     var birthYear: Int?
     var maxHeartRateOverride: Int?
     var sleepGoalMinutes: Int
+    var sexRaw: String = BiologicalSex.unspecified.rawValue
 
     init(sleepGoalMinutes: Int = 480) {
         self.sleepGoalMinutes = sleepGoalMinutes
+    }
+
+    var sex: BiologicalSex {
+        get { BiologicalSex(rawValue: sexRaw) ?? .unspecified }
+        set { sexRaw = newValue.rawValue }
+    }
+
+    /// Max HR: your override, else estimated from age (Tanaka 2001), else 190.
+    func estimatedMaxHeartRate(now: Date = .now, calendar: Calendar = .current) -> Double {
+        if let override = maxHeartRateOverride { return Double(override) }
+        if let year = birthYear {
+            let age = Double(calendar.component(.year, from: now) - year)
+            return Strain.estimatedMaxHeartRate(age: age)
+        }
+        return 190
+    }
+
+    var metricsProfile: MetricsProfile {
+        MetricsProfile(maxHeartRate: estimatedMaxHeartRate(), sex: sex, sleepGoalMinutes: Double(sleepGoalMinutes))
+    }
+}
+
+enum ProfileStore {
+    /// The single profile row, created on first use.
+    @MainActor
+    static func current(in context: ModelContext) -> ProfileRecord {
+        if let existing = try? context.fetch(FetchDescriptor<ProfileRecord>()).first { return existing }
+        let profile = ProfileRecord()
+        context.insert(profile)
+        try? context.save()
+        return profile
     }
 }
 

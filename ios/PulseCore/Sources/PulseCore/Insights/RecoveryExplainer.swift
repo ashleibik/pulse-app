@@ -1,0 +1,98 @@
+import Foundation
+
+/// One reason behind today's recovery score, e.g. "HRV: 68 ms vs your normal 61 ms, +12 points".
+public struct RecoveryFactor: Identifiable, Sendable, Equatable {
+    public enum Kind: String, Sendable { case hrv, restingHeartRate, sleep }
+
+    public let kind: Kind
+    public let title: String
+    public let detail: String
+    /// Score points this factor added (negative = it pulled the score down).
+    public let points: Double
+
+    public var id: String { kind.rawValue }
+}
+
+public struct RecoveryBreakdown: Sendable, Equatable {
+    public let components: RecoveryComponents
+    public let factors: [RecoveryFactor]   // biggest effect first
+}
+
+/// Rebuilds the "why" behind a stored daily summary.
+public enum RecoveryExplainer {
+
+    /// - Parameters:
+    ///   - day: the day to explain.
+    ///   - history: other stored days (any order). The 14 days before `day` become the baseline,
+    ///     the same rule the engine uses.
+    public static func breakdown(for day: DailySummary, history: [DailySummary]) -> RecoveryBreakdown? {
+        let previous = history.filter { $0.date < day.date }.sorted { $0.date < $1.date }
+            .suffix(MetricsEngine.baselineDays)
+        let baseHRV = previous.compactMap(\.hrvRMSSD)
+        let baseRHR = previous.compactMap(\.restingHeartRate)
+        guard let hrv = day.hrvRMSSD, let rhr = day.restingHeartRate,
+              let c = Recovery.components(hrv: hrv, rhr: rhr, sleepMinutes: day.sleepMinutes.map { Double($0) },
+                                          need: Double(day.sleepNeedMinutes),
+                                          baselineHRV: baseHRV, baselineRHR: baseRHR)
+        else { return nil }
+
+        let normalHRV = Stats.mean(baseHRV)
+        let normalRHR = Stats.mean(baseRHR)
+        var factors = [
+            RecoveryFactor(kind: .hrv, title: "Heart rate variability",
+                           detail: "\(Int(hrv.rounded())) ms vs your normal \(Int(normalHRV.rounded())) ms",
+                           points: c.hrvPoints),
+            RecoveryFactor(kind: .restingHeartRate, title: "Resting heart rate",
+                           detail: "\(Int(rhr.rounded())) bpm vs your normal \(Int(normalRHR.rounded())) bpm",
+                           points: c.restingHRPoints),
+            RecoveryFactor(kind: .sleep, title: "Sleep",
+                           detail: day.sleepMinutes.map {
+                               "\(PulseFormat.duration(minutes: $0)) of the \(PulseFormat.duration(minutes: day.sleepNeedMinutes)) you needed"
+                           } ?? "No sleep recorded",
+                           points: c.sleepPoints),
+        ]
+        factors.sort { abs($0.points) > abs($1.points) }
+        return RecoveryBreakdown(components: c, factors: factors)
+    }
+}
+
+/// How hard to go today, given recovery. Our own heuristic (docs/METRICS.md): the better recovered,
+/// the more load your body can absorb and adapt to.
+public enum StrainGuidance {
+
+    public static func targetRange(recovery: Double?) -> ClosedRange<Double> {
+        guard let recovery else { return 8...12 }        // no baseline yet: something moderate
+        switch RecoveryZone(score: recovery) {
+        case .green: return 14...18
+        case .yellow: return 10...14
+        case .red: return 0...10
+        }
+    }
+
+    public enum Status: Sendable, Equatable { case below, onTarget, above }
+
+    public static func status(strain: Double, target: ClosedRange<Double>) -> Status {
+        if strain < target.lowerBound { return .below }
+        if strain > target.upperBound { return .above }
+        return .onTarget
+    }
+
+    /// One plain-language line for the Today screen.
+    public static func advice(strain: Double, recovery: Double?) -> String {
+        let target = targetRange(recovery: recovery)
+        let range = "\(Int(target.lowerBound))–\(Int(target.upperBound))"
+        let state = status(strain: strain, target: target)
+        // Red day: the whole message is "rest", until you go past the limit.
+        if target.lowerBound == 0 && state != .above {
+            return "Rest is the goal today. Keep strain under \(Int(target.upperBound))."
+        }
+        switch state {
+        case .below:
+            return "Aim for a strain of \(range) today."
+        case .onTarget:
+            return "You're in today's target range (\(range)). Nicely balanced."
+        case .above:
+            return "You're past today's target (\(range)). Prioritise sleep tonight."
+        }
+    }
+}

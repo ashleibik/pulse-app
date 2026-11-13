@@ -14,7 +14,7 @@ Personal learning project. Not affiliated with or endorsed by WHOOP, Inc.
 
 The app is called **Pulse**.
 
-Status: **Phase 3 (metrics engine)**. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
+Status: **Phase 4 (polished UI, awaiting first Mac build)**. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
 [docs/METRICS.md](docs/METRICS.md), [ios/README.md](ios/README.md), [re-toolkit/README.md](re-toolkit/README.md)
 and [re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).
 

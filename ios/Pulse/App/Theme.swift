@@ -27,6 +27,28 @@ enum Theme {
         }
     }
 
+    static func color(for phase: SleepPhase) -> Color {
+        switch phase {
+        case .awake: recoveryYellow
+        case .light: sleep.opacity(0.5)
+        case .restful: sleep
+        }
+    }
+
+    static func color(for tone: Insight.Tone) -> Color {
+        switch tone {
+        case .positive: recoveryGreen
+        case .neutral: accent
+        case .caution: recoveryYellow
+        }
+    }
+
+    /// Heart-rate zones 1-5, cool to hot.
+    static let zoneColors: [Color] = [
+        Color(red: 0.55, green: 0.60, blue: 0.70),
+        accent, recoveryGreen, recoveryYellow, recoveryRed,
+    ]
+
     // MARK: Layout
     static let cornerRadius: CGFloat = 20
     static let padding: CGFloat = 16

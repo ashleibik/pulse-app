@@ -57,6 +57,13 @@ public enum Recovery {
     /// 0-100 recovery score, or nil if there's no HRV/RHR tonight or fewer than 4 baseline nights.
     public static func score(hrv: Double?, rhr: Double?, sleepMinutes: Double?, need: Double,
                              baselineHRV: [Double], baselineRHR: [Double]) -> Double? {
+        components(hrv: hrv, rhr: rhr, sleepMinutes: sleepMinutes, need: need,
+                   baselineHRV: baselineHRV, baselineRHR: baselineRHR)?.score
+    }
+
+    /// The three z-scores behind a recovery score (so the UI can show *why*).
+    public static func components(hrv: Double?, rhr: Double?, sleepMinutes: Double?, need: Double,
+                                  baselineHRV: [Double], baselineRHR: [Double]) -> RecoveryComponents? {
         guard let hrv, let rhr,
               baselineHRV.count >= minimumBaselineNights, baselineRHR.count >= minimumBaselineNights
         else { return nil }
@@ -67,7 +74,29 @@ public enum Recovery {
         var ratio = 0.0
         if let sleepMinutes, need > 0 { ratio = min(sleepMinutes / need, 1.1) }
         let zSleep = Stats.clamp((ratio - 0.9) / 0.1, -3.0, 2.0)
-        let c = 0.6 * zHRV - 0.25 * zRHR + 0.15 * zSleep
-        return Stats.clamp(100.0 * Stats.phi(c), 1.0, 99.0)
+        return RecoveryComponents(zHRV: zHRV, zRHR: zRHR, zSleep: zSleep)
+    }
+}
+
+/// z-scores: how far tonight is from YOUR normal, in units of your usual night-to-night variation.
+public struct RecoveryComponents: Sendable, Equatable {
+    public let zHRV: Double     // + is good
+    public let zRHR: Double     // + is bad (heart working harder at rest)
+    public let zSleep: Double   // + is good
+
+    /// Weighted sum (docs/METRICS.md §7). Same expression as the spec, so results match Python exactly.
+    public var composite: Double { 0.6 * zHRV - 0.25 * zRHR + 0.15 * zSleep }
+
+    public var score: Double { Stats.clamp(100.0 * Stats.phi(composite), 1.0, 99.0) }
+
+    /// Score points each factor adds compared with that factor being exactly at your normal.
+    /// (They don't add up exactly to the score because the curve isn't a straight line, but the
+    /// signs and sizes are what matter for "why did it change".)
+    public var hrvPoints: Double { points(withoutPart: 0.6 * zHRV) }
+    public var restingHRPoints: Double { points(withoutPart: -0.25 * zRHR) }
+    public var sleepPoints: Double { points(withoutPart: 0.15 * zSleep) }
+
+    private func points(withoutPart part: Double) -> Double {
+        100.0 * Stats.phi(composite) - 100.0 * Stats.phi(composite - part)
     }
 }

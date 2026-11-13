@@ -5,15 +5,19 @@ import PulseCore
 
 // MARK: - Recovery ring
 
-/// The big ring on the Home screen. Animates in, colored by zone, VoiceOver reads it as one element.
+/// The big ring on the Home screen. Animates in (unless Reduce Motion is on), colored by zone,
+/// grows with Dynamic Type, and VoiceOver reads it as one element.
 struct RecoveryRing: View {
     let score: Double?
     var size: CGFloat = 200
     var lineWidth: CGFloat = 16
 
     @State private var progress: Double = 0
+    @ScaledMetric(relativeTo: .largeTitle) private var textScale: CGFloat = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var zone: RecoveryZone? { score.map(RecoveryZone.init(score:)) }
+    private var scaledSize: CGFloat { size * min(max(textScale, 1), 1.3) }
 
     var body: some View {
         let color = Theme.color(for: zone)
@@ -22,34 +26,41 @@ struct RecoveryRing: View {
                 .stroke(color.opacity(0.15), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: progress)
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(color.gradient, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .shadow(color: color.opacity(0.5), radius: 8)
+                .shadow(color: color.opacity(0.5), radius: 10)
             VStack(spacing: 2) {
                 Text(score.map(PulseFormat.percent) ?? "--")
-                    .font(.system(size: size * 0.26, weight: .bold, design: .rounded))
+                    .font(.system(size: scaledSize * 0.26, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText())
+                    .minimumScaleFactor(0.5)
                 Text("RECOVERY")
                     .font(.caption.weight(.semibold))
                     .tracking(1.5)
                     .foregroundStyle(Theme.secondaryText)
             }
+            .padding(lineWidth)
         }
-        .frame(width: size, height: size)
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.9)) { progress = (score ?? 0) / 100 }
-        }
-        .onChange(of: score) { _, newValue in
-            withAnimation(.easeOut(duration: 0.6)) { progress = (newValue ?? 0) / 100 }
-        }
+        .frame(width: scaledSize, height: scaledSize)
+        .onAppear { animate(to: score) }
+        .onChange(of: score) { _, newValue in animate(to: newValue) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Recovery")
         .accessibilityValue(accessibilityText)
     }
 
+    private func animate(to value: Double?) {
+        let target = (value ?? 0) / 100
+        if reduceMotion {
+            progress = target
+        } else {
+            withAnimation(.spring(response: 1.0, dampingFraction: 0.85)) { progress = target }
+        }
+    }
+
     private var accessibilityText: String {
-        guard let score, let zone else { return "No data yet" }
+        guard let score, let zone else { return "Not enough data yet" }
         return "\(Int(score.rounded())) percent. \(zone.headline)."
     }
 }
@@ -77,6 +88,7 @@ struct MetricTile: View {
                     .monospacedDigit()
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
+                    .contentTransition(.numericText())
                 if let unit {
                     Text(unit)
                         .font(.caption)
@@ -87,9 +99,10 @@ struct MetricTile: View {
                 Text(caption)
                     .font(.caption2)
                     .foregroundStyle(Theme.secondaryText)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
         }
+        .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
         .card()
         .accessibilityElement(children: .combine)
     }
@@ -119,14 +132,18 @@ struct SectionHeader: View {
 
 // MARK: - Data source chip
 
-/// Top-left status pill. Until Phase 5 it always says "Demo data", so fake numbers are never
-/// mistaken for real ones.
+/// Top-left status pill. Until Phase 5 it says "Demo data", so fake numbers are never mistaken
+/// for real ones.
 struct SyncStatusChip: View {
     @Environment(DemoDataLoader.self) private var loader
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle().fill(dotColor).frame(width: 8, height: 8)
+            if loader.isBusy {
+                ProgressView().controlSize(.mini)
+            } else {
+                Circle().fill(dotColor).frame(width: 8, height: 8)
+            }
             Text(text).font(.caption.weight(.medium))
         }
         .padding(.horizontal, 10)
@@ -138,6 +155,7 @@ struct SyncStatusChip: View {
     private var text: String {
         switch loader.state {
         case .idle, .generating: "Preparing…"
+        case .recalculating: "Recalculating…"
         case .ready: "Demo data"
         case .failed: "Data error"
         }
@@ -179,5 +197,142 @@ struct WorkoutRow: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Strain target bar
+
+/// 0-21 bar with today's strain filled in and the recommended range shaded.
+struct StrainTargetBar: View {
+    let strain: Double
+    let target: ClosedRange<Double>
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.08))
+                Capsule()
+                    .fill(Theme.strain.opacity(0.25))
+                    .frame(width: width * (target.upperBound - target.lowerBound) / Strain.maximum)
+                    .offset(x: width * target.lowerBound / Strain.maximum)
+                Capsule()
+                    .fill(Theme.strain.gradient)
+                    .frame(width: max(10, width * min(strain, Strain.maximum) / Strain.maximum))
+            }
+        }
+        .frame(height: 12)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Strain \(PulseFormat.strain(strain)) of 21. Target \(Int(target.lowerBound)) to \(Int(target.upperBound)).")
+    }
+}
+
+// MARK: - Contribution bar
+
+/// Centered bar: grows right (green) when a factor helped, left (red) when it hurt.
+struct ContributionBar: View {
+    let points: Double
+    var fullScale: Double = 30
+
+    var body: some View {
+        GeometryReader { geo in
+            let half = geo.size.width / 2
+            let length = max(3, min(abs(points) / fullScale, 1) * half)
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.06))
+                Rectangle().fill(.white.opacity(0.25)).frame(width: 1).offset(x: half)
+                Capsule()
+                    .fill(points >= 0 ? Theme.recoveryGreen : Theme.recoveryRed)
+                    .frame(width: length)
+                    .offset(x: points >= 0 ? half : half - length)
+            }
+        }
+        .frame(height: 8)
+        .accessibilityHidden(true)   // the row's text already says "+12 points"
+    }
+}
+
+// MARK: - Insight card
+
+struct InsightCard: View {
+    let insight: Insight
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: insight.symbolName)
+                .font(.headline)
+                .foregroundStyle(Theme.color(for: insight.tone))
+                .frame(width: 36, height: 36)
+                .background(Theme.color(for: insight.tone).opacity(0.15), in: Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                Text(insight.title).font(.headline)
+                Text(insight.detail)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .card()
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Change badge
+
+/// "▲ 3.2" / "▼ 4" with color depending on whether up is good for this metric.
+struct ChangeBadge: View {
+    let delta: Double?
+    var higherIsBetter = true
+    var format: (Double) -> String = { String(format: "%.0f", $0) }
+
+    var body: some View {
+        if let delta, abs(delta) >= 0.05 {
+            let good = (delta > 0) == higherIsBetter
+            Text("\(delta > 0 ? "▲" : "▼") \(format(abs(delta)))")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(good ? Theme.recoveryGreen : Theme.recoveryYellow)
+                .accessibilityLabel("\(delta > 0 ? "up" : "down") \(format(abs(delta))) from the previous period")
+        } else {
+            Text("no change")
+                .font(.caption)
+                .foregroundStyle(Theme.secondaryText)
+        }
+    }
+}
+
+// MARK: - Zone bars
+
+/// Five horizontal bars for heart-rate zones.
+struct ZoneBars: View {
+    /// Minutes per zone (5 values).
+    let minutes: [Int]
+
+    var body: some View {
+        let total = max(1, minutes.reduce(0, +))
+        VStack(spacing: 8) {
+            ForEach(0..<5, id: \.self) { zone in
+                let value = zone < minutes.count ? minutes[zone] : 0
+                HStack(spacing: 10) {
+                    Text("Z\(zone + 1)")
+                        .font(.caption.weight(.bold))
+                        .frame(width: 26, alignment: .leading)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(.white.opacity(0.06))
+                            Capsule()
+                                .fill(Theme.zoneColors[zone])
+                                .frame(width: max(4, geo.size.width * Double(value) / Double(total)))
+                        }
+                    }
+                    .frame(height: 10)
+                    Text(PulseFormat.duration(minutes: value))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Theme.secondaryText)
+                        .frame(width: 56, alignment: .trailing)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Zone \(zone + 1), \(HeartRateZones.names[zone]): \(PulseFormat.duration(minutes: value))")
+            }
+        }
     }
 }

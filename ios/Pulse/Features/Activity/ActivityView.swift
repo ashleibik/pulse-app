@@ -2,10 +2,15 @@ import SwiftUI
 import SwiftData
 import PulseCore
 
-/// Today's strain + the workout history.
+/// Today's strain vs target, time in heart-rate zones, and the workout history.
 struct ActivityView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @Query(sort: \WorkoutRecord.start, order: .reverse) private var workouts: [WorkoutRecord]
+    @Query private var profiles: [ProfileRecord]
+    @Environment(\.modelContext) private var context
+    @Environment(DemoDataLoader.self) private var loader
+
+    @State private var zoneMinutes: [Int] = []
 
     var body: some View {
         NavigationStack {
@@ -13,13 +18,13 @@ struct ActivityView: View {
                 VStack(spacing: Theme.spacing) {
                     if let today = days.first {
                         strainCard(today)
+                        zonesCard
                     }
                     SectionHeader(title: "Workouts", trailing: "last 14 days")
                         .padding(.top, 8)
                     if recent.isEmpty {
-                        Text("No workouts recorded.")
-                            .foregroundStyle(Theme.secondaryText)
-                            .card()
+                        ContentUnavailableView("No workouts yet", systemImage: "figure.run",
+                                               description: Text("Workouts will appear here automatically."))
                     }
                     ForEach(groupedByDay) { group in
                         VStack(alignment: .leading, spacing: 12) {
@@ -46,42 +51,56 @@ struct ActivityView: View {
                     WorkoutDetailView(workout: workout)
                 }
             }
+            .task(id: "\(loader.rawDataReady)-\(days.first?.strain ?? 0)") { loadZones() }
         }
+    }
+
+    private func loadZones() {
+        let start = Calendar.current.startOfDay(for: .now)
+        let minutes = PulseStore.minutes(from: start, to: .now, in: context)
+        let maxHR = profiles.first?.estimatedMaxHeartRate() ?? 190
+        zoneMinutes = HeartRateZones.minutesPerZone(minutes.map(\.averageHeartRate), maxHeartRate: maxHR)
     }
 
     private func strainCard(_ today: DaySummaryRecord) -> some View {
-        HStack(spacing: 20) {
-            ZStack {
-                Circle().stroke(Theme.strain.opacity(0.15), lineWidth: 12)
-                Circle()
-                    .trim(from: 0, to: today.strain / 21)
-                    .stroke(Theme.strain, style: StrokeStyle(lineWidth: 12, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
+        let target = StrainGuidance.targetRange(recovery: today.recoveryScore)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Day strain").font(.headline)
+                    Text("Target \(Int(target.lowerBound))–\(Int(target.upperBound)) based on your recovery")
+                        .font(.caption)
+                        .foregroundStyle(Theme.secondaryText)
+                }
+                Spacer()
                 Text(PulseFormat.strain(today.strain))
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
                     .monospacedDigit()
+                    .contentTransition(.numericText())
             }
-            .frame(width: 110, height: 110)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Day strain").font(.headline)
-                Text(strainVerdict(today.strain))
+            StrainTargetBar(strain: today.strain, target: target)
+            Text(StrainGuidance.advice(strain: today.strain, recovery: today.recoveryScore))
+                .font(.subheadline)
+                .foregroundStyle(Theme.secondaryText)
+        }
+        .card()
+    }
+
+    private var zonesCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Heart rate zones today",
+                          trailing: "max HR \(Int(profiles.first?.estimatedMaxHeartRate() ?? 190))")
+            if zoneMinutes.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 100)
+            } else if zoneMinutes.reduce(0, +) == 0 {
+                Text("No time above 50% of your max heart rate yet today.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ZoneBars(minutes: zoneMinutes)
             }
         }
         .card()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Day strain \(PulseFormat.strain(today.strain)) of 21. \(strainVerdict(today.strain))")
-    }
-
-    private func strainVerdict(_ strain: Double) -> String {
-        switch strain {
-        case ..<8: "Light day: easy movement only."
-        case ..<14: "Moderate: a solid training day."
-        case ..<18: "Strenuous: give yourself time to recover."
-        default: "All out: plan an easy day tomorrow."
-        }
     }
 
     private var recent: [WorkoutRecord] {
@@ -110,5 +129,6 @@ struct ActivityView: View {
 #Preview {
     ActivityView()
         .modelContainer(PulseStore.previewContainer)
+        .environment(DemoDataLoader())
         .preferredColorScheme(.dark)
 }

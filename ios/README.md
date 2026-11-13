@@ -10,12 +10,17 @@ ios/
       Text/            PulseFormat (durations, plain-language explanations)
       Metrics/         Stats, HRV, SleepDetector, Load (strain/recovery), MetricsEngine, DemoData
                        -> spec: docs/METRICS.md, must match re-toolkit/metrics on shared/test-vectors
+      Insights/        everything the screens need that's more than formatting, tested on Windows:
+                       RecoveryExplainer (factor points), StrainGuidance (targets + advice),
+                       SleepTimeline (restful/light/awake), HeartRateZones, SleepNeedBreakdown,
+                       TrendInsights (period comparisons + plain-language insights)
       (WhoopProtocol/  Phase 5)
     Tests/PulseCoreTests/
   Pulse/               the SwiftUI app (needs Xcode)
     App/               PulseApp, RootView (tabs), Theme
     Data/              SwiftData models, PulseStore, DemoDataLoader
-    Features/          Today, Sleep, Activity (+ workout detail), Trends, Settings, Shared
+    Features/          Today, Recovery (detail), Sleep, Activity (+ workout detail), Trends,
+                       Settings (profile + recalculate), Welcome (first launch), Shared components
     Resources/         Assets.xcassets
   scripts/             swift-env.ps1, test-core.ps1 (Windows helpers)
 ```
