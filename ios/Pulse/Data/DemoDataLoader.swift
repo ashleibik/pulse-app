@@ -42,9 +42,10 @@ final class DemoDataLoader {
     private func load(seed: UInt64, context: ModelContext) async {
         state = .generating
         let config = FakeDataConfig(days: 30, seed: seed)
-        // ~1 second of number crunching: do it off the main thread.
+        // Simulated raw heartbeats + motion, then the REAL metrics engine computes every summary.
+        // A couple of seconds of number crunching: do it off the main thread.
         let data = await Task.detached(priority: .userInitiated) {
-            FakeDataGenerator.generate(config)
+            DemoData.make(config: config, calendar: .current)
         }.value
         do {
             try PulseStore.insertSummaries(data, into: context)

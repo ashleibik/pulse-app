@@ -8,8 +8,10 @@ protocol/   constants.py  UUIDs, packet types, opcodes, the command ALLOWLIST
             crc.py        CRC-8 / CRC-32 (hand-written, tested against zlib)
             frames.py     build/parse frames, reassemble split notifications, command builders
             parser.py     frame -> RealtimeHR / CommandResponse / Event / Metadata / HistoricalRecord
+metrics/    Python reference of docs/METRICS.md (HRV, sleep, strain, recovery)
 tools/      sniff.py          connect, subscribe to everything, log labelled JSONL captures
             decode_helper.py  compare captures to map unknown bytes
+            make_metric_vectors.py  writes shared/test-vectors/metrics_v1.json (Swift parity tests read it)
             whoop_live.py     (your original script, still to be added)
 tests/      unit tests + fixtures/sample_frames.json (real frames from other researchers)
 docs/       PROTOCOL.md (what we know, with confidence tags) · CAPTURE_GUIDE.md

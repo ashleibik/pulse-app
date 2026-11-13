@@ -41,16 +41,24 @@ public enum PulseFormat {
         if !first.isEmpty {
             sentences.append(capitalizeFirst(first.joined(separator: ", and ")) + ".")
         }
-        if let sleep = sleepMinutes {
-            if sleep < sleepNeedMinutes - 45 {
-                sentences.append("You slept \(duration(minutes: sleep)), short of the \(duration(minutes: sleepNeedMinutes)) you needed.")
-            } else {
-                sentences.append("You got \(duration(minutes: sleep)) of sleep.")
-            }
-        } else {
-            sentences.append("No sleep was recorded last night.")
-        }
+        sentences.append(sleepSentence(sleepMinutes: sleepMinutes, sleepNeedMinutes: sleepNeedMinutes))
         return sentences.joined(separator: " ")
+    }
+
+    /// Shown for the first few days, before there's a baseline to compare against.
+    /// Example: "Pulse is still learning your normal (2 of 4 nights). You got 7h 40m of sleep."
+    public static func learningExplanation(nightsSoFar: Int, needed: Int,
+                                           sleepMinutes: Int?, sleepNeedMinutes: Int) -> String {
+        "Pulse is still learning your normal (\(nightsSoFar) of \(needed) nights). "
+            + sleepSentence(sleepMinutes: sleepMinutes, sleepNeedMinutes: sleepNeedMinutes)
+    }
+
+    static func sleepSentence(sleepMinutes: Int?, sleepNeedMinutes: Int) -> String {
+        guard let sleep = sleepMinutes else { return "No sleep was recorded last night." }
+        if sleep < sleepNeedMinutes - 45 {
+            return "You slept \(duration(minutes: sleep)), short of the \(duration(minutes: sleepNeedMinutes)) you needed."
+        }
+        return "You got \(duration(minutes: sleep)) of sleep."
     }
 
     private static func capitalizeFirst(_ s: String) -> String {

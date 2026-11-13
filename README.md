@@ -14,6 +14,10 @@ Personal learning project. Not affiliated with or endorsed by WHOOP, Inc.
 
 The app is called **Pulse**.
 
-Status: **Phase 2 (app skeleton + fake data)**. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
-[ios/README.md](ios/README.md), [re-toolkit/README.md](re-toolkit/README.md) and
-[re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).
+Status: **Phase 3 (metrics engine)**. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
+[docs/METRICS.md](docs/METRICS.md), [ios/README.md](ios/README.md), [re-toolkit/README.md](re-toolkit/README.md)
+and [re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).
+
+| Folder | What lives there |
+|---|---|
+| `shared/test-vectors/` | Inputs + expected outputs that BOTH the Python and Swift metrics must reproduce |

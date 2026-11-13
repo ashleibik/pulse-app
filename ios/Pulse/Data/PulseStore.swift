@@ -23,7 +23,9 @@ enum PulseStore {
     /// Small summary records: inserted on the caller's context so @Query views update right away.
     @MainActor
     static func insertSummaries(_ data: FakeDataset, into context: ModelContext) throws {
-        for day in data.days { context.insert(DaySummaryRecord(day)) }
+        for day in data.days {
+            context.insert(DaySummaryRecord(day, algorithmVersion: MetricsEngine.algorithmVersion))
+        }
         for sleep in data.sleeps { context.insert(SleepRecord(sleep)) }
         for workout in data.workouts { context.insert(WorkoutRecord(workout)) }
         try context.save()
@@ -43,7 +45,7 @@ enum PulseStore {
     @MainActor
     static let previewContainer: ModelContainer = {
         let container = makeContainer(inMemory: true)
-        let data = FakeDataGenerator.generate(FakeDataConfig(days: 30, seed: 42))
+        let data = DemoData.make(config: FakeDataConfig(days: 30, seed: 42), calendar: .current)
         try? insertSummaries(data, into: container.mainContext)
         // Only the last ~36 hours of raw minutes: enough for last night's charts, fast to insert.
         let cutoff = Date.now.addingTimeInterval(-36 * 3600)

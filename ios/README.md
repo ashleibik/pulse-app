@@ -8,7 +8,8 @@ ios/
       Models/          MinuteSample, SleepSession, Workout, DailySummary, BinaryCoding
       FakeData/        SeededRandom, FakeDataGenerator (30 realistic days)
       Text/            PulseFormat (durations, plain-language explanations)
-      (Metrics/        Phase 3)
+      Metrics/         Stats, HRV, SleepDetector, Load (strain/recovery), MetricsEngine, DemoData
+                       -> spec: docs/METRICS.md, must match re-toolkit/metrics on shared/test-vectors
       (WhoopProtocol/  Phase 5)
     Tests/PulseCoreTests/
   Pulse/               the SwiftUI app (needs Xcode)

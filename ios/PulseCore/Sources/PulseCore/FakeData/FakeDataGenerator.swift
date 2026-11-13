@@ -260,14 +260,17 @@ public struct FakeDataGenerator {
                     hrv = night.hrv * 0.7
                     (activityMean, activitySD) = (60, 25)
                 } else {
-                    // falling-asleep elevation + 90-min cycles + pre-wake rise
+                    // falling-asleep elevation + 90-min cycles + pre-wake rise.
+                    // Cycles swing ABOVE restingHR, so "resting HR" = the lowest sustained sleeping HR,
+                    // which is exactly what the metrics engine measures (docs/METRICS.md).
                     baseHR = night.restingHR
                         + 7 * exp(-m / 45)
-                        + 2.5 * sin(2 * .pi * m / 90)
+                        + 2.5 * (1 + sin(2 * .pi * m / 90))
                         + 4 * pow(m / night.durationMinutes, 3)
                         + rng.normal(sd: 0.6)
                     hrv = night.hrv
-                    (activityMean, activitySD) = rng.chance(0.02) ? (30, 10) : (1.5, 1.5)
+                    // occasional twitch / position change (not a full awakening)
+                    (activityMean, activitySD) = rng.chance(0.02) ? (15, 5) : (1.5, 1.5)
                 }
             case .workout(let w, let restingHR):
                 let elapsed = t.timeIntervalSince(w.start) / 60

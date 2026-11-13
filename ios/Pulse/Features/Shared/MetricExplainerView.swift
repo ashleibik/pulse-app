@@ -43,19 +43,19 @@ enum MetricKind: String, Identifiable, CaseIterable {
         }
     }
 
-    /// "How we calculate it": honest, high level. Phase 3 links the real formulas.
+    /// "How we calculate it": honest and high level. Full formulas + sources: docs/METRICS.md.
     var method: String {
         switch self {
         case .recovery:
-            "Your HRV and resting HR are compared with your average over the last 14 days, together with sleep vs need. Until the band is paired, this is simulated demo data."
+            "Last night's HRV and resting heart rate are compared with your own average over the previous 14 nights, and your sleep with what you needed. Being at your normal scores 50%. Pulse needs 4 nights before it shows a score."
         case .strain:
-            "Heart-rate zones weighted by intensity (a training-impulse method from sports science), scaled to 0 to 21."
+            "Every minute your heart rate is well above resting adds training load (Banister's TRIMP, a sports-science method). Harder minutes count exponentially more. The total is scaled to 0 to 21."
         case .sleep:
-            "Sleep is detected from stillness and heart rate. Short wake-ups are subtracted from time in bed."
+            "Sleep is detected from stillness (the Cole–Kripke method) combined with a low heart rate. Wake-ups during the night are subtracted. Your need grows after hard days and short nights."
         case .hrv:
-            "RMSSD: the root mean square of differences between successive heartbeats, from your sleep."
+            "RMSSD: how much the time between consecutive heartbeats varies. Measured in 5-minute stretches of sleep after removing missed or extra beats, then the night's median is used."
         case .restingHeartRate:
-            "The lowest sustained heart rate during your main sleep."
+            "Your lowest average heart rate over any 10 calm minutes of sleep."
         }
     }
 
@@ -120,6 +120,11 @@ struct MetricExplainerView: View {
                         }
                     }
                     block("How we calculate it", kind.method)
+                    if today?.isSimulated == true {
+                        Text("Until your band is paired, the heartbeats are simulated, but every number here is calculated by the real engine.")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.secondaryText)
+                    }
                     Text("Pulse is for general wellness, not medical advice.")
                         .font(.footnote)
                         .foregroundStyle(Theme.secondaryText)
