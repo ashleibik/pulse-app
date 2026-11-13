@@ -12,5 +12,8 @@ Personal learning project. Not affiliated with or endorsed by WHOOP, Inc.
 | `backend/` | Supabase: Postgres + RLS, edge functions (MCP server, Strava, coach) |
 | `docs/` | Plans and design notes |
 
-Status: **Phase 1 (reverse-engineering toolkit)**. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
-[re-toolkit/README.md](re-toolkit/README.md) and [re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).
+The app is called **Pulse**.
+
+Status: **Phase 2 (app skeleton + fake data)**. See [docs/PHASE0_PLAN.md](docs/PHASE0_PLAN.md),
+[ios/README.md](ios/README.md), [re-toolkit/README.md](re-toolkit/README.md) and
+[re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).

@@ -1,0 +1,57 @@
+import SwiftUI
+import PulseCore
+
+/// All colors, sizes and shared styles live here, so the look stays consistent and can be
+/// changed in one place.
+enum Theme {
+    // MARK: Colors
+    static let background = Color(red: 0.04, green: 0.05, blue: 0.07)
+    static let card = Color(red: 0.10, green: 0.11, blue: 0.14)
+    static let cardStroke = Color.white.opacity(0.06)
+    static let secondaryText = Color.white.opacity(0.6)
+
+    static let accent = Color(red: 0.27, green: 0.78, blue: 0.96)
+    static let recoveryGreen = Color(red: 0.16, green: 0.86, blue: 0.48)
+    static let recoveryYellow = Color(red: 1.00, green: 0.80, blue: 0.22)
+    static let recoveryRed = Color(red: 1.00, green: 0.32, blue: 0.32)
+    static let strain = Color(red: 0.29, green: 0.56, blue: 1.00)
+    static let sleep = Color(red: 0.64, green: 0.52, blue: 1.00)
+    static let heart = Color(red: 1.00, green: 0.36, blue: 0.45)
+
+    static func color(for zone: RecoveryZone?) -> Color {
+        switch zone {
+        case .green: recoveryGreen
+        case .yellow: recoveryYellow
+        case .red: recoveryRed
+        case nil: secondaryText
+        }
+    }
+
+    // MARK: Layout
+    static let cornerRadius: CGFloat = 20
+    static let padding: CGFloat = 16
+    static let spacing: CGFloat = 12
+}
+
+/// The rounded "card" look used for every block of content.
+struct CardStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(Theme.padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                    .stroke(Theme.cardStroke, lineWidth: 1)
+            )
+    }
+}
+
+extension View {
+    func card() -> some View { modifier(CardStyle()) }
+
+    /// Standard screen background + scroll padding.
+    func screenBackground() -> some View {
+        background(Theme.background.ignoresSafeArea())
+    }
+}
