@@ -113,6 +113,19 @@ def test_reassembler_skips_zero_padding_between_frames(samples):
     a = samples["realtime_packet"]
     r = FrameReassembler()
     assert len(r.feed(a + b"\x00\x00\x00" + a)) == 2
+    assert r.dropped_bytes == 0
+
+
+def test_reassembler_result_does_not_depend_on_chunk_size(samples):
+    stream = b"\x13\x37\xaa\x99" + samples["realtime_packet"] + b"\x00\x00" + samples["history_end"]
+    results = set()
+    for size in (1, 2, 3, 5, 7, 20, 244):
+        r = FrameReassembler()
+        frames = []
+        for i in range(0, len(stream), size):
+            frames += r.feed(stream[i:i + size])
+        results.add((tuple(f.raw for f in frames), r.dropped_bytes))
+    assert len(results) == 1
 
 
 def test_build_frame_roundtrip():

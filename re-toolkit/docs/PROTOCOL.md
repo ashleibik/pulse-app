@@ -31,6 +31,8 @@ Sources:
 | 2026-11-13 | Our command builder vs [BW] captured HR-broadcast and realtime-on frames | ✅ byte-identical (`tests/test_frames.py`) |
 | 2026-11-13 | [OS] 0x28 realtime layout vs [BW] realtime sample | 🟢 timestamp, HR, RR count and wearing byte all land on sane values |
 | 2026-11-13 | [OS] HISTORY_END layout vs [BW] sync-end sample | 🟢 timestamp (2024-06-17), count 67, token all sane |
+| 2026-11-13 | Swift port (`ios/PulseCore/.../Protocol`) vs this Python package on `shared/test-vectors/protocol_v1.json` | ✅ identical: CRCs, frames, all builders, allowlist, reassembly, decoding |
+| 2026-11-13 | Reassembler fix: zero padding is skipped at the top of the loop, so the result no longer depends on how BLE splits notifications | ✅ tested for chunk sizes 1-244 |
 | _TBD_ | First capture from **my** band | |
 
 ## 1. GATT layout

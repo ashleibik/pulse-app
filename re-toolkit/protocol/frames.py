@@ -132,7 +132,13 @@ class FrameReassembler:
             return []
 
         frames: list[Frame] = []
-        while len(self._buf) >= HEADER_LEN:
+        while True:
+            # 0) [OS] notes zero bytes may sit between records as padding: skip them (not "junk").
+            #    Done at the top of the loop so the result doesn't depend on how BLE split the bytes.
+            while self._buf and self._buf[0] == 0x00:
+                del self._buf[0]
+            if len(self._buf) < HEADER_LEN:
+                break
             # 1) Find a plausible header.
             if self._buf[0] != SOF or crc8(self._buf[1:3]) != self._buf[3]:
                 self._resync()
@@ -150,9 +156,6 @@ class FrameReassembler:
             del self._buf[:total]
             if frame is not None:
                 frames.append(frame)
-            # 4) [OS] notes zero bytes may sit between records as padding: skip them.
-            while self._buf and self._buf[0] == 0x00:
-                del self._buf[0]
         return frames
 
     def _resync(self) -> None:

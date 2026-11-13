@@ -133,3 +133,11 @@ def test_vectors_file_is_up_to_date():
     on_disk = json.loads(OUT.read_text(encoding="utf-8"))
     fresh = json.loads(json.dumps(build_vectors()))
     assert on_disk == fresh
+
+
+def test_protocol_vectors_file_is_up_to_date():
+    """If this fails: run `python -m tools.make_protocol_vectors` and commit the JSON."""
+    from tools import make_protocol_vectors as pv
+    assert pv.OUT.exists(), "protocol vectors file missing"
+    on_disk = json.loads(pv.OUT.read_text(encoding="utf-8"))
+    assert on_disk == json.loads(json.dumps(pv.build_vectors()))

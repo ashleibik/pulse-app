@@ -14,7 +14,11 @@ ios/
                        RecoveryExplainer (factor points), StrainGuidance (targets + advice),
                        SleepTimeline (restful/light/awake), HeartRateZones, SleepNeedBreakdown,
                        TrendInsights (period comparisons + plain-language insights)
-      (WhoopProtocol/  Phase 5)
+      Protocol/        Swift port of re-toolkit/protocol (Whoop namespace): CRCs, frames, reassembler,
+                       allowlisted command builders, packet decoder, 0x2A37 parser
+                       -> must match re-toolkit/protocol on shared/test-vectors/protocol_v1.json
+                       HistorySync (download state machine: never acks before save), SimulatedBand
+                       (a fake band that speaks the protocol), MinuteBuilder (1 Hz records -> minutes)
     Tests/PulseCoreTests/
   Pulse/               the SwiftUI app (needs Xcode)
     App/               PulseApp, RootView (tabs), Theme
