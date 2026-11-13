@@ -10,7 +10,8 @@ struct TodayView: View {
     @Query private var profiles: [ProfileRecord]
     @Environment(DemoDataLoader.self) private var loader
 
-    @State private var showSettings = false
+    @State private var showSettings = LaunchOptions.route == "settings"
+    @State private var showRecovery = LaunchOptions.route == "recovery"
     @State private var explaining: MetricKind?
 
     var body: some View {
@@ -32,6 +33,9 @@ struct TodayView: View {
                     Button { showSettings = true } label: { Image(systemName: "gearshape.fill") }
                         .accessibilityLabel("Settings")
                 }
+            }
+            .navigationDestination(isPresented: $showRecovery) {
+                if let today = days.first { RecoveryDetailView(day: today) }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(item: $explaining) { kind in

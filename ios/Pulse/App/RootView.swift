@@ -4,12 +4,13 @@ import SwiftData
 /// The tab bar: Today · Sleep · Activity · Trends. Settings opens from the Today screen.
 struct RootView: View {
     @Environment(\.modelContext) private var context
-    @State private var tab: Tab = .today
+    @State private var tab: Tab = Tab(rawValue: LaunchOptions.tab ?? "") ?? .today
     @State private var loader = DemoDataLoader()
     /// Per-device UI preference (not health data), so UserDefaults is fine here.
+    /// (UserDefaults also reads launch arguments, so `-hasSeenWelcome YES` skips it for screenshots.)
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
 
-    enum Tab: Hashable { case today, sleep, activity, trends }
+    enum Tab: String, Hashable { case today, sleep, activity, trends }
 
     var body: some View {
         TabView(selection: $tab) {
