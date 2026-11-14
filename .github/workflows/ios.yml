@@ -102,7 +102,7 @@ jobs:
             xcrun simctl io "$UDID" screenshot "screenshots/$1.png"
           }
 
-          SEEN="-hasSeenWelcome YES"
+          SEEN="-hasSeenWelcome YES -appearance system"   # "system" so the light / dark switch below applies
           shot 0-welcome-light 6
           # First real launch generates 30 days of demo data (debug build: give it time).
           # This shot is taken again below, once the data is there.

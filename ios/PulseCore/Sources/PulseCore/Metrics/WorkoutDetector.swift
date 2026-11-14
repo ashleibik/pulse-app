@@ -87,6 +87,29 @@ public enum WorkoutDetector {
                        source: minutes.allSatisfy { $0.source == .simulated } ? .simulated : .history)
     }
 
+    /// A workout the user adds by hand, for sessions the detector can't see (weights, yoga: the
+    /// heart rate stays under the 40% threshold). The user gives type and time; every number is
+    /// computed from the band data in that window. With no data there, the numbers are zero.
+    public static func manual(kind: WorkoutKind, start: Date, end: Date, minutes: [MinuteSample],
+                              profile: MetricsProfile = MetricsProfile(), restingHeartRate: Double?) -> Workout {
+        let window = minutes.filter { $0.start >= start && $0.start < end }
+        let rest = restingHeartRate ?? 60
+        let reserve = max(1, profile.maxHeartRate - rest)
+        let averages = window.compactMap(\.averageHeartRate)
+        let peak = window.flatMap(\.heartRate).max() ?? 0
+        let trimp = Strain.trimp(window.map(\.averageHeartRate), resting: rest,
+                                 maximum: profile.maxHeartRate, sex: profile.sex)
+        let calories = averages.reduce(0.0) { $0 + max(0, ($1 - rest) / reserve) * 12 }
+        let zones = HeartRateZones.minutesPerZone(window.map(\.averageHeartRate), maxHeartRate: profile.maxHeartRate)
+        // Entered on top of simulated data = still simulated (never sent to Apple Health or Strava).
+        let simulated = !window.isEmpty && window.allSatisfy { $0.source == .simulated }
+        return Workout(kind: kind, start: start, end: end,
+                       averageHeartRate: averages.isEmpty ? 0 : Int((averages.reduce(0, +) / Double(averages.count)).rounded()),
+                       maxHeartRate: Int(peak), strain: Strain.fromTRIMP(trimp),
+                       zoneSeconds: zones.map { $0 * 60 }, calories: Int(calories.rounded()),
+                       source: simulated ? .simulated : .manual)
+    }
+
     /// The same workout must get the same ID every time detection runs (after each sync), otherwise
     /// its Apple Health / Strava export marks would be lost. So the ID is derived from the start minute.
     public static func stableID(start: Date) -> UUID {

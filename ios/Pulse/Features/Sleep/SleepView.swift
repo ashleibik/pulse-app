@@ -16,6 +16,10 @@ struct SleepView: View {
     @State private var nightIndex = 0          // 0 = last night, 1 = the night before, ...
     @State private var heartRate: [ChartPoint] = []
     @State private var segments: [SleepSegment] = []
+    /// The block tapped in the night chart.
+    @State private var selectedSegment: SleepSegment?
+    /// The phase whose explanation sheet is open.
+    @State private var explainedPhase: SleepPhaseSelection?
 
     private var sleeps: [SleepRecord] { allSleeps.filter { !$0.isNap } }
 
@@ -40,6 +44,14 @@ struct SleepView: View {
         .monoBackground()
         .task(id: "\(nightIndex)-\(loader.rawDataReady)-\(loader.revision)-\(sleeps.count)") { loadNight() }
         .sensoryFeedback(.selection, trigger: nightIndex)
+        .sensoryFeedback(.selection, trigger: selectedSegment)
+        .onChange(of: nightIndex) { _, _ in selectedSegment = nil }
+        .sheet(item: $explainedPhase) { item in
+            let totals = SleepTimeline.totals(segments)
+            SleepPhaseInfoView(phase: item.phase, minutes: totals[item.phase] ?? 0,
+                               nightMinutes: totals.values.reduce(0, +))
+                .presentationDetents([.medium, .large])
+        }
     }
 
     private func loadNight() {
@@ -111,6 +123,7 @@ struct SleepView: View {
     }
 
     /// The one card on this screen: when you were restful, in light sleep, or awake.
+    /// Tap a block to see its times; tap a label to read what that phase means.
     private var timeline: some View {
         let totals = SleepTimeline.totals(segments)
         return VStack(alignment: .leading, spacing: DS.Space.m) {
@@ -124,6 +137,8 @@ struct SleepView: View {
                                   y: .value("Phase", segment.phase.title))
                         .foregroundStyle(Self.gray(for: segment.phase))
                         .cornerRadius(3)
+                        // With a block selected, the others step back.
+                        .opacity(selectedSegment == nil || selectedSegment == segment ? 1 : 0.3)
                 }
                 .chartYScale(domain: SleepPhase.allCases.map(\.title))
                 .chartYAxis {
@@ -140,38 +155,71 @@ struct SleepView: View {
                             .foregroundStyle(DS.Colors.secondary)
                     }
                 }
+                .chartOverlay { proxy in
+                    // A tap picks the block at that time of night (whatever row the finger is on).
+                    GeometryReader { geometry in
+                        if let plotFrame = proxy.plotFrame {
+                            Rectangle()
+                                .fill(.clear)
+                                .contentShape(Rectangle())
+                                .onTapGesture { location in
+                                    let x = location.x - geometry[plotFrame].origin.x
+                                    guard let time: Date = proxy.value(atX: x) else { return }
+                                    let hit = segments.first { $0.start <= time && time < $0.end }
+                                    selectedSegment = (hit == selectedSegment) ? nil : hit
+                                }
+                        }
+                    }
+                }
                 .frame(height: 120)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(timelineSummary(totals))
 
+                Text(selectionText)
+                    .textStyle(.caption)
+                    .foregroundStyle(selectedSegment == nil ? DS.Colors.secondary : DS.Colors.primary)
+
                 HStack(alignment: .top, spacing: DS.Space.s) {
                     ForEach(SleepPhase.allCases.reversed(), id: \.self) { phase in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .fill(Self.gray(for: phase))
-                                    .frame(width: 10, height: 10)
-                                Text(phase.title)
-                                    .textStyle(.caption)
-                                    .foregroundStyle(DS.Colors.secondary)
+                        Button {
+                            explainedPhase = SleepPhaseSelection(phase: phase)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                        .fill(Self.gray(for: phase))
+                                        .frame(width: 10, height: 10)
+                                    Text(phase.title)
+                                        .textStyle(.caption)
+                                        .foregroundStyle(DS.Colors.secondary)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(DS.Colors.tertiary)
+                                }
+                                Text(PulseFormat.duration(minutes: totals[phase] ?? 0))
+                                    .textStyle(.bodyStrong)
+                                    .monospacedDigit()
+                                    .foregroundStyle(DS.Colors.primary)
                             }
-                            Text(PulseFormat.duration(minutes: totals[phase] ?? 0))
-                                .textStyle(.bodyStrong)
-                                .monospacedDigit()
-                                .foregroundStyle(DS.Colors.primary)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .buttonStyle(.pressable)
+                        .accessibilityLabel("\(phase.title), \(PulseFormat.duration(minutes: totals[phase] ?? 0))")
+                        .accessibilityHint("Explains this part of your night")
                     }
                 }
-                .accessibilityHidden(true)      // the chart's label already lists the totals
-
-                Text("Restful = very still with a low heart rate. Pulse doesn't guess REM or deep sleep: heart rate and motion alone can't measure them reliably.")
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .monoCard()
+        .animation(DS.Motion.spring, value: selectedSegment)
+    }
+
+    /// One line under the night chart: the tapped block, or how to use the chart.
+    private var selectionText: String {
+        guard let segment = selectedSegment else { return "Tap a block for its times, or a label to learn what it means." }
+        let from = segment.start.formatted(date: .omitted, time: .shortened)
+        let to = segment.end.formatted(date: .omitted, time: .shortened)
+        return "\(segment.phase.title) · \(from) – \(to) · \(PulseFormat.duration(minutes: segment.minutes))"
     }
 
     private var heart: some View {
@@ -184,7 +232,12 @@ struct SleepView: View {
                           xValues: .stride(by: .hour, count: 2),
                           xFormat: .dateTime.hour(),
                           height: 140,
+                          valueLabel: { "\(Int($0.value.rounded())) bpm · \($0.date.formatted(date: .omitted, time: .shortened))" },
                           summary: "Overnight heart rate. \(lowestText ?? "")")
+                Text("Touch and hold the line to read your heart rate at any time of the night.")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

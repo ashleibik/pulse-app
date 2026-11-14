@@ -14,6 +14,7 @@ struct ActivityView: View {
     @State private var zoneMinutes: [Int] = []
     /// The open workout (empty = the list is showing).
     @State private var path: [UUID] = []
+    @State private var showAdd = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -29,12 +30,25 @@ struct ActivityView: View {
                 .padding(.top, DS.Space.l)
                 .padding(.bottom, DS.Space.xxl)
             }
-            .safeAreaInset(edge: .top, spacing: 0) { ScreenHeader(title: "Activity") }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                ScreenHeader(title: "Activity") {
+                    IconButton(systemName: "plus", label: "Add workout") { showAdd = true }
+                }
+            }
+            .sheet(isPresented: $showAdd) { AddWorkoutView() }
             .monoBackground()
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: UUID.self) { id in
                 if let workout = workouts.first(where: { $0.id == id }) {
-                    WorkoutDetailView(workout: workout)
+                    WorkoutDetailView(workout: workout) {
+                        // Go back to the list first, then delete, so the screen never shows a deleted workout.
+                        path.removeAll()
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(500))
+                            context.delete(workout)
+                            try? context.save()
+                        }
+                    }
                 }
             }
             .task(id: "\(loader.rawDataReady)-\(loader.revision)-\(days.first?.strain ?? 0)") { loadZones() }
@@ -108,7 +122,7 @@ struct ActivityView: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionTitle(title: "Workouts", trailing: "Last 14 days")
             if recent.isEmpty {
-                Text("No workouts yet. They will appear here automatically.")
+                Text("No workouts yet. Pulse finds them by itself from your heart rate. Use + to add one it missed.")
                     .textStyle(.body)
                     .foregroundStyle(DS.Colors.secondary)
                     .padding(.top, DS.Space.s)

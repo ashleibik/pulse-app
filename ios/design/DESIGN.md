@@ -146,7 +146,7 @@ Swift Charts, black and gray only.
 
 ## 10. Accessibility
 
-- Light and dark mode both supported (follows the system).
+- Dark by default (the owner's preference). Settings > Appearance switches to Light or "Match iPhone"; both palettes are kept complete.
 - Dynamic Type: every style maps to a system text style. The hero is capped so it stays inside the ring.
 - VoiceOver: each block reads as one sentence ("Recovery, 37 percent, Steady"). Decorative shapes are hidden.
 - Nothing depends on color (see *State without color*).

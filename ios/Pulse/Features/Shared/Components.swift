@@ -735,11 +735,40 @@ struct LineChart: View {
     /// Puts a dot on the newest point ("today").
     var marksLast = false
     var height: CGFloat = 132
+    /// Give this to make the line readable by touch: touch and hold, and the value under the
+    /// finger is shown as this text (for example "62 bpm · 2:14 AM").
+    var valueLabel: ((ChartPoint) -> String)? = nil
     /// The chart in words, for VoiceOver.
     let summary: String
 
+    /// Where the finger is on the time axis (nil = not touching).
+    @State private var touchedDate: Date?
+
+    /// The data point nearest to the finger.
+    private var touchedPoint: ChartPoint? {
+        guard valueLabel != nil, let touchedDate else { return nil }
+        return points.min { abs($0.date.timeIntervalSince(touchedDate)) < abs($1.date.timeIntervalSince(touchedDate)) }
+    }
+
     var body: some View {
         Chart {
+            if let point = touchedPoint, let valueLabel {
+                RuleMark(x: .value("Time", point.date))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                    .foregroundStyle(DS.Colors.tertiary)
+                    .annotation(position: .top, spacing: 4,
+                                overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        Text(valueLabel(point))
+                            .textStyle(.caption)
+                            .foregroundStyle(DS.Colors.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(DS.Colors.border, in: Capsule())
+                    }
+                PointMark(x: .value("Time", point.date), y: .value("Value", point.value))
+                    .symbolSize(70)
+                    .foregroundStyle(DS.Colors.primary)
+            }
             ForEach(points) { point in
                 LineMark(x: .value("Time", point.date), y: .value("Value", point.value))
                     .interpolationMethod(.catmullRom)
@@ -753,6 +782,7 @@ struct LineChart: View {
             }
         }
         .chartYScale(domain: .automatic(includesZero: false))
+        .chartXSelection(value: $touchedDate)
         .chartYAxis {
             AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
                 AxisValueLabel()

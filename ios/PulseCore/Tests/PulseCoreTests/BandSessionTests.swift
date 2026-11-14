@@ -175,3 +175,28 @@ struct SessionHarness {
     #expect(WorkoutDetector.stableID(start: start) == WorkoutDetector.stableID(start: start))
     #expect(WorkoutDetector.stableID(start: start) != WorkoutDetector.stableID(start: start.addingTimeInterval(60)))
 }
+
+@Test func manualWorkoutsGetTheirNumbersFromTheBandData() {
+    let start = Date(timeIntervalSince1970: 1_750_000_020)
+    let minutes = (0..<40).map { i in
+        MinuteSample(start: start.addingTimeInterval(Double(i) * 60), heartRate: [UInt8](repeating: i < 30 ? 120 : 70, count: 60),
+                     rrIntervalsMs: [], activity: [UInt8](repeating: 20, count: 60), source: .history)
+    }
+    let workout = WorkoutDetector.manual(kind: .strength, start: start, end: start.addingTimeInterval(30 * 60),
+                                         minutes: minutes, restingHeartRate: 60)
+    #expect(workout.kind == .strength && workout.source == .manual)
+    #expect(workout.averageHeartRate == 120 && workout.maxHeartRate == 120)     // the 70 bpm minutes are outside
+    #expect(workout.durationMinutes == 30)
+    #expect(workout.strain > 0)
+
+    // No band data in that window: still a workout, with honest zeros.
+    let empty = WorkoutDetector.manual(kind: .other, start: start.addingTimeInterval(-7200),
+                                       end: start.addingTimeInterval(-3600), minutes: minutes, restingHeartRate: nil)
+    #expect(empty.averageHeartRate == 0 && empty.strain == 0 && empty.source == .manual)
+
+    // On top of simulated data it stays simulated, so it can never be exported as real.
+    let demo = WorkoutDetector.manual(kind: .run, start: dataset.minutes[0].start,
+                                      end: dataset.minutes[0].start.addingTimeInterval(1800),
+                                      minutes: dataset.minutes, restingHeartRate: 55)
+    #expect(demo.source == .simulated)
+}

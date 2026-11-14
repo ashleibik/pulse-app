@@ -6,11 +6,22 @@ import SwiftData
 struct PulseApp: App {
     /// One database for the whole app (on-device, offline first).
     let container: ModelContainer = PulseStore.makeContainer()
+    /// "dark" (default) | "light" | "system". Changed in Settings > Appearance.
+    @AppStorage("appearance") private var appearance = "dark"
+
+    private var colorScheme: ColorScheme? {
+        switch appearance {
+        case "light": return .light
+        case "system": return nil       // follow the iPhone's own setting
+        default: return .dark
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
             RootView()
-                // Follows the system's light / dark setting. Monochrome: controls are black / white.
+                .preferredColorScheme(colorScheme)
+                // Monochrome: controls are black / white.
                 .tint(DS.Colors.primary)
         }
         .modelContainer(container)

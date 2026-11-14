@@ -6,6 +6,8 @@ import PulseCore
 /// Mono design (ios/design/DESIGN.md).
 struct WorkoutDetailView: View {
     let workout: WorkoutRecord
+    /// Deletes this workout (only offered for workouts the user added by hand).
+    var onDelete: (() -> Void)? = nil
     @Environment(\.modelContext) private var context
     @Environment(CloudManager.self) private var cloud
     @State private var heartRate: [ChartPoint] = []
@@ -18,6 +20,10 @@ struct WorkoutDetailView: View {
                 heart.riseIn(2)
                 zones.riseIn(3)
                 share.riseIn(4)
+                if workout.sourceRaw == DataSource.manual.rawValue, let onDelete {
+                    Button("Delete workout") { onDelete() }
+                        .buttonStyle(.secondaryPill)
+                }
             }
             .padding(.horizontal, DS.Space.side)
             .padding(.top, DS.Space.m)
@@ -139,6 +145,7 @@ struct WorkoutDetailView: View {
                           xValues: .automatic(desiredCount: 4),
                           xFormat: .dateTime.hour().minute(),
                           height: 160,
+                          valueLabel: { "\(Int($0.value.rounded())) bpm · \($0.date.formatted(date: .omitted, time: .shortened))" },
                           summary: "Heart rate during the workout. Average \(workout.averageHeartRate), maximum \(workout.maxHeartRate) beats per minute.")
             }
         }

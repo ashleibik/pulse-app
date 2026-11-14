@@ -12,6 +12,7 @@ struct SettingsView: View {
     @Environment(HealthExporter.self) private var health
     @Query private var profiles: [ProfileRecord]
     @Query private var bands: [BandRecord]
+    @AppStorage("appearance") private var appearance = "dark"
     @State private var confirmRegenerate = false
     @State private var confirmForget = false
     @State private var confirmDelete = false
@@ -27,6 +28,12 @@ struct SettingsView: View {
                     ProfileSection(profile: profile) {
                         Task { await loader.recompute(context: context) }
                     }
+                }
+
+                SettingsSection("Appearance") {
+                    PillPicker(options: ["dark", "light", "system"],
+                               label: { $0 == "system" ? "Match iPhone" : $0.capitalized },
+                               selection: $appearance)
                 }
 
                 bandSection
