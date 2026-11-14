@@ -657,6 +657,10 @@ struct DayBarsChart: View {
             }
         }
         .frame(height: height)
+        // Redraw the chart from scratch whenever a different bar is highlighted.
+        // (Bug fixed here: when only a bar's color changed, the chart kept showing the PREVIOUS
+        // highlight, so the white bar was always one tap behind the day on screen.)
+        .id(bars.first(where: \.isHighlighted)?.id ?? "none")
         .onAppear {
             if reduceMotion {
                 grown = true

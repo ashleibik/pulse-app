@@ -38,7 +38,6 @@ struct RecoveryDetailView: View {
         .monoBackground()
         .navigationTitle(isToday ? "Recovery" : shown.date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
         .sensoryFeedback(.selection, trigger: shown.date)
-        .animation(DS.Motion.spring, value: shown.date)
         .navigationBarTitleDisplayMode(.inline)
     }
 
