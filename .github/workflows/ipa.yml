@@ -1,0 +1,57 @@
+# Builds Pulse.ipa for installing on YOUR OWN iPhone with a free Apple ID, without a Mac and
+# without the $99 Apple Developer Program.
+#
+# The file is built unsigned. A sideloading tool on Windows (for example Sideloadly) signs it with
+# your Apple ID and installs it over USB. See "Install on your iPhone (free)" in ios/README.md.
+#
+# Run it: Actions tab > "Build IPA" > Run workflow, or `gh workflow run ipa.yml`.
+# Then:   gh run download --name Pulse-ipa
+
+name: Build IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    name: Unsigned device build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Build for iPhone (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/Pulse.xcodeproj -scheme Pulse -configuration Release \
+            -sdk iphoneos -destination "generic/platform=iOS" -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Package as .ipa
+        run: |
+          mkdir -p ipa/Payload
+          cp -R build/Build/Products/Release-iphoneos/Pulse.app ipa/Payload/
+          cd ipa && zip -qry Pulse.ipa Payload && ls -la Pulse.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pulse-ipa
+          path: ipa/Pulse.ipa
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ipa-build-log
+          path: build.log
+          if-no-files-found: ignore

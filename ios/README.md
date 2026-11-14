@@ -103,6 +103,30 @@ Apple Health.
 - **Not tested on a real iPhone yet.** It needs the signed app with the HealthKit capability
   (`Pulse/Pulse.entitlements`); the unsigned CI builds can't exercise it.
 
+## Install on your iPhone (free, no Mac)
+
+For your own phone only. No $99 Apple Developer Program needed.
+
+1. **Build the file:** GitHub > Actions > *Build IPA* > *Run workflow* (about 10 minutes), then
+   `gh run download --name Pulse-ipa` in the repo folder. You get `Pulse.ipa`.
+2. **Install a sideloading tool on Windows**, for example Sideloadly (sideloadly.io), plus
+   iTunes from apple.com (not the Microsoft Store version), which it needs for the USB driver.
+3. **iPhone:** connect it by USB and tap *Trust*. Then Settings > Privacy & Security >
+   *Developer Mode* > on (the phone restarts).
+4. **Sideloadly:** drop in `Pulse.ipa`, sign in with your Apple ID, press *Start*. You type the
+   Apple ID password into Sideloadly yourself; it goes to Apple only.
+5. **iPhone:** Settings > General > VPN & Device Management > your Apple ID > *Trust*.
+
+Limits of a free Apple ID (Apple's rules, not Pulse's):
+- The app **stops opening after 7 days**. Re-install it with step 4 (your data stays).
+- At most 3 sideloaded apps at a time.
+- **Apple Health export probably won't work**: the free signing likely drops the HealthKit
+  permission. Not tested. Everything else (Bluetooth, the band, all screens) needs no special
+  permission.
+
+The paid Developer Program (`.github/workflows/testflight.yml`) removes the 7-day limit and
+keeps HealthKit, if you ever want that.
+
 ## On a Mac (when you have one)
 
 ```bash

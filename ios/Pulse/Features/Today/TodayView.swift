@@ -16,6 +16,8 @@ struct TodayView: View {
 
     @State private var showSettings = LaunchOptions.route == "settings"
     @State private var showRecovery = LaunchOptions.route == "recovery"
+    /// A day tapped in the week chart.
+    @State private var openedDay: DaySummaryRecord?
     /// Only opened from here by the screenshot job. Normally pairing starts in Settings.
     @State private var showPairing = LaunchOptions.route == "pairing" || LaunchOptions.route == "pairing-sim"
     @State private var showCoach = LaunchOptions.route == "coach"
@@ -48,6 +50,9 @@ struct TodayView: View {
                 if let today = days.first {
                     RecoveryDetailView(day: today)
                 }
+            }
+            .navigationDestination(item: $openedDay) { day in
+                RecoveryDetailView(day: day)
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
@@ -201,27 +206,28 @@ struct TodayView: View {
         let bars = DayBarsChart.Bar.from(recent) { $0.recoveryScore }
         let summary = "Recovery, last \(recent.count) days. "
             + (average.map { "Average \(PulseFormat.percent($0))." } ?? "No scores yet.")
-        return Button {
-            open { explaining = .recovery }
-        } label: {
-            VStack(alignment: .leading, spacing: DS.Space.m) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Last 7 days")
-                        .textStyle(.heading)
-                        .foregroundStyle(DS.Colors.primary)
-                    Spacer()
-                    if let average {
-                        Text("Avg \(PulseFormat.percent(average))")
-                            .textStyle(.caption)
-                            .foregroundStyle(DS.Colors.secondary)
-                    }
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Last 7 days")
+                    .textStyle(.heading)
+                    .foregroundStyle(DS.Colors.primary)
+                Spacer()
+                if let average {
+                    Text("Avg \(PulseFormat.percent(average))")
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
                 }
-                DayBarsChart(bars: bars, domain: 0...100, summary: summary)
             }
-            .monoCard()
+            DayBarsChart(bars: bars, domain: 0...100, summary: summary) { id in
+                if let day = recent.first(where: { DayBarsChart.Bar.id(for: $0.date) == id }) {
+                    open { openedDay = day }
+                }
+            }
+            Text("Tap a day to see it.")
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
         }
-        .buttonStyle(.pressable)
-        .accessibilityHint("Shows what recovery means")
+        .monoCard()
     }
 
     private var activity: some View {

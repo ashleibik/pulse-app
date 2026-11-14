@@ -595,6 +595,8 @@ struct DayBarsChart: View {
         let label: String       // shown under the bar; "" = no label
         let value: Double?      // nil = no data that day
         let isHighlighted: Bool
+        /// Read by VoiceOver for the tappable bar, e.g. "Tuesday, November 10".
+        var spokenName: String = ""
     }
 
     /// Oldest first.
@@ -604,6 +606,8 @@ struct DayBarsChart: View {
     var height: CGFloat = 104
     /// The chart in words, for VoiceOver.
     let summary: String
+    /// Called with the tapped bar's id. `nil` = the bars can't be tapped.
+    var onSelect: ((String) -> Void)? = nil
 
     @State private var grown = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -644,6 +648,21 @@ struct DayBarsChart: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(summary)
+        .overlay {
+            // One invisible button per bar. Bars are spread evenly across the chart's width, so
+            // equal-width slots line up with them. Each slot is a real button: VoiceOver reads it.
+            if let onSelect {
+                HStack(spacing: 0) {
+                    ForEach(bars) { bar in
+                        Button { onSelect(bar.id) } label: {
+                            Color.clear.contentShape(Rectangle())
+                        }
+                        .accessibilityLabel(bar.spokenName)
+                        .accessibilityHint("Shows this day")
+                    }
+                }
+            }
+        }
     }
 
     private func label(for id: String) -> String {
@@ -652,6 +671,9 @@ struct DayBarsChart: View {
 }
 
 extension DayBarsChart.Bar {
+    /// The bar id for a day (so a tapped bar can be turned back into its day).
+    static func id(for date: Date) -> String { "\(date.timeIntervalSince1970)" }
+
     /// Builds bars from stored days.
     /// - Parameters:
     ///   - days: oldest first.
@@ -669,8 +691,9 @@ extension DayBarsChart.Bar {
                 label = (days.count - 1 - index) % 7 == 0 ? day.date.formatted(.dateTime.day()) : ""
             }
             let isTarget = target.map { Calendar.current.isDate(day.date, inSameDayAs: $0) } ?? false
-            bars.append(DayBarsChart.Bar(id: "\(day.date.timeIntervalSince1970)", label: label,
-                                         value: value(day), isHighlighted: isTarget))
+            bars.append(DayBarsChart.Bar(id: id(for: day.date), label: label, value: value(day),
+                                         isHighlighted: isTarget,
+                                         spokenName: day.date.formatted(.dateTime.weekday(.wide).month(.wide).day())))
         }
         return bars
     }

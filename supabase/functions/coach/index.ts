@@ -15,7 +15,7 @@
 //     band-data tables, so nothing of Strava's can end up here.
 
 import Anthropic from "npm:@anthropic-ai/sdk@1.8.0";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.119.0";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;

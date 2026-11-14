@@ -64,9 +64,9 @@ Items marked ⚠ are open.
 | 2 | ⚠ `mcp` and `strava` are deployed with the platform token check off (needed for the 401 flow and Strava's redirect) | A coding mistake there would expose the function | After deploying, confirm by hand: no token -> 401; another user's token -> only their rows |
 | 3 | ⚠ Dynamic client registration lets any app *ask* for access | Phishing: a fake app asks you to approve it | The consent page shows the app name and where it sends you back. Only approve right after adding the connector yourself. Remove unknown apps in the dashboard |
 | 4 | ⚠ Strava tokens are not encrypted column by column | Readable by anyone with database admin access | Move them to Supabase Vault |
-| 5 | ⚠ `consent/index.html` loads supabase-js from a CDN without a pinned version or integrity hash | A compromised CDN could steal the password typed there | Pin the exact version and add a Subresource Integrity hash, or host the script yourself |
-| 6 | ⚠ Server dependencies are pinned loosely (`supabase-js@2`) | A bad release would be picked up on the next deploy | Pin exact versions before real use |
-| 7 | ⚠ The local database uses iOS's default file protection | Readable after first unlock if the phone is compromised | Set file protection to "complete unless open"; consider a Face ID lock |
+| 5 | ⚠ `consent/index.html` loads supabase-js from a CDN without an integrity hash (version now pinned to 2.119.0) | A compromised CDN could steal the password typed there | Add a Subresource Integrity hash, or host the script yourself |
+| 6 | Fixed: server dependencies pinned to exact versions | | |
+| 7 | Fixed: the phone database is set to "complete unless open" file protection | | A Face ID lock is still an option |
 | 8 | ⚠ No schema migration plan for the phone database | An app update that changes models could fail to open old data | Add a versioned schema before the first real install |
 | 9 | ⚠ Whether the band needs Bluetooth bonding is unknown | Someone nearby with the same tools might read an unbonded band | Check with the real band; this is a property of the band, not of the app |
 | 10 | Git commits carry a personal email address | Visible if the repo is made public | Use GitHub's noreply address before publishing |

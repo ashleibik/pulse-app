@@ -16,7 +16,7 @@
 //     they can see. This function never uses the service-role key.
 //   * Read-only: the tools only run SELECTs, and the database refuses writes from OAuth tokens.
 
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.119.0";
 import { type DayRow, handleRpc, type PulseData, type SleepRow, type WorkoutRow } from "./core.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;

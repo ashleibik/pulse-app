@@ -12,11 +12,25 @@ enum PulseStore {
     static func makeContainer(inMemory: Bool = false) -> ModelContainer {
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         do {
-            return try ModelContainer(for: schema, configurations: [configuration])
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            if !inMemory { protectStoreFiles(at: configuration.url) }
+            return container
         } catch {
             // Without a database the app can't work at all. Phase 10 adds schema migrations so
             // this can't happen after an app update.
             fatalError("Could not open the Pulse database: \(error)")
+        }
+    }
+
+    /// Health data on disk stays encrypted while the phone is locked, except for files the app
+    /// already has open (so a sync can finish in the background). iOS's default is weaker:
+    /// readable any time after the first unlock since restart.
+    private static func protectStoreFiles(at url: URL) {
+        for suffix in ["", "-wal", "-shm"] {
+            let path = url.path + suffix
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUnlessOpen],
+                                                   ofItemAtPath: path)
         }
     }
 

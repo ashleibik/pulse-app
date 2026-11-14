@@ -44,7 +44,7 @@ protocol questions: [re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).
 | Run the Python tests | `cd re-toolkit; .\.venv\Scripts\python -m pytest -q` |
 | Run the server tests | `node --experimental-strip-types --test supabase/tests/mcp-core.test.mjs` |
 | Talk to the real band from the PC | [re-toolkit/docs/CAPTURE_GUIDE.md](re-toolkit/docs/CAPTURE_GUIDE.md) |
-| Install on an iPhone without a Mac | [.github/workflows/testflight.yml](.github/workflows/testflight.yml) (needs the Apple Developer Program) |
+| Install on your own iPhone, free | "Install on your iPhone" in [ios/README.md](ios/README.md) (sideload with your Apple ID, re-install every 7 days) |
 | Set up Claude, the coach or Strava | [supabase/README.md](supabase/README.md) |
 
 ## How it fits together
