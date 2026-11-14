@@ -590,6 +590,11 @@ struct PillPicker<Value: Hashable>: View {
 
 /// One bar per day. Past days light gray, the highlighted day (normally today) black.
 /// No gridlines, no Y axis, rounded bars.
+///
+/// Drawn with plain SwiftUI shapes, not Swift Charts. Why: with Swift Charts the highlighted bar
+/// stayed one tap behind (the chart kept the previous colors), and taps had to be converted
+/// from screen positions. Here every day is a real button that knows its own day and color, so
+/// neither problem can happen.
 struct DayBarsChart: View {
     struct Bar: Identifiable {
         let id: String          // unique per day (weekday letters repeat: T, T, S, S)
@@ -616,51 +621,24 @@ struct DayBarsChart: View {
     private var top: Double {
         domain?.upperBound ?? max((bars.compactMap(\.value).max() ?? 1) * 1.05, 1)
     }
+    private var bottom: Double { domain?.lowerBound ?? 0 }
+    private let labelHeight: CGFloat = 22
 
     var body: some View {
-        Chart(bars) { bar in
-            BarMark(x: .value("Day", bar.id),
-                    // A day with no (or a tiny) value still gets a small stub, so the row has no hole.
-                    y: .value("Value", grown ? max(bar.value ?? 0, top * 0.03) : 0),
-                    width: .ratio(0.5))
-                .clipShape(Capsule())
-                .foregroundStyle(bar.isHighlighted ? DS.Colors.primary : DS.Colors.muted)
-        }
-        .chartYScale(domain: (domain?.lowerBound ?? 0)...top)
-        .chartYAxis(.hidden)
-        .chartOverlay { proxy in
-            // Turns a tap into the day under the finger. The chart knows exactly where each bar
-            // is, so this stays right for 7, 14 or 30 bars.
-            // (Bug fixed here: the first version split the width into equal slots. Those drifted
-            // away from the bars, so a tap could open the day next to the one you pressed.)
-            GeometryReader { geometry in
-                if let onSelect, let plotFrame = proxy.plotFrame {
-                    Rectangle()
-                        .fill(.clear)
-                        .contentShape(Rectangle())
-                        .onTapGesture { location in
-                            let x = location.x - geometry[plotFrame].origin.x
-                            if let id: String = proxy.value(atX: x) { onSelect(id) }
-                        }
+        HStack(alignment: .bottom, spacing: 0) {
+            ForEach(bars) { bar in
+                Button {
+                    onSelect?(bar.id)
+                } label: {
+                    column(bar)
                 }
-            }
-        }
-        .chartXAxis {
-            AxisMarks { value in
-                AxisValueLabel {
-                    if let id = value.as(String.self) {
-                        Text(label(for: id))
-                            .textStyle(.caption)
-                            .foregroundStyle(DS.Colors.secondary)
-                    }
-                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(bar.spokenName)
+                .accessibilityHint("Shows this day")
             }
         }
         .frame(height: height)
-        // Redraw the chart from scratch whenever a different bar is highlighted.
-        // (Bug fixed here: when only a bar's color changed, the chart kept showing the PREVIOUS
-        // highlight, so the white bar was always one tap behind the day on screen.)
-        .id(bars.first(where: \.isHighlighted)?.id ?? "none")
+        .allowsHitTesting(onSelect != nil)
         .onAppear {
             if reduceMotion {
                 grown = true
@@ -668,20 +646,31 @@ struct DayBarsChart: View {
                 withAnimation(DS.Motion.draw.delay(0.15)) { grown = true }
             }
         }
-        .accessibilityElement(children: .ignore)
+        // Tappable: VoiceOver visits each day. Not tappable: the whole chart is one sentence.
+        .accessibilityElement(children: onSelect == nil ? .ignore : .contain)
         .accessibilityLabel(summary)
-        // VoiceOver: each day is an action on the chart ("Actions available").
-        .accessibilityActions {
-            if let onSelect {
-                ForEach(bars) { bar in
-                    Button(bar.spokenName) { onSelect(bar.id) }
-                }
-            }
-        }
     }
 
-    private func label(for id: String) -> String {
-        bars.first { $0.id == id }?.label ?? ""
+    /// One day: the bar standing on the bottom line, and its label underneath.
+    private func column(_ bar: Bar) -> some View {
+        VStack(spacing: 0) {
+            GeometryReader { geometry in
+                // A day with no (or a tiny) value still gets a small stub, so the row has no hole.
+                let fraction = min(max(((bar.value ?? 0) - bottom) / max(top - bottom, 0.0001), 0.03), 1)
+                Capsule()
+                    .fill(bar.isHighlighted ? DS.Colors.primary : DS.Colors.muted)
+                    .frame(width: max(3, geometry.size.width * 0.5),
+                           height: grown ? geometry.size.height * fraction : 0)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
+            Text(bar.label)
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize()                    // sparse labels ("13") may be wider than a thin column
+                .frame(height: labelHeight)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())              // the whole column is the tap target, not just the bar
     }
 }
 

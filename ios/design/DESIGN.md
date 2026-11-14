@@ -116,7 +116,8 @@ or `secondary`, never tinted. The tab bar keeps the iOS standard (filled when se
 
 Swift Charts, black and gray only.
 - No gridlines. X labels in `caption` / `secondary`.
-- **Bars** (`DayBarsChart`): rounded (capsule), no Y axis. **Past days `muted`, today (or the
+- **Bars** (`DayBarsChart`): drawn with plain SwiftUI shapes, one real button per day (Swift
+  Charts kept stale highlight colors and made taps unreliable). Rounded (capsule), no Y axis. **Past days `muted`, today (or the
   selected day) `primary`.** A day without data keeps a small stub so the row has no hole.
   Up to 14 bars get a weekday letter each; more than that get the day of the month once a week.
 - **Lines** (`LineChart`): thin (2 pt), round joins, `primary`. A few quiet numbers on the right
