@@ -83,9 +83,31 @@ struct WorkoutDetailView: View {
         .accessibilityLabel("\(workout.kind.displayName), strain \(PulseFormat.strain(workout.strain)) of 21")
     }
 
+    /// Workouts found automatically are all "Workout". This lets you say what it was.
+    /// The choice is kept when later syncs update the workout (same id, kind is never overwritten).
+    private var kindPicker: some View {
+        HStack(spacing: DS.Space.m) {
+            Text("Type")
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+            Spacer(minLength: DS.Space.s)
+            Picker("Type", selection: Binding(
+                get: { workout.kind },
+                set: { workout.kindRaw = $0.rawValue; try? context.save() })) {
+                ForEach(WorkoutKind.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .tint(DS.Colors.primary)
+        }
+        .frame(minHeight: 52)
+    }
+
     /// Four numbers, no boxes.
     private var stats: some View {
         VStack(spacing: DS.Space.l) {
+            kindPicker
+            Hairline()
             HStack(alignment: .top, spacing: DS.Space.m) {
                 StatBlock(symbol: "timer", label: "Duration",
                           number: Double(workout.durationMinutes),

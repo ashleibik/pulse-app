@@ -539,6 +539,7 @@ struct StatusPill: View {
 
     private var text: String {
         if band.isBusy { return "Syncing…" }
+        if case .failed = band.stage { return "Sync failed" }
         switch loader.state {
         case .idle, .generating: return "Preparing…"
         case .recalculating: return "Recalculating…"
@@ -627,6 +628,23 @@ struct DayBarsChart: View {
         }
         .chartYScale(domain: (domain?.lowerBound ?? 0)...top)
         .chartYAxis(.hidden)
+        .chartOverlay { proxy in
+            // Turns a tap into the day under the finger. The chart knows exactly where each bar
+            // is, so this stays right for 7, 14 or 30 bars.
+            // (Bug fixed here: the first version split the width into equal slots. Those drifted
+            // away from the bars, so a tap could open the day next to the one you pressed.)
+            GeometryReader { geometry in
+                if let onSelect, let plotFrame = proxy.plotFrame {
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .onTapGesture { location in
+                            let x = location.x - geometry[plotFrame].origin.x
+                            if let id: String = proxy.value(atX: x) { onSelect(id) }
+                        }
+                }
+            }
+        }
         .chartXAxis {
             AxisMarks { value in
                 AxisValueLabel {
@@ -648,18 +666,11 @@ struct DayBarsChart: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(summary)
-        .overlay {
-            // One invisible button per bar. Bars are spread evenly across the chart's width, so
-            // equal-width slots line up with them. Each slot is a real button: VoiceOver reads it.
+        // VoiceOver: each day is an action on the chart ("Actions available").
+        .accessibilityActions {
             if let onSelect {
-                HStack(spacing: 0) {
-                    ForEach(bars) { bar in
-                        Button { onSelect(bar.id) } label: {
-                            Color.clear.contentShape(Rectangle())
-                        }
-                        .accessibilityLabel(bar.spokenName)
-                        .accessibilityHint("Shows this day")
-                    }
+                ForEach(bars) { bar in
+                    Button(bar.spokenName) { onSelect(bar.id) }
                 }
             }
         }

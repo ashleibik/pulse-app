@@ -72,6 +72,15 @@ final class BandManager {
         link?.connect(to: record.peripheralID)
     }
 
+    /// Called whenever the app comes to the screen: syncs quietly if a real band is paired and
+    /// the last sync is more than 15 minutes old. (The simulated band never syncs by itself.)
+    func syncIfDue(context: ModelContext) {
+        guard !isBusy, let record = Self.pairedBand(in: context),
+              record.peripheralID != SimulatedBandLink.bandID else { return }
+        if let last = record.lastHistorySyncAt, Date.now.timeIntervalSince(last) < 15 * 60 { return }
+        syncNow(context: context)
+    }
+
     func cancel() {
         link?.stopScanning()
         link?.disconnect()

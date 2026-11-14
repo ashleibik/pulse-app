@@ -4,6 +4,7 @@ import SwiftData
 /// The tab bar: Today · Sleep · Activity · Trends. Settings opens from the Today screen.
 struct RootView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab: Tab = Tab(rawValue: LaunchOptions.tab ?? "") ?? .today
     @State private var loader = DemoDataLoader()
     @State private var band = BandManager()
@@ -38,6 +39,10 @@ struct RootView: View {
         .environment(cloud)
         .fullScreenCover(isPresented: Binding(get: { !hasSeenWelcome }, set: { hasSeenWelcome = !$0 })) {
             WelcomeView { hasSeenWelcome = true }
+        }
+        // Every time the app opens (or comes back from the background): sync if it's due.
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            if phase == .active { band.syncIfDue(context: context) }
         }
         .task {
             // Until the band is paired, fill the app with demo data on first launch.

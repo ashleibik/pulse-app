@@ -14,6 +14,7 @@ struct SettingsView: View {
     @Query private var bands: [BandRecord]
     @State private var confirmRegenerate = false
     @State private var confirmForget = false
+    @State private var confirmDelete = false
     @State private var showPairing = false
     @State private var showLog = false
     /// Tapping the version row 7 times opens the band log (a hidden debug screen).
@@ -65,6 +66,14 @@ struct SettingsView: View {
 
                 CloudSettingsView()
 
+                if DataSourceSetting.current == .band {
+                    SettingsSection("Your data", footer: "Deletes every heartbeat, night and workout stored on this iPhone. Your band stays paired. Anything you uploaded to your own cloud stays there.") {
+                        Button("Delete all band data") { confirmDelete = true }
+                            .buttonStyle(.secondaryPill)
+                            .disabled(band.isBusy || loader.isBusy)
+                    }
+                }
+
                 SettingsSection("About", footer: "Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.") {
                     ValueRow(label: "Version", value: appVersion)
                         .contentShape(Rectangle())
@@ -103,6 +112,15 @@ struct SettingsView: View {
             Button("Forget band") { band.forget(context: context) }
         } message: {
             Text("The data already downloaded stays on this iPhone.")
+        }
+        .confirmationDialog("Delete all band data from this iPhone?", isPresented: $confirmDelete,
+                            titleVisibility: .visible) {
+            Button("Delete everything") {
+                try? PulseStore.deleteAllHealthData(in: context)
+                loader.dataChanged()
+            }
+        } message: {
+            Text("This can't be undone. Data the band already handed over is not on the band anymore.")
         }
         .sheet(isPresented: $showPairing) { PairingView() }
         .sheet(isPresented: $showLog) { BandLogView() }

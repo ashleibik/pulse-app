@@ -117,6 +117,11 @@ For your own phone only. No $99 Apple Developer Program needed.
    Apple ID password into Sideloadly yourself; it goes to Apple only.
 5. **iPhone:** Settings > General > VPN & Device Management > your Apple ID > *Trust*.
 
+**Updating:** nothing updates by itself. For a new version, run *Build IPA* again, download the
+new `Pulse.ipa`, and install it with Sideloadly the same way (step 4). It replaces the old app
+and **keeps your data**, as long as you use the same Apple ID. The same steps renew the 7 days.
+Keep Developer Mode on: sideloaded apps don't open without it.
+
 Limits of a free Apple ID (Apple's rules, not Pulse's):
 - The app **stops opening after 7 days**. Re-install it with step 4 (your data stays).
 - At most 3 sideloaded apps at a time.
