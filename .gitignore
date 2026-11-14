@@ -35,3 +35,6 @@ ios/**/DerivedData/
 Thumbs.db
 .vscode/
 .idea/
+
+# ---- Built app files (download them from GitHub Actions instead) ----
+*.ipa
