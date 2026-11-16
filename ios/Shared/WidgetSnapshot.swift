@@ -19,20 +19,48 @@ struct WidgetSnapshot: Codable, Equatable {
     var simulated: Bool
     var updated: Date
 
-    /// Must match the App Group in both .entitlements files.
-    static let appGroup = "group.dev.pulse.app"
+    /// The App Group written in both .entitlements files.
+    static let plannedGroup = "group.dev.pulse.app"
     private static let key = "widgetSnapshot"
 
+    /// The App Group this copy of the app was actually signed with, or nil if it has none.
+    ///
+    /// Why not just `plannedGroup`: when Sideloadly re-signs the app with a free Apple ID it may
+    /// rename the group (e.g. add your team ID). And `UserDefaults(suiteName:)` with a group the
+    /// app isn't entitled to does NOT fail: it quietly writes to the app's private storage, where
+    /// the widget can't see it. So: read the real group names from the signing profile inside the
+    /// bundle, and keep the first one iOS actually gives us a shared folder for.
+    static let appGroup: String? = {
+        let candidates = groupsInProfile() + [plannedGroup]
+        return candidates.first {
+            FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
+        }
+    }()
+
+    /// App Group names from `embedded.mobileprovision` (a signed file with a readable plist inside).
+    /// In the widget, Bundle.main is the widget's own bundle, which has its own profile.
+    private static func groupsInProfile() -> [String] {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: data.subdata(in: start.lowerBound..<end.upperBound), format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any] else { return [] }
+        return entitlements["com.apple.security.application-groups"] as? [String] ?? []
+    }
+
+    private static var defaults: UserDefaults? { appGroup.flatMap { UserDefaults(suiteName: $0) } }
+
     static func load() -> WidgetSnapshot? {
-        guard let data = UserDefaults(suiteName: appGroup)?.data(forKey: key) else { return nil }
+        guard let data = defaults?.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(WidgetSnapshot.self, from: data)
     }
 
-    /// Returns false when the shared storage isn't available (e.g. the App Group was not signed in).
+    /// Returns false when there is no shared storage (the App Group was not kept when signing).
     @discardableResult
     func save() -> Bool {
-        guard let defaults = UserDefaults(suiteName: Self.appGroup),
-              let data = try? JSONEncoder().encode(self) else { return false }
+        guard let defaults = Self.defaults, let data = try? JSONEncoder().encode(self) else { return false }
         defaults.set(data, forKey: Self.key)
         return true
     }

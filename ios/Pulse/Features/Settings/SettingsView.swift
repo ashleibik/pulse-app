@@ -105,6 +105,10 @@ struct SettingsView: View {
                 }
 
                 SettingsSection("About", footer: "Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.") {
+                    // Whether the home screen widget can see the app's data (App Group kept when signing).
+                    ValueRow(label: "Widget link", value: WidgetSnapshot.appGroup ?? "Not available",
+                             symbol: "square.grid.2x2")
+                    Hairline()
                     ValueRow(label: "Version", value: appVersion)
                         .contentShape(Rectangle())
                         .onTapGesture {
