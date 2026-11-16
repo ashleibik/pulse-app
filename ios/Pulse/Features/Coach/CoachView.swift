@@ -86,7 +86,7 @@ struct CoachView: View {
                 .foregroundStyle(DS.Colors.onPrimary)
                 .padding(.horizontal, DS.Space.m)
                 .padding(.vertical, 12)
-                .background(DS.Colors.primary, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .background(DS.Colors.accent, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityLabel("You: \(message.content)")
         } else {

@@ -7,6 +7,7 @@ import PulseCore
 struct TrendsView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @State private var period: Period = .week
+    @State private var showReport = false
 
     enum Period: Int, CaseIterable, Identifiable {
         case week = 7, month = 30
@@ -22,6 +23,8 @@ struct TrendsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.xxl) {
                 summary.riseIn(0)
+                Button(period == .week ? "See this week's report" : "See this month's report") { showReport = true }
+                    .buttonStyle(.secondaryPill)
                 insights.riseIn(1)
                 recoveryChart.riseIn(2)
                 lineSection(.hrv) { $0.hrvRMSSD }
@@ -41,6 +44,7 @@ struct TrendsView: View {
         // Only the screenshot job sets this (to capture the lower half of the screen).
         .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
         .monoBackground()
+        .sheet(isPresented: $showReport) { ReportView(period: period.rawValue) }
         .animation(DS.Motion.spring, value: period)
     }
 

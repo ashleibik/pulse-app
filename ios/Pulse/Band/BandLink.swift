@@ -241,6 +241,8 @@ final class SimulatedBandLink: BandLink {
     private var band: SimulatedBand?
     private var outbox: AsyncStream<[SimulatedBand.Notification]>.Continuation?
     private var pump: Task<Void, Never>?
+    /// Sends a made-up live heart rate once a second while the app has asked for the stream.
+    private var liveTask: Task<Void, Never>?
 
     init(recordedMinutes: @escaping () -> [MinuteSample]) {
         self.recordedMinutes = recordedMinutes
@@ -278,6 +280,8 @@ final class SimulatedBandLink: BandLink {
 
     func disconnect() {
         pump?.cancel()
+        liveTask?.cancel()
+        liveTask = nil
         outbox?.finish()
         band = nil
         onEvent?(.disconnected(nil))
@@ -288,5 +292,21 @@ final class SimulatedBandLink: BandLink {
         let notifications = simulated.receive(write: bytes)
         band = simulated
         outbox?.yield(notifications)
+        if simulated.realtimeOn, liveTask == nil {
+            liveTask = Task { @MainActor [weak self] in
+                var heartRate = 96.0
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    guard let self, self.band?.realtimeOn == true else { return }
+                    heartRate = min(168, max(88, heartRate + Double.random(in: -3...4)))
+                    let frame = SimulatedBand.realtimeFrame(timestamp: UInt32(Date().timeIntervalSince1970),
+                                                            heartRate: UInt8(heartRate))
+                    self.outbox?.yield([SimulatedBand.Notification(characteristic: Whoop.dataUUID, bytes: frame)])
+                }
+            }
+        } else if !simulated.realtimeOn {
+            liveTask?.cancel()
+            liveTask = nil
+        }
     }
 }

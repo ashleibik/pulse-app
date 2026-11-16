@@ -15,6 +15,9 @@ struct ActivityView: View {
     /// The open workout (empty = the list is showing).
     @State private var path: [UUID] = []
     @State private var showAdd = false
+    @State private var showLive = false
+    /// Rough active calories so far today.
+    @State private var activeCalories = 0
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -32,10 +35,12 @@ struct ActivityView: View {
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 ScreenHeader(title: "Activity") {
-                    IconButton(systemName: "plus", label: "Add workout") { showAdd = true }
+                    IconButton(systemName: "play", label: "Start a workout") { showLive = true }
+                    IconButton(systemName: "plus", label: "Add a past workout") { showAdd = true }
                 }
             }
             .sheet(isPresented: $showAdd) { AddWorkoutView() }
+            .fullScreenCover(isPresented: $showLive) { LiveWorkoutView() }
             .monoBackground()
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: UUID.self) { id in
@@ -67,6 +72,8 @@ struct ActivityView: View {
         let minutes = PulseStore.minutes(from: start, to: .now, in: context)
         let maxHR = profiles.first?.estimatedMaxHeartRate() ?? 190
         zoneMinutes = HeartRateZones.minutesPerZone(minutes.map(\.averageHeartRate), maxHeartRate: maxHR)
+        activeCalories = DailyEnergy.activeCalories(minutes: minutes, restingHR: days.first?.restingHeartRate ?? 60,
+                                                    maxHR: maxHR)
     }
 
     // MARK: - Sections
@@ -95,6 +102,9 @@ struct ActivityView: View {
                 .textStyle(.body)
                 .foregroundStyle(DS.Colors.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Text("About \(activeCalories) active kcal today (a rough estimate from heart rate).")
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

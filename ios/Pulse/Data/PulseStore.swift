@@ -6,7 +6,7 @@ import PulseCore
 enum PulseStore {
     static let schema = Schema([
         MinuteRecord.self, SleepRecord.self, WorkoutRecord.self, DaySummaryRecord.self,
-        BandRecord.self, ProfileRecord.self, PacketRecord.self,
+        BandRecord.self, ProfileRecord.self, PacketRecord.self, JournalRecord.self,
     ])
 
     static func makeContainer(inMemory: Bool = false) -> ModelContainer {
@@ -78,6 +78,8 @@ struct RecomputeOutput: Sendable {
     let workoutStrain: [UUID: Double]
     /// Workouts found in the raw data (only after a band sync; `nil` = leave workouts alone).
     var detectedWorkouts: [Workout]? = nil
+    /// Fresh numbers for workouts the user added by hand (their band data may arrive later).
+    var manualWorkouts: [UUID: Workout] = [:]
 }
 
 /// Re-runs the metrics engine over every stored raw minute, in the background.
@@ -92,12 +94,18 @@ actor MetricsRecomputer {
         let minutes = records.map(\.value)
         let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now)
         var strain: [UUID: Double] = [:]
+        var manual: [UUID: Workout] = [:]
         for workout in try modelContext.fetch(FetchDescriptor<WorkoutRecord>()) {
             let rest = result.days.first { calendar.isDate($0.date, inSameDayAs: workout.start) }?.restingHeartRate ?? 55
             strain[workout.id] = MetricsEngine.strain(of: minutes, from: workout.start, to: workout.end,
                                                       restingHR: rest, profile: profile)
+            if workout.sourceRaw == DataSource.manual.rawValue {
+                manual[workout.id] = WorkoutDetector.manual(kind: workout.kind, start: workout.start, end: workout.end,
+                                                            minutes: minutes, profile: profile, restingHeartRate: rest)
+            }
         }
         var output = RecomputeOutput(days: result.days, sleeps: result.sleeps, workoutStrain: strain)
+        output.manualWorkouts = manual
         if detectWorkouts {
             output.detectedWorkouts = WorkoutDetector.detect(minutes: minutes, profile: profile) { date in
                 result.days.first { calendar.isDate($0.date, inSameDayAs: date) }?.restingHeartRate
@@ -144,6 +152,14 @@ extension PulseStore {
         let workouts = try context.fetch(FetchDescriptor<WorkoutRecord>())
         for workout in workouts {
             if let strain = output.workoutStrain[workout.id] { workout.strain = strain }
+            // A workout started in the app is saved before its band data is synced: fill it in now.
+            if let fresh = output.manualWorkouts[workout.id], fresh.averageHeartRate > 0 {
+                workout.averageHeartRate = fresh.averageHeartRate
+                workout.maxHeartRate = fresh.maxHeartRate
+                workout.zoneSeconds = fresh.zoneSeconds
+                workout.calories = fresh.calories
+                workout.strain = fresh.strain
+            }
         }
         if let detected = output.detectedWorkouts {
             // Planned demo workouts are kept as they are. Detected ones are added, updated, or

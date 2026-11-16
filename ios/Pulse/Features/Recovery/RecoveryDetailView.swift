@@ -47,9 +47,9 @@ struct RecoveryDetailView: View {
         VStack(spacing: DS.Space.l) {
             RecoveryDial(score: shown.recoveryScore, diameter: 184, lineWidth: 10)
             VStack(spacing: DS.Space.xs) {
-                Text(shown.zone?.word ?? "Learning")
+                Text((shown.zone?.word ?? "Learning").uppercased())
                     .textStyle(.display)
-                    .foregroundStyle(DS.Colors.primary)
+                    .foregroundStyle(DS.Colors.zone(shown.zone))
                     .accessibilityHidden(true)      // the ring already reads this word
                 Text(RecoveryExplainer.oneLine(breakdown))
                     .textStyle(.body)

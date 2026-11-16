@@ -24,6 +24,11 @@ public struct SimulatedBand: Sendable {
     public struct Notification: Sendable, Equatable {
         public let characteristic: String
         public let bytes: [UInt8]
+
+        public init(characteristic: String, bytes: [UInt8]) {
+            self.characteristic = characteristic
+            self.bytes = bytes
+        }
     }
 
     public var mtuPayload: Int                 // bytes per notification (BLE MTU - 3)
@@ -32,6 +37,8 @@ public struct SimulatedBand: Sendable {
     /// Test hook: drop this outgoing notification index once (simulates a lost packet).
     public var dropNotificationIndex: Int?
     public private(set) var acksReceived: [[UInt8]] = []
+    /// True while the app has asked for live heart rate (TOGGLE_REALTIME_HR).
+    public private(set) var realtimeOn = false
     public private(set) var commandsReceived: [String] = []
 
     private let batches: [[Sample]]
@@ -73,6 +80,9 @@ public struct SimulatedBand: Sendable {
         case .setClock:
             if frame.body.count >= 4 { clock = LE.u32(frame.body, 0) }
             return respond(opcode, requestSeq, [])
+        case .toggleRealtimeHr:
+            realtimeOn = frame.body.first == 1
+            return respond(opcode, requestSeq, [])
         case .sendHistoricalData:
             return sendCurrentBatch()
         case .historicalDataResult:
@@ -111,6 +121,17 @@ public struct SimulatedBand: Sendable {
         end += LE.bytes(UInt32(batch.count)) + Self.token(forBatch: currentBatch)
         stream += Whoop.buildFrame(inner: end)
         return chunked(stream, on: Whoop.dataUUID)
+    }
+
+    /// One live heart-rate packet (type 0x28), laid out as docs/PROTOCOL.md describes:
+    /// timestamp at [2:6], heart rate at [8], "on wrist" at [18].
+    public static func realtimeFrame(timestamp: UInt32, heartRate: UInt8) -> [UInt8] {
+        var inner = [UInt8](repeating: 0, count: 20)
+        inner[0] = Whoop.PacketType.realtimeData.rawValue
+        inner.replaceSubrange(2..<6, with: LE.bytes(timestamp))
+        inner[8] = heartRate
+        inner[18] = 1
+        return Whoop.buildFrame(inner: inner)
     }
 
     /// An 88-byte version-24 record with the fields we know about (docs/PROTOCOL.md §8).

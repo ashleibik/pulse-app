@@ -1,170 +1,88 @@
-# Pulse design system: "Mono"
+# Pulse design system: "Glow"
 
-Inspired by mobbin.com: clean, modern, monochrome. Big heavy type, lots of white space, soft gray
-shapes, black pill buttons.
+A dark app where the data glows. Chosen by the owner on 2026-11-15, replacing the earlier
+monochrome "Mono" system (black / white / gray only).
 
-**How to use this file:** this is the source of truth for how Pulse looks. Change the spec here
-first, then the code. Every token below exists in code as `DS.…` in
+**How to use this file:** it is the source of truth for how Pulse looks. Change the spec here
+first, then the code. Every token exists in code as `DS.…` in
 [`Pulse/App/Design.swift`](../Pulse/App/Design.swift); screens never hard-code a color, size or
-animation.
-
-Lines marked **(our choice)** were not in the original brief. They fill a gap and can be changed.
+animation. (The helpers `monoCard`, `monoBackground`, `monoSheet` kept their old names.)
 
 ## 1. Principles
 
-1. **One answer per screen.** The most important number is huge. Everything else is quiet.
-2. **Black, white and grays only.** Meaning comes from words, size and fill amount, never from color.
-3. **Type and space do the separating.** Fewer boxes. A card is the exception, not the default.
-4. **Short copy.** One line per metric. Details live behind a tap.
-5. **Alive, not busy.** Things draw in, count up and respond to touch, then get out of the way.
+1. **One answer per screen.** The most important number is huge and it glows.
+2. **Dark and calm, with one bright accent.** Color is rare, so it means something.
+3. **Color is never the only signal.** A word or a number always says the same thing.
+4. **Alive, not busy.** The ring twinkles, numbers count up, then everything rests.
+5. **Honest.** Estimates are labelled as estimates; simulated data is labelled as simulated.
 
-## 2. Color
+## 2. Color (dark only)
 
-| Token | Light | Dark | Used for |
-|---|---|---|---|
-| `background` | `#FFFFFF` | `#000000` | Screen background |
-| `surface` | `#F5F5F5` | `#111111` | Cards, secondary buttons, icon buttons |
-| `border` | `#EAEAEA` | `#1F1F1F` | Hairlines, empty tracks (ring, bars) |
-| `primary` | `#111111` | `#FFFFFF` | Main text, filled data, primary buttons |
-| `secondary` | `#6B6B6B` | `#8A8A8A` | Captions, labels, supporting text |
-| `tertiary` | `#A3A3A3` | `#5C5C5C` **(our choice)** | Chevrons, target ranges, disabled. **Not for text** |
-| `muted` **(our choice)** | `#D4D4D4` | `#333333` | Past data in charts |
-| `onPrimary` | `#FFFFFF` | `#000000` | Text on a primary button |
-| `sheet` **(our choice)** | `#FFFFFF` | `#111111` | Background of sheets (in dark mode one step lighter than the screen, so you can see where the sheet starts) |
+| Token | Value | Used for |
+|---|---|---|
+| `background` | `#05070A` | Screens |
+| `surface` | `#12161B` | Cards, quiet buttons |
+| `sheet` | `#0E1216` | Sheets |
+| `border` | `#232A31` | Hairlines, empty tracks, card edges |
+| `primary` | `#FFFFFF` | Main text and numbers |
+| `secondary` | `#9BA3AC` | Captions, labels |
+| `tertiary` | `#59626B` | Chevrons, target ranges. Not for text |
+| `muted` | `#2A323A` | Past data in charts |
+| `accent` | `#1DE9A6` | The glow: today's data, the ring, primary buttons, "Ready" |
+| `warn` | `#FFD23F` | "Steady", wake-ups, elevated stress |
+| `alert` | `#FF5C5C` | "Rest", things that lowered a score, high stress |
+| `onAccent` | `#03130D` | Text on an accent fill |
 
-Rules:
-- No accent colors, no gradients, no glows.
-- No shadows, except one very soft shadow on floating sheets (the system sheet shadow is enough).
-- `tertiary` is too faint for reading (about 2.5:1 on white). Text is always `primary` or
-  `secondary`, which both pass WCAG AA (4.5:1) on `background` and `surface`.
-
-### State without color
-
-| What | How it is shown |
-|---|---|
-| Recovery | Ring fill amount + one word: **Ready** (67–100), **Steady** (34–66), **Rest** (0–33), **Learning** (no baseline yet) |
-| Strain vs target | Black fill on a gray track, target range as a darker gray band, plus one line of advice |
-| Up / down vs normal | Arrow glyph and words: "▲ 3 vs normal", "at your normal" |
-| Data source | Words in the status pill: "Demo data", later "Synced 5 min ago" |
-| Good / bad trend | Arrow + size + word: "▲ 3 better", "▼ 12m worse", "no change". Never green / red |
-| What helped / hurt recovery | A bar growing right (helped) or left (hurt) from the middle, plus a signed number: "+3", "−18" |
-| Sleep phases | Their own labelled row in the chart, plus a gray level: Restful `primary`, Light `tertiary`, Awake `secondary` |
-| Heart-rate zones | Label (Z1–Z5) and bar length. All bars `primary` |
-| Risky actions (replace demo data) | A confirmation dialog that says what will happen. No red buttons |
+Recovery uses green / yellow / red **plus** the word Ready / Steady / Rest. Good / bad changes
+are written out ("▲ 3 better"). There is no light theme.
 
 ## 3. Typography
 
-Font: **SF Pro** (the iOS system font). iOS switches to the *Display* cut automatically at 20 pt
-and above, so headlines are SF Pro Display without bundling anything.
+SF Pro. Big numbers and headlines use the **condensed** width; labels are small caps with wide
+letter spacing. Two weights: Bold and Regular.
 
-| Style | Size | Weight | Tracking | Text style (Dynamic Type) | Used for |
-|---|---|---|---|---|---|
-| `hero` | 64–76 | Bold | −4% of the size | scales with Large Title, capped at +20% | The one number of the screen (76 in the big recovery ring, 64 elsewhere) |
-| `welcome headline` | 44 | Bold | −1.5 | scales with Large Title, capped at 56 | Welcome pages only |
-| `display` | 34 | Bold | −0.8 | Large Title | State word, screen headline |
-| `title` | 28 | Bold | −0.5 | Title 1 | Stat values |
-| `heading` | 22 | Bold | −0.3 | Title 2 | Section headings |
-| `body` | 17 | Regular | 0 | Body | Sentences, row titles |
-| `bodyStrong` | 17 | Bold | 0 | Body | Button labels, row values |
-| `caption` | 13 | Regular | 0 | Footnote | Labels, units, supporting text (`secondary`) |
-
-Rules:
-- **Two weights only: Bold and Regular.** No semibold, medium or light.
-- Numbers use monospaced digits so they don't wobble while counting.
-- Sentence case everywhere. No ALL CAPS labels.
-
-## 4. Layout
-
-- **8 pt grid.** Spacing tokens: `xs 4`, `s 8`, `m 16`, `l 24`, `xl 32`, `xxl 48`.
-- **Side padding 24.**
-- Between sections: `xxl` (48). Inside a section: `s`–`m`.
-- Prefer white space, then a hairline (`border`, 1 pt), then a card. In that order.
-- At most **one or two cards per screen**.
-- Minimum tap target 44 × 44 pt.
-- **Tab screens and sheets have no navigation bar.** A slim header (title left, actions right,
-  `ScreenHeader` in code) is pinned at the top on a solid background, so content scrolls under
-  it cleanly. On sheets the action is a round close button.
-- **Pushed screens** (Recovery, a workout) keep the system navigation bar, so the standard back
-  button and the swipe-back gesture work.
-- **Every screen starts with its answer**: one hero number with a caption above and one line
-  below. Then sections, each with a bold heading.
-
-## 5. Shapes
-
-| Thing | Shape |
-|---|---|
-| Card | `surface` fill, corner radius **24**, continuous corners, no border, no shadow, padding 20–24 |
-| Primary button | Pill (fully rounded), `primary` fill, `onPrimary` text, height 52 |
-| Secondary button | Pill, `surface` fill, `primary` text, height 52 |
-| Icon button | Circle 44, `surface` fill, `primary` icon |
-| Pill picker | Small pills (height 36), selected = `primary` fill, others = `surface` fill. Replaces the segmented control |
-| Row | Label left (`body`), value right (`bodyStrong`), 52 high, hairline between rows |
-| Status pill | Capsule with a 1 pt `border` outline, `caption` text |
-| Bars and tracks | Capsules (fully rounded ends) |
-
-One primary button per screen at most. Disabled buttons fade to 40%.
-On sheets, `surface`-filled controls use `border` instead (in dark mode the sheet itself is `surface`).
-
-## 6. Icons
-
-SF Symbols, **regular weight**, monochrome, outline versions (`moon`, not `moon.fill`) outside the
-tab bar. Large illustrative icons (welcome pages, empty states) are **thin**. Icons are `primary`
-or `secondary`, never tinted. The tab bar keeps the iOS standard (filled when selected)
-**(our choice)**.
-
-## 7. Charts
-
-Swift Charts, black and gray only.
-- No gridlines. X labels in `caption` / `secondary`.
-- **Bars** (`DayBarsChart`): drawn with plain SwiftUI shapes, one real button per day (Swift
-  Charts kept stale highlight colors and made taps unreliable). Rounded (capsule), no Y axis. **Past days `muted`, today (or the
-  selected day) `primary`.** A day without data keeps a small stub so the row has no hole.
-  Up to 14 bars get a weekday letter each; more than that get the day of the month once a week.
-- **Lines** (`LineChart`): thin (2 pt), round joins, `primary`. A few quiet numbers on the right
-  give the scale. Trend lines mark today with a dot. **(our choice:** a light gray line was too
-  faint to read, so for lines "today" is the dot, not the color.)
-- Every chart has a VoiceOver summary in words.
-
-## 8. Copy
-
-- One line per metric. If it needs a second sentence, it goes behind a tap.
-- Plain words: "at your normal", "less than you needed".
-- Numbers first, explanation second.
-
-## 9. Motion
-
-| Token | Animation | Used for |
+| Style | Size | Notes |
 |---|---|---|
-| `Motion.draw` | Smooth spring, 1.2 s, no bounce | Ring drawing in, numbers counting up, bars growing |
-| `Motion.spring` | Spring, response 0.45, damping 0.8 | Sections rising in, layout changes |
-| `Motion.press` | Spring, response 0.25, damping 0.7 | Buttons shrinking to 96% while pressed |
+| hero | 64–84 | condensed bold, the one number of the screen |
+| `display` | 34 | condensed bold; state words in CAPS |
+| `title` | 28 | condensed bold; stat values |
+| `heading` | 22 | bold |
+| `label` | 13 | bold CAPS, tracking 1.6; section titles |
+| `body` / `bodyStrong` | 17 | sentences / row values |
+| `caption` | 13 | supporting text in `secondary` |
 
-- On appear: sections fade and rise 16 pt, staggered 60 ms apart.
-- The hero number counts up from 0 while the ring draws.
-- Light haptic on every tap that opens something; selection tick on tab change.
-- Sheets and tabs use the system transitions.
-- **Reduce Motion on:** no rising, no counting, no drawing. Values just appear with a short fade.
+All styles follow Dynamic Type.
 
-## 10. Accessibility
+## 4. Layout and shapes
 
-- Dark by default (the owner's preference). Settings > Appearance switches to Light or "Match iPhone"; both palettes are kept complete.
-- Dynamic Type: every style maps to a system text style. The hero is capped so it stays inside the ring.
-- VoiceOver: each block reads as one sentence ("Recovery, 37 percent, Steady"). Decorative shapes are hidden.
-- Nothing depends on color (see *State without color*).
+- 8 pt grid; side padding 24; 48 between sections.
+- Cards: `surface`, radius 22, 1 pt `border` edge. Few of them.
+- Buttons: pills, height 52. Primary = `accent` fill with a glow, dark text. Secondary = quiet fill.
+- Tab screens and sheets pin a slim header (`ScreenHeader`); pushed screens keep the system bar.
+- Minimum tap target 44 pt.
 
-## 11. Rollout
+## 5. The glow
 
-Every screen is in the Mono design: Today, Recovery, Sleep, Activity, Workout, Trends, Settings,
-Welcome and the metric sheets. The old dark, colorful theme (`Theme.swift`) is deleted.
+- `GlowOrb`: a ring of ~300 twinkling particles behind the recovery number. The lit part shows
+  the score; a thin exact arc on the rim gives the precise reading.
+- `.glow(color)`: a soft halo. Only on the ring, the highlighted bar, and primary buttons.
+- Lines get a soft fade underneath instead of a halo.
 
-Checked so far: both appearances in simulator screenshots (GitHub Actions). **Not checked yet:**
-the animations and haptics in motion, Dynamic Type at large sizes, and VoiceOver on a real device.
+## 6. Charts
 
-## 12. Checklist for a new screen
+- Bars (`DayBarsChart`): plain SwiftUI, one button per day. Past `muted`, today `accent` + glow.
+- Lines (`LineChart`): Swift Charts, 2 pt `accent` line, fade below, quiet numbers on the right.
+  Touch and hold to read a value.
+- No gridlines. Every chart has a VoiceOver summary.
 
-1. Does it start with its answer (one hero number or one sentence)?
-2. Only `DS` tokens: no hard-coded colors, sizes or animations?
-3. Two weights, sentence case, one line per metric?
-4. At most two cards and one primary button?
-5. Does every state read without color?
-6. Light and dark screenshot taken? VoiceOver label on every block?
+## 7. Motion and accessibility
+
+- Ring draws in and numbers count up over 1.2 s; sections rise in; buttons give when pressed.
+- Light haptics on taps that open something.
+- **Reduce Motion:** the particles stand still and nothing counts or rises.
+- VoiceOver reads each block as one sentence. Nothing depends on color alone.
+
+## 8. Not checked yet
+
+Everything here has only been seen in simulator screenshots or not at all: the particle ring's
+performance on a real phone, the animations in motion, Dynamic Type at large sizes, VoiceOver.

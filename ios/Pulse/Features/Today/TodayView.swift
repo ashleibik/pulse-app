@@ -13,6 +13,10 @@ struct TodayView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @Query(sort: \WorkoutRecord.start, order: .reverse) private var workouts: [WorkoutRecord]
     @Query private var profiles: [ProfileRecord]
+    @Query(sort: \SleepRecord.end, order: .reverse) private var sleepRecords: [SleepRecord]
+    @Query private var journal: [JournalRecord]
+    @Environment(\.modelContext) private var context
+    @Environment(DemoDataLoader.self) private var loader
 
     @State private var showSettings = LaunchOptions.route == "settings"
     @State private var showRecovery = LaunchOptions.route == "recovery"
@@ -21,6 +25,10 @@ struct TodayView: View {
     /// Only opened from here by the screenshot job. Normally pairing starts in Settings.
     @State private var showPairing = LaunchOptions.route == "pairing" || LaunchOptions.route == "pairing-sim"
     @State private var showCoach = LaunchOptions.route == "coach"
+    @State private var showStress = false
+    @State private var showJournal = false
+    /// Today's stress picture (worked out from today's raw minutes).
+    @State private var stress: StressMonitor.Day?
     @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
     /// Goes up by one on every tap that opens something. Drives the light haptic.
     @State private var taps = 0
@@ -63,6 +71,13 @@ struct TodayView: View {
             .sheet(isPresented: $showCoach) {
                 CoachView()
             }
+            .sheet(isPresented: $showStress) {
+                StressView(day: stress).presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showJournal) {
+                JournalView()
+            }
+            .task(id: "\(loader.revision)-\(loader.rawDataReady)") { loadStress() }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
@@ -78,6 +93,7 @@ struct TodayView: View {
             hero(today).riseIn(1)
             strain(today).riseIn(2)
             stats(today).riseIn(3)
+            extras.riseIn(3)
             week.riseIn(4)
             activity.riseIn(5)
         }
@@ -101,9 +117,9 @@ struct TodayView: View {
         VStack(spacing: 0) {
             RecoveryDial(score: today.recoveryScore)
 
-            Text(today.zone?.word ?? "Learning")
+            Text((today.zone?.word ?? "Learning").uppercased())
                 .textStyle(.display)
-                .foregroundStyle(DS.Colors.primary)
+                .foregroundStyle(DS.Colors.zone(today.zone))
                 .padding(.top, DS.Space.l)
                 .accessibilityHidden(true)      // the ring already reads this word to VoiceOver
 
@@ -177,7 +193,7 @@ struct TodayView: View {
                     StatBlock(symbol: "bed.double", label: "Need tonight",
                               number: Double(tonightsNeed(today)),
                               format: { PulseFormat.duration(minutes: Int($0.rounded())) },
-                              caption: "to recover fully")
+                              caption: bedtimeCaption(today))
                 }
             }
             Hairline()
@@ -208,8 +224,8 @@ struct TodayView: View {
             + (average.map { "Average \(PulseFormat.percent($0))." } ?? "No scores yet.")
         return VStack(alignment: .leading, spacing: DS.Space.m) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Last 7 days")
-                    .textStyle(.heading)
+                Text("LAST 7 DAYS")
+                    .textStyle(.label)
                     .foregroundStyle(DS.Colors.primary)
                 Spacer()
                 if let average {
@@ -233,8 +249,8 @@ struct TodayView: View {
     private var activity: some View {
         let todays = workouts.filter { Calendar.current.isDateInToday($0.start) }
         return VStack(alignment: .leading, spacing: 0) {
-            Text("Activity")
-                .textStyle(.heading)
+            Text("ACTIVITY")
+                .textStyle(.label)
                 .foregroundStyle(DS.Colors.primary)
                 .accessibilityAddTraits(.isHeader)
                 .padding(.bottom, DS.Space.s)
@@ -267,6 +283,47 @@ struct TodayView: View {
     }
 
     // MARK: - Helpers
+
+    /// Stress right now, and the habit journal. Both open a sheet.
+    private var extras: some View {
+        let todayRecord = journal.first { Calendar.current.isDateInToday($0.day) }
+        let journalText = todayRecord.map { $0.habits.isEmpty ? "Logged" : "\($0.habits.count) logged" } ?? "Log today"
+        let stressText = stress?.current?.title ?? "--"
+        return HStack(alignment: .top, spacing: DS.Space.m) {
+            Button {
+                open { showStress = true }
+            } label: {
+                // The "number" is unused here: these two tiles show a word.
+                StatBlock(symbol: "waveform.path", label: "Stress", number: 0, format: { _ in stressText },
+                          caption: "now, while still")
+            }
+            .buttonStyle(.pressable)
+            Button {
+                open { showJournal = true }
+            } label: {
+                StatBlock(symbol: "square.and.pencil", label: "Journal", number: 0, format: { _ in journalText },
+                          caption: "habits vs recovery")
+            }
+            .buttonStyle(.pressable)
+        }
+    }
+
+    private func loadStress() {
+        let start = Calendar.current.startOfDay(for: .now)
+        let minutes = PulseStore.minutes(from: start, to: .now, in: context)
+        stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value),
+                                   restingHR: days.first?.restingHeartRate ?? 60,
+                                   maxHR: profiles.first?.estimatedMaxHeartRate() ?? 190,
+                                   now: .now, calendar: .current)
+    }
+
+    /// "in bed by 10:45 PM", from your usual wake-up time and tonight's need.
+    private func bedtimeCaption(_ today: DaySummaryRecord) -> String {
+        guard let bedtime = Bedtime.recommended(sleeps: sleepRecords.map(\.value),
+                                                needMinutes: Double(tonightsNeed(today)),
+                                                now: .now, calendar: .current) else { return "to recover fully" }
+        return "in bed by \(bedtime.formatted(date: .omitted, time: .shortened))"
+    }
 
     /// Every tap that opens something goes through here, so it also gives a light haptic.
     private func open(_ action: () -> Void) {

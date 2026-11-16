@@ -88,11 +88,12 @@ struct SectionTitle: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .textStyle(.heading)
+            Text(title.uppercased())
+                .textStyle(.label)
                 .foregroundStyle(DS.Colors.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+                .accessibilityLabel(title)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: DS.Space.s)
             if let trailing {
@@ -119,8 +120,8 @@ struct HeroNumber: View {
     var body: some View {
         let points = size * min(max(scale, 1), 1.2)
         CountUpText(value: value, format: format)
-            .font(.system(size: points, weight: .bold))
-            .tracking(-points * 0.04)
+            .font(.system(size: points, weight: .bold).width(.condensed))
+            .tracking(-points * 0.01)
             .foregroundStyle(DS.Colors.primary)
             .lineLimit(1)
             .minimumScaleFactor(0.5)
@@ -129,11 +130,13 @@ struct HeroNumber: View {
 
 // MARK: - Recovery dial
 
-/// A thin ring that fills to the recovery score, with the number inside.
-/// No color coding. The fill amount and the word under it ("Ready", "Steady", "Rest") carry the meaning.
+/// The hero: a living ring of glowing particles that fills to the recovery score, with the
+/// number inside. The color follows the state (green / yellow / red) and the word under it
+/// ("Ready", "Steady", "Rest") says the same, so nothing depends on color alone.
 struct RecoveryDial: View {
     let score: Double?
     var diameter: CGFloat = 232
+    /// Kept for older call sites. The arc is always thin now.
     var lineWidth: CGFloat = 12
 
     /// What is drawn right now (0...100). Animates from 0 to `score` on appear.
@@ -142,41 +145,42 @@ struct RecoveryDial: View {
     @ScaledMetric(relativeTo: .largeTitle) private var scale: CGFloat = 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// 76 pt in the big dial. Scales with the ring, capped so the number always fits inside.
-    private var hero: CGFloat { diameter * 0.33 * min(max(scale, 1), 1.2) }
+    private var hero: CGFloat { diameter * 0.36 * min(max(scale, 1), 1.2) }
+    private var color: Color { DS.Colors.zone(score.map { RecoveryZone(score: $0) }) }
 
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(DS.Colors.border, lineWidth: lineWidth)
+            GlowOrb(fraction: (score ?? 0) / 100, color: color)
+            // A thin exact arc on the rim: the particles give the feeling, this gives the reading.
             Circle()
                 .trim(from: 0, to: shown / 100)
-                .stroke(DS.Colors.primary, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))      // start at 12 o'clock
+                .padding(2)
+                .glow(color, radius: 8)
 
             VStack(spacing: 0) {
                 if score != nil {
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
                         CountingText(value: shown) { "\(Int($0.rounded()))" }
-                            .font(.system(size: hero, weight: .bold))
-                            .tracking(-hero * 0.04)
+                            .font(.system(size: hero, weight: .bold).width(.condensed))
+                            .foregroundStyle(DS.Colors.primary)
                         Text("%")
-                            .font(.system(size: hero * 0.4, weight: .bold))
-                            .foregroundStyle(DS.Colors.secondary)
+                            .font(.system(size: hero * 0.4, weight: .bold).width(.condensed))
+                            .foregroundStyle(color)
                     }
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                 } else {
                     Text("--")
-                        .font(.system(size: hero, weight: .bold))
+                        .font(.system(size: hero, weight: .bold).width(.condensed))
                         .foregroundStyle(DS.Colors.tertiary)
                 }
-                Text("Recovery")
-                    .textStyle(.caption)
+                Text("RECOVERY")
+                    .textStyle(.label)
                     .foregroundStyle(DS.Colors.secondary)
             }
-            .foregroundStyle(DS.Colors.primary)
-            .padding(.horizontal, lineWidth + DS.Space.m)
+            .padding(.horizontal, DS.Space.xl)
         }
         .frame(width: diameter, height: diameter)
         .onAppear { animate(to: score) }
@@ -221,7 +225,7 @@ struct StrainMeter: View {
                     .frame(width: width * (target.upperBound - target.lowerBound) / Strain.maximum)
                     .offset(x: width * target.lowerBound / Strain.maximum)
                 Capsule()
-                    .fill(DS.Colors.primary)
+                    .fill(DS.Colors.accent)
                     .frame(width: max(8, width * min(shown, Strain.maximum) / Strain.maximum))
             }
         }
@@ -255,7 +259,7 @@ struct ProgressMeter: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(track)
                 Capsule()
-                    .fill(DS.Colors.primary)
+                    .fill(DS.Colors.accent)
                     .frame(width: max(8, geo.size.width * min(max(shown, 0), 1)))
             }
         }
@@ -289,7 +293,7 @@ struct ContributionBar: View {
                     .fill(DS.Colors.border)
                     .frame(height: 8)
                 Capsule()
-                    .fill(DS.Colors.primary)
+                    .fill(points >= 0 ? DS.Colors.accent : DS.Colors.alert)     // helped / hurt
                     .frame(width: length, height: 8)
                     .offset(x: points >= 0 ? half : half - length)
                 // The middle = "exactly at your normal".
@@ -326,7 +330,7 @@ struct ZoneBars: View {
                             Capsule().fill(track)
                             if value > 0 {
                                 Capsule()
-                                    .fill(DS.Colors.primary)
+                                    .fill(DS.Colors.accent)
                                     .frame(width: max(8, geo.size.width * Double(value) / Double(total)))
                             }
                         }
@@ -575,7 +579,7 @@ struct PillPicker<Value: Hashable>: View {
                         .foregroundStyle(isSelected ? DS.Colors.onPrimary : DS.Colors.primary)
                         .padding(.horizontal, 14)
                         .frame(minHeight: 36)
-                        .background(isSelected ? DS.Colors.primary : DS.Colors.surface, in: Capsule())
+                        .background(isSelected ? DS.Colors.accent : DS.Colors.surface, in: Capsule())
                         .frame(minHeight: 44)       // tap target
                 }
                 .buttonStyle(.pressable)
@@ -658,7 +662,8 @@ struct DayBarsChart: View {
                 // A day with no (or a tiny) value still gets a small stub, so the row has no hole.
                 let fraction = min(max(((bar.value ?? 0) - bottom) / max(top - bottom, 0.0001), 0.03), 1)
                 Capsule()
-                    .fill(bar.isHighlighted ? DS.Colors.primary : DS.Colors.muted)
+                    .fill(bar.isHighlighted ? DS.Colors.accent : DS.Colors.muted)
+                    .glow(bar.isHighlighted ? DS.Colors.accent : .clear, radius: 8)
                     .frame(width: max(3, geometry.size.width * 0.5),
                            height: grown ? geometry.size.height * fraction : 0)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -737,6 +742,9 @@ struct LineChart: View {
     /// Where the finger is on the time axis (nil = not touching).
     @State private var touchedDate: Date?
 
+    /// The lowest value shown (the fade under the line ends here).
+    private var floorValue: Double { points.map(\.value).min() ?? 0 }
+
     /// The data point nearest to the finger.
     private var touchedPoint: ChartPoint? {
         guard valueLabel != nil, let touchedDate else { return nil }
@@ -760,18 +768,24 @@ struct LineChart: View {
                     }
                 PointMark(x: .value("Time", point.date), y: .value("Value", point.value))
                     .symbolSize(70)
-                    .foregroundStyle(DS.Colors.primary)
+                    .foregroundStyle(DS.Colors.accent)
             }
             ForEach(points) { point in
+                // A soft fade under the line, down to the lowest value on the chart.
+                AreaMark(x: .value("Time", point.date), yStart: .value("Base", floorValue),
+                         yEnd: .value("Value", point.value))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(LinearGradient(colors: [DS.Colors.accent.opacity(0.28), DS.Colors.accent.opacity(0)],
+                                                    startPoint: .top, endPoint: .bottom))
                 LineMark(x: .value("Time", point.date), y: .value("Value", point.value))
                     .interpolationMethod(.catmullRom)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                    .foregroundStyle(DS.Colors.primary)
+                    .foregroundStyle(DS.Colors.accent)
             }
             if marksLast, let last = points.last {
                 PointMark(x: .value("Time", last.date), y: .value("Value", last.value))
                     .symbolSize(70)
-                    .foregroundStyle(DS.Colors.primary)
+                    .foregroundStyle(DS.Colors.accent)
             }
         }
         .chartYScale(domain: .automatic(includesZero: false))

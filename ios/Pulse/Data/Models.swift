@@ -191,6 +191,24 @@ final class BandRecord {
     }
 }
 
+/// One day of the habit journal (Today > Journal). A day with a record but no habits means
+/// "none of these happened", which is information too.
+@Model
+final class JournalRecord {
+    @Attribute(.unique) var day: Date       // start of the day
+    var habitsRaw: [String]
+
+    init(day: Date, habits: Set<Habit>) {
+        self.day = day
+        habitsRaw = habits.map(\.rawValue)
+    }
+
+    var habits: Set<Habit> {
+        get { Set(habitsRaw.compactMap(Habit.init(rawValue:))) }
+        set { habitsRaw = newValue.map(\.rawValue).sorted() }
+    }
+}
+
 /// The few personal details the formulas need. Stored only on this phone.
 @Model
 final class ProfileRecord {

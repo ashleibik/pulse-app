@@ -33,6 +33,9 @@ final class BandManager {
     /// Newest last. Only kept in memory, capped, and only shown on the hidden debug screen.
     private(set) var log: [BandSession.LogEntry] = []
     private(set) var badFrames = 0
+    /// The band's live heart rate while a live workout is open. `nil` = no live reading.
+    private(set) var liveHeartRate: Int?
+    private var wantsLive = false
 
     /// Called after new data was saved and the metrics were recalculated.
     var onDataChanged: (() -> Void)?
@@ -75,10 +78,31 @@ final class BandManager {
     /// Called whenever the app comes to the screen: syncs quietly if a real band is paired and
     /// the last sync is more than 15 minutes old. (The simulated band never syncs by itself.)
     func syncIfDue(context: ModelContext) {
-        guard !isBusy, let record = Self.pairedBand(in: context),
+        guard !isBusy, !wantsLive, let record = Self.pairedBand(in: context),
               record.peripheralID != SimulatedBandLink.bandID else { return }
         if let last = record.lastHistorySyncAt, Date.now.timeIntervalSince(last) < 15 * 60 { return }
         syncNow(context: context)
+    }
+
+    /// Live workout opened: connect (and sync) if needed, then ask the band to stream heart rate.
+    /// Without a paired band nothing happens and `liveHeartRate` stays nil.
+    func startLive(context: ModelContext) {
+        wantsLive = true
+        liveHeartRate = nil
+        if !isBusy { syncNow(context: context) }
+    }
+
+    /// Live workout closed: stop the stream and let the band go.
+    func stopLive() {
+        guard wantsLive else { return }
+        wantsLive = false
+        liveHeartRate = nil
+        if var current = session {
+            let effects = current.setLive(false)
+            session = nil
+            run(effects)
+        }
+        if !isBusy { link?.disconnect() }
     }
 
     func cancel() {
@@ -157,6 +181,7 @@ final class BandManager {
 
         case .disconnected(let reason):
             session = nil
+            liveHeartRate = nil
             if let reason, isBusy {
                 stage = .failed(reason)
             } else if isBusy {
@@ -218,8 +243,8 @@ final class BandManager {
             case .progress(let saved, _):
                 recordsSaved = saved
 
-            case .liveHeartRate:
-                break       // the live heart-rate screen is not built yet
+            case .liveHeartRate(let bpm):
+                liveHeartRate = bpm
 
             case .finished:
                 finish()
@@ -273,8 +298,16 @@ final class BandManager {
             } catch {
                 self?.stage = .failed("The data was saved, but the metrics could not be recalculated: \(error.localizedDescription)")
             }
-            self?.session = nil
-            self?.link?.disconnect()
+            guard let self else { return }
+            if self.wantsLive, var current = self.session {
+                // A live workout is waiting: keep the connection and switch the stream on.
+                let effects = current.setLive(true)
+                self.session = current
+                self.run(effects)
+            } else {
+                self.session = nil
+                self.link?.disconnect()
+            }
         }
     }
 }

@@ -12,7 +12,9 @@ struct SettingsView: View {
     @Environment(HealthExporter.self) private var health
     @Query private var profiles: [ProfileRecord]
     @Query private var bands: [BandRecord]
-    @AppStorage("appearance") private var appearance = "dark"
+    @State private var remindersOn = UserDefaults.standard.bool(forKey: "remindersEnabled")
+    /// The export file, once it has been written.
+    @State private var exportURL: URL?
     @State private var confirmRegenerate = false
     @State private var confirmForget = false
     @State private var confirmDelete = false
@@ -28,12 +30,6 @@ struct SettingsView: View {
                     ProfileSection(profile: profile) {
                         Task { await loader.recompute(context: context) }
                     }
-                }
-
-                SettingsSection("Appearance") {
-                    PillPicker(options: ["dark", "light", "system"],
-                               label: { $0 == "system" ? "Match iPhone" : $0.capitalized },
-                               selection: $appearance)
                 }
 
                 bandSection
@@ -73,11 +69,38 @@ struct SettingsView: View {
 
                 CloudSettingsView()
 
-                if DataSourceSetting.current == .band {
-                    SettingsSection("Your data", footer: "Deletes every heartbeat, night and workout stored on this iPhone. Your band stays paired. Anything you uploaded to your own cloud stays there.") {
+                SettingsSection("Reminders", footer: "A nudge 30 minutes before tonight's bedtime, and your recovery score after a sync. Created on this iPhone; nothing is sent anywhere.") {
+                    ValueRow(label: "Bedtime and recovery", value: remindersOn ? "On" : "Off", symbol: "bell",
+                             emphasized: remindersOn)
+                    Hairline()
+                    Button(remindersOn ? "Turn off" : "Turn on") {
+                        Task {
+                            if remindersOn {
+                                Notifier.disable()
+                                remindersOn = false
+                            } else {
+                                remindersOn = await Notifier.enable()
+                                Notifier.refresh(context: context)
+                            }
+                        }
+                    }
+                    .buttonStyle(.secondaryPill)
+                    .padding(.top, DS.Space.m)
+                }
+
+                SettingsSection("Your data", footer: "The export is one readable file with your days, nights, workouts and journal. Raw heartbeats are not included.") {
+                    if let exportURL {
+                        ShareLink(item: exportURL) { Text("Share the export file") }
+                            .buttonStyle(.secondaryPill)
+                    } else {
+                        Button("Export my data") { export() }
+                            .buttonStyle(.secondaryPill)
+                    }
+                    if DataSourceSetting.current == .band {
                         Button("Delete all band data") { confirmDelete = true }
                             .buttonStyle(.secondaryPill)
                             .disabled(band.isBusy || loader.isBusy)
+                            .padding(.top, DS.Space.s)
                     }
                 }
 
@@ -182,6 +205,20 @@ struct SettingsView: View {
                     .padding(.top, DS.Space.m)
             }
         }
+    }
+
+    /// Writes the export file to a temporary folder, ready for the share sheet.
+    private func export() {
+        let days = ((try? context.fetch(FetchDescriptor<DaySummaryRecord>())) ?? []).map(\.value)
+        let sleeps = ((try? context.fetch(FetchDescriptor<SleepRecord>())) ?? []).map(\.value)
+        let workouts = ((try? context.fetch(FetchDescriptor<WorkoutRecord>())) ?? []).map(\.value)
+        var journal: [Date: Set<Habit>] = [:]
+        for record in (try? context.fetch(FetchDescriptor<JournalRecord>())) ?? [] { journal[record.day] = record.habits }
+        guard let data = try? DataExport.json(days: days, sleeps: sleeps, workouts: workouts, journal: journal,
+                                              calendar: .current, now: .now) else { return }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-export.json")
+        try? data.write(to: url, options: .atomic)
+        exportURL = url
     }
 
     private var stateText: String {

@@ -20,9 +20,9 @@ struct PulseApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .preferredColorScheme(colorScheme)
+                .preferredColorScheme(.dark)        // the Glow design is dark only
                 // Monochrome: controls are black / white.
-                .tint(DS.Colors.primary)
+                .tint(DS.Colors.accent)
         }
         .modelContainer(container)
     }

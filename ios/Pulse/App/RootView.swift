@@ -42,12 +42,17 @@ struct RootView: View {
         }
         // Every time the app opens (or comes back from the background): sync if it's due.
         .onChange(of: scenePhase, initial: true) { _, phase in
-            if phase == .active { band.syncIfDue(context: context) }
+            if phase == .active {
+                band.syncIfDue(context: context)
+                Notifier.refresh(context: context)      // tonight's bedtime reminder
+            }
         }
         .task {
             // Until the band is paired, fill the app with demo data on first launch.
             band.onDataChanged = { [loader, health, cloud, context] in
                 loader.dataChanged()
+                Notifier.refresh(context: context)
+                Notifier.recoveryReady(context: context)
                 // New band data: pass it on, but only to what the user turned on.
                 Task {
                     await health.export(context: context)       // Apple Health

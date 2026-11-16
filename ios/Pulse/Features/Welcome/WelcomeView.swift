@@ -56,7 +56,8 @@ struct WelcomeView: View {
             Spacer()
             Image(systemName: content.symbol)
                 .font(.system(size: 56, weight: .thin))
-                .foregroundStyle(DS.Colors.primary)
+                .foregroundStyle(DS.Colors.accent)
+                .glow(DS.Colors.accent, radius: 14)
                 .accessibilityHidden(true)
             Text(content.title)
                 .font(.system(size: min(headlineSize, 56), weight: .bold))
@@ -79,7 +80,7 @@ struct WelcomeView: View {
         HStack(spacing: 6) {
             ForEach(pages.indices, id: \.self) { index in
                 Capsule()
-                    .fill(index == page ? DS.Colors.primary : DS.Colors.muted)
+                    .fill(index == page ? DS.Colors.accent : DS.Colors.muted)
                     .frame(width: index == page ? 24 : 8, height: 8)
             }
         }

@@ -1,62 +1,79 @@
 import SwiftUI
 import UIKit
+import PulseCore
 
-/// Pulse design system "Mono": black, white and grays only.
+/// Pulse design system "Glow": a dark app where the data glows.
 ///
 /// The written spec is `ios/design/DESIGN.md`. Change the spec first, then this file.
 /// Screens use these tokens and never hard-code a color, size or animation.
+/// (History: v2 "Mono" was black / white / gray only. The helper names `monoCard`,
+/// `monoBackground` and `monoSheet` are kept from it so the screens didn't have to change.)
 enum DS {
 
-    // MARK: Colors (DESIGN.md section 2)
+    // MARK: Colors (DESIGN.md section 2). Dark only.
 
     enum Colors {
-        static let background = dynamic(light: 0xFFFFFF, dark: 0x000000)
-        static let surface = dynamic(light: 0xF5F5F5, dark: 0x111111)
-        static let border = dynamic(light: 0xEAEAEA, dark: 0x1F1F1F)
-        static let primary = dynamic(light: 0x111111, dark: 0xFFFFFF)
-        static let secondary = dynamic(light: 0x6B6B6B, dark: 0x8A8A8A)
+        static let background = Color(hex: 0x05070A)
+        static let surface = Color(hex: 0x12161B)
+        static let border = Color(hex: 0x232A31)
+        static let primary = Color(hex: 0xFFFFFF)
+        static let secondary = Color(hex: 0x9BA3AC)
         /// Too faint for text. Chevrons, target ranges, disabled things only.
-        static let tertiary = dynamic(light: 0xA3A3A3, dark: 0x5C5C5C)
-        /// Past data in charts.
-        static let muted = dynamic(light: 0xD4D4D4, dark: 0x333333)
-        /// Text on top of a `primary` fill.
-        static let onPrimary = dynamic(light: 0xFFFFFF, dark: 0x000000)
-        /// Background of sheets. In dark mode a sheet is one step lighter than the screen under
-        /// it, otherwise black on black would hide where the sheet starts.
-        static let sheet = dynamic(light: 0xFFFFFF, dark: 0x111111)
+        static let tertiary = Color(hex: 0x59626B)
+        /// Past data in charts, empty tracks.
+        static let muted = Color(hex: 0x2A323A)
+        /// Background of sheets: one step lighter than the screen.
+        static let sheet = Color(hex: 0x0E1216)
 
-        /// One color that switches by itself between light and dark mode.
-        private static func dynamic(light: UInt32, dark: UInt32) -> Color {
-            Color(uiColor: UIColor { traits in
-                UIColor(hex: traits.userInterfaceStyle == .dark ? dark : light)
-            })
+        /// The one accent: a bright green that glows. Today's data, the ring, primary buttons.
+        static let accent = Color(hex: 0x1DE9A6)
+        /// Text on top of an `accent` fill.
+        static let onAccent = Color(hex: 0x03130D)
+        /// Middle recovery ("Steady"), wake-ups.
+        static let warn = Color(hex: 0xFFD23F)
+        /// Low recovery ("Rest"), things that pulled a score down.
+        static let alert = Color(hex: 0xFF5C5C)
+
+        /// Kept so older call sites compile: text on a primary button.
+        static let onPrimary = onAccent
+
+        /// Recovery state as a color. The word (Ready / Steady / Rest) is always shown too, so
+        /// nothing depends on color alone.
+        static func zone(_ zone: RecoveryZone?) -> Color {
+            switch zone {
+            case .green: accent
+            case .yellow: warn
+            case .red: alert
+            case nil: tertiary
+            }
         }
     }
 
     // MARK: Typography (DESIGN.md section 3)
 
-    /// Two weights only: bold and regular. Every style maps to a system text style, so it
-    /// follows the user's Dynamic Type setting.
+    /// Two weights only: bold and regular. Big numbers use the condensed width, which gives
+    /// them a sporty, instrument-like look. Every style follows Dynamic Type.
     enum TextStyle {
-        case display, title, heading, body, bodyStrong, caption
+        case display, title, heading, label, body, bodyStrong, caption
 
         var font: Font {
             switch self {
-            case .display: .largeTitle.weight(.bold)      // 34
-            case .title: .title.weight(.bold)             // 28
-            case .heading: .title2.weight(.bold)          // 22
-            case .body: .body                             // 17
-            case .bodyStrong: .body.weight(.bold)         // 17
-            case .caption: .footnote                      // 13
+            case .display: .largeTitle.weight(.bold).width(.condensed)      // 34
+            case .title: .title.weight(.bold).width(.condensed)             // 28
+            case .heading: .title2.weight(.bold)                            // 22
+            case .label: .footnote.weight(.bold)                            // 13, used in CAPS
+            case .body: .body                                               // 17
+            case .bodyStrong: .body.weight(.bold)                           // 17
+            case .caption: .footnote                                        // 13
             }
         }
 
-        /// Tight letter spacing on big type (the Mobbin headline look).
         var tracking: CGFloat {
             switch self {
-            case .display: -0.8
-            case .title: -0.5
+            case .display: -0.4
+            case .title: -0.2
             case .heading: -0.3
+            case .label: 1.6                // wide letter spacing for small caps labels
             case .body, .bodyStrong, .caption: 0
             }
         }
@@ -76,7 +93,7 @@ enum DS {
     }
 
     enum Radius {
-        static let card: CGFloat = 24
+        static let card: CGFloat = 22
     }
 
     // MARK: Motion (DESIGN.md section 9)
@@ -91,13 +108,11 @@ enum DS {
     }
 }
 
-private extension UIColor {
-    /// 0xRRGGBB -> UIColor.
-    convenience init(hex: UInt32) {
-        self.init(red: CGFloat((hex >> 16) & 0xFF) / 255,
-                  green: CGFloat((hex >> 8) & 0xFF) / 255,
-                  blue: CGFloat(hex & 0xFF) / 255,
-                  alpha: 1)
+extension Color {
+    /// 0xRRGGBB -> Color.
+    init(hex: UInt32) {
+        self.init(red: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255,
+                  blue: Double(hex & 0xFF) / 255)
     }
 }
 
@@ -109,7 +124,7 @@ extension View {
         font(style.font).tracking(style.tracking)
     }
 
-    /// Screen background of the Mono design.
+    /// Screen background.
     func monoBackground() -> some View {
         background(DS.Colors.background.ignoresSafeArea())
     }
@@ -122,12 +137,19 @@ extension View {
             .presentationDragIndicator(.visible)
     }
 
-    /// The one card shape: soft gray fill, big radius, no border, no shadow.
+    /// The card shape: dark raised surface, soft corners, a hairline edge.
     func monoCard(padding: CGFloat = DS.Space.l) -> some View {
         self.padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(DS.Colors.surface,
                         in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                .stroke(DS.Colors.border, lineWidth: 1))
+    }
+
+    /// A soft halo of the given color: what makes data "glow".
+    func glow(_ color: Color, radius: CGFloat = 10) -> some View {
+        shadow(color: color.opacity(0.55), radius: radius)
     }
 
     /// Fade + rise when the view first appears. `index` staggers neighbours (60 ms apart).
@@ -171,8 +193,8 @@ private struct OnSheetKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// `true` inside a sheet. Gray fills (secondary pills, icon buttons) then use the next
-    /// lighter gray, because in dark mode the sheet itself already has the `surface` color.
+    /// `true` inside a sheet. Quiet fills (secondary pills, icon buttons) then use the next
+    /// lighter step, because the sheet itself is already lighter than the screen.
     var isOnSheet: Bool {
         get { self[OnSheetKey.self] }
         set { self[OnSheetKey.self] = newValue }
@@ -180,7 +202,7 @@ extension EnvironmentValues {
 }
 
 extension DS.Colors {
-    /// The quiet gray fill behind secondary buttons and icon buttons.
+    /// The quiet fill behind secondary buttons and icon buttons.
     static func quietFill(onSheet: Bool) -> Color {
         onSheet ? border : surface
     }
@@ -188,8 +210,8 @@ extension DS.Colors {
 
 // MARK: - Buttons
 
-/// Fully rounded button. Primary = black fill, white text. Secondary = light gray fill, black text.
-/// (Colors flip in dark mode.) Disabled buttons fade out.
+/// Fully rounded button. Primary = glowing accent fill, dark text. Secondary = quiet dark fill,
+/// white text. Disabled buttons fade out.
 struct PillButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary }
     var kind: Kind = .primary
@@ -208,11 +230,12 @@ struct PillButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .textStyle(.bodyStrong)
-                .foregroundStyle(kind == .primary ? DS.Colors.onPrimary : DS.Colors.primary)
+                .foregroundStyle(kind == .primary ? DS.Colors.onAccent : DS.Colors.primary)
                 .padding(.horizontal, DS.Space.l)
                 .frame(minHeight: 52)
-                .background(kind == .primary ? DS.Colors.primary : DS.Colors.quietFill(onSheet: isOnSheet),
+                .background(kind == .primary ? DS.Colors.accent : DS.Colors.quietFill(onSheet: isOnSheet),
                             in: Capsule())
+                .glow(kind == .primary && isEnabled ? DS.Colors.accent : .clear, radius: 12)
                 .opacity(isEnabled ? 1 : 0.4)
                 .scaleEffect(configuration.isPressed ? 0.96 : 1)
                 .animation(DS.Motion.press, value: configuration.isPressed)
@@ -240,7 +263,7 @@ extension ButtonStyle where Self == PressableStyle {
     static var pressable: PressableStyle { PressableStyle() }
 }
 
-/// Round 44 pt button with one SF Symbol (regular weight, monochrome). Fades when disabled.
+/// Round 44 pt button with one SF Symbol. Fades when disabled.
 struct IconButton: View {
     let systemName: String
     let label: String
@@ -256,6 +279,7 @@ struct IconButton: View {
                 .foregroundStyle(DS.Colors.primary)
                 .frame(width: 44, height: 44)
                 .background(DS.Colors.quietFill(onSheet: isOnSheet), in: Circle())
+                .overlay(Circle().stroke(DS.Colors.border, lineWidth: 1))
                 .opacity(isEnabled ? 1 : 0.35)
         }
         .buttonStyle(.pressable)
@@ -304,5 +328,81 @@ struct CountUpText: View {
         } else {
             withAnimation(DS.Motion.draw) { shown = target }
         }
+    }
+}
+
+// MARK: - Glow orb
+
+/// The living ring behind the recovery score: a few hundred glowing particles drifting on a
+/// ring. The lit part of the ring shows the score; the rest stays dim.
+///
+/// Drawn with `Canvas` (one fast drawing pass per frame) inside a `TimelineView` (which supplies
+/// the clock). With Reduce Motion on, the clock is paused and the particles stand still.
+struct GlowOrb: View {
+    /// 0...1: how much of the ring is lit, clockwise from 12 o'clock.
+    let fraction: Double
+    let color: Color
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private struct Particle {
+        let turn: Double        // position around the ring, 0...1
+        let radial: Double      // distance from the center, as a share of the radius
+        let size: Double
+        let alpha: Double
+        let speed: Double
+        let phase: Double
+    }
+
+    /// The same particles every launch (fixed seed), so the ring looks the same each time.
+    private static let particles: [Particle] = {
+        var state: UInt64 = 0x5EED_1234_ABCD_0042
+        func next() -> Double {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Double(state >> 11) / Double(1 << 53)
+        }
+        var list: [Particle] = []
+        for _ in 0..<320 {
+            let depth = next()
+            // Most particles sit near the rim; a few drift further inside.
+            list.append(Particle(turn: next(), radial: 1 - depth * depth * 0.30, size: 1.2 + next() * 2.6,
+                                 alpha: 0.45 + next() * 0.55, speed: 0.5 + next() * 1.4, phase: next() * 6.283))
+        }
+        return list
+    }()
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
+            Canvas { context, size in
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                let centerX = Double(size.width) / 2
+                let centerY = Double(size.height) / 2
+                let radius = Double(min(size.width, size.height)) / 2 - 6
+                for particle in Self.particles {
+                    let pulse = sin(time * particle.speed + particle.phase)
+                    let lit = particle.turn <= fraction
+                    let angle = (particle.turn + 0.004 * pulse) * 2 * Double.pi - Double.pi / 2
+                    let distance = radius * (particle.radial + 0.012 * pulse)
+                    let dot = particle.size * (lit ? 1 : 0.7)
+                    let x: Double = centerX + cos(angle) * distance - dot / 2
+                    let y: Double = centerY + sin(angle) * distance - dot / 2
+                    let rect = CGRect(x: x, y: y, width: dot, height: dot)
+                    // Lit particles twinkle; unlit ones are a faint trace of the full circle.
+                    let alpha = lit ? particle.alpha * (0.45 + 0.55 * (0.5 + 0.5 * pulse)) : 0.10
+                    context.fill(Path(ellipseIn: rect), with: .color(color.opacity(alpha)))
+                }
+            }
+        }
+        .background {
+            // A blurred ring underneath gives the particles their halo.
+            Circle()
+                .trim(from: 0, to: max(fraction, 0.02))
+                .stroke(color, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .padding(14)
+                .blur(radius: 18)
+                .opacity(0.55)
+        }
+        .accessibilityHidden(true)
     }
 }

@@ -116,6 +116,12 @@ public struct BandSession: Sendable {
         return effects
     }
 
+    /// Turns the band's live heart-rate stream on or off (used by the live workout screen).
+    public mutating func setLive(_ on: Bool) -> [Effect] {
+        let command = Whoop.Command.realtimeHR(on: on, seq: seq.next())
+        return write(command, "TOGGLE_REALTIME_HR")
+    }
+
     /// Call after the batch from `.persist` is safely on disk. Returns the ack for the band.
     public mutating func didPersist(token: [UInt8], recordCount: Int) -> [Effect] {
         var effects = map(sync.didPersist(token: token, recordCount: recordCount))

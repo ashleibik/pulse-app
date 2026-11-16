@@ -16,6 +16,8 @@ struct SleepView: View {
     @State private var nightIndex = 0          // 0 = last night, 1 = the night before, ...
     @State private var heartRate: [ChartPoint] = []
     @State private var segments: [SleepSegment] = []
+    /// Breaths per minute for the night on screen (nil = no clear reading).
+    @State private var breathing: Double?
     /// The block tapped in the night chart.
     @State private var selectedSegment: SleepSegment?
     /// The phase whose explanation sheet is open.
@@ -60,6 +62,7 @@ struct SleepView: View {
         let minutes = PulseStore.minutes(from: night.start, to: night.end, in: context)
         heartRate = minutes.compactMap { m in m.averageHeartRate.map { ChartPoint(date: m.start, value: $0) } }
         segments = SleepTimeline.build(minutes: minutes, from: night.start, to: night.end)
+        breathing = RespiratoryRate.night(minutes: minutes)
     }
 
     // MARK: - Sections
@@ -92,6 +95,21 @@ struct SleepView: View {
                           caption: "\(night.awakeMinutes) min awake")
             }
             .riseIn(3)
+            Hairline()
+            HStack(alignment: .top, spacing: DS.Space.m) {
+                StatBlock(symbol: "calendar", label: "Consistency",
+                          number: SleepConsistency.score(sleeps.map(\.value), calendar: .current),
+                          format: { PulseFormat.percent($0) },
+                          caption: "regular bed and wake times")
+                StatBlock(symbol: "lungs", label: "Breathing",
+                          number: breathing,
+                          format: { String(format: "%.1f", $0) }, unit: "/ min",
+                          caption: breathing == nil ? "needs beat-to-beat data" : "breaths while asleep")
+            }
+            if let bedtime = Notifier.bedtime(context: context) {
+                Hairline()
+                ValueRow(label: "Bedtime tonight", value: bedtime.formatted(date: .omitted, time: .shortened), symbol: "bed.double")
+            }
             if let summary {
                 needBreakdown(for: summary).riseIn(4)
             }
@@ -277,9 +295,9 @@ struct SleepView: View {
     /// Gray level per phase. The rows of the chart are labelled, so this is only extra help.
     private static func gray(for phase: SleepPhase) -> Color {
         switch phase {
-        case .restful: DS.Colors.primary
-        case .light: DS.Colors.tertiary
-        case .awake: DS.Colors.secondary
+        case .restful: DS.Colors.accent
+        case .light: DS.Colors.accent.opacity(0.4)
+        case .awake: DS.Colors.warn
         }
     }
 
