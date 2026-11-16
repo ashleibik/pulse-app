@@ -38,6 +38,16 @@ jobs:
             build 2>&1 | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
           grep -q "BUILD SUCCEEDED" build.log
 
+      # An unsigned app carries no entitlements, so the sideloading tool would not know the app
+      # needs HealthKit and the App Group shared with the widget. A placeholder ("ad-hoc")
+      # signature embeds them; Sideloadly replaces it with your Apple ID's signature.
+      - name: Embed entitlements
+        run: |
+          APP=build/Build/Products/Release-iphoneos/Pulse.app
+          codesign -f -s - --entitlements ios/PulseWidget/PulseWidget.entitlements "$APP/PlugIns/PulseWidget.appex"
+          codesign -f -s - --entitlements ios/Pulse/Pulse.entitlements "$APP"
+          codesign -d --entitlements - "$APP" | head -20
+
       - name: Package as .ipa
         run: |
           mkdir -p ipa/Payload

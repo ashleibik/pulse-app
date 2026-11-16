@@ -7,7 +7,8 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: Tab = Tab(rawValue: LaunchOptions.tab ?? "") ?? .today
     @State private var loader = DemoDataLoader()
-    @State private var band = BandManager()
+    /// Shared with BackgroundSync, which can run before (or without) this screen.
+    @State private var band = BandManager.shared
     @State private var health = HealthExporter()
     @State private var cloud = CloudManager()
     /// Per-device UI preference (not health data), so UserDefaults is fine here.
@@ -45,7 +46,15 @@ struct RootView: View {
             if phase == .active {
                 band.syncIfDue(context: context)
                 Notifier.refresh(context: context)      // tonight's bedtime reminder
+                WidgetBridge.publish(context: context)
+            } else if phase == .background {
+                BackgroundSync.schedule()               // next sync while the app is closed
             }
+        }
+        // Demo month generated, band synced, recalculated: the widget follows.
+        .onChange(of: loader.revision) { _, _ in WidgetBridge.publish(context: context) }
+        .onChange(of: loader.state) { _, state in
+            if state == .ready { WidgetBridge.publish(context: context) }
         }
         .task {
             // Until the band is paired, fill the app with demo data on first launch.

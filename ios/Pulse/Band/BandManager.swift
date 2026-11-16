@@ -13,6 +13,8 @@ import PulseCore
 @MainActor
 @Observable
 final class BandManager {
+    /// The one band connection of the app (the screens and BackgroundSync share it).
+    static let shared = BandManager()
 
     enum Stage: Equatable {
         case idle

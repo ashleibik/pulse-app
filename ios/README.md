@@ -132,6 +132,21 @@ Limits of a free Apple ID (Apple's rules, not Pulse's):
 The paid Developer Program (`.github/workflows/testflight.yml`) removes the 7-day limit and
 keeps HealthKit, if you ever want that.
 
+## Widget and background sync
+
+- **Widget:** long-press the home screen > **+** > Pulse. Small (recovery ring), medium (recovery,
+  strain, sleep), and three lock screen sizes. The app writes today's numbers into a shared App
+  Group after every change; the widget only displays them. If the widget says "Open Pulse once",
+  open the app; if it still says that, the sideloading tool did not keep the App Group (see below).
+- **Background sync:** iOS wakes Pulse now and then (iOS picks the time, roughly hourly at best) to
+  sync the band, update the widget and tonight's reminder. Needs Settings > General > Background
+  App Refresh on, and the app not swiped away. Real band only; the demo never syncs by itself.
+- **Not verified yet** (no Mac, free Apple ID): that Sideloadly keeps the App Group and HealthKit
+  entitlements. The build embeds them (ad-hoc signature in `ipa.yml`) so the tool can see them.
+- **Apple Watch app: not built.** Free sideloading can't reliably install Watch apps, and the band
+  can only talk to one device at a time. Pulse's reminders already show on the Watch (iOS mirrors
+  iPhone notifications when the phone is locked).
+
 ## On a Mac (when you have one)
 
 ```bash
