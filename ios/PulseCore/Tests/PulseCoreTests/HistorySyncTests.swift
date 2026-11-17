@@ -14,6 +14,7 @@ struct SyncHarness {
     var finished: (batches: Int, records: Int)?
     var failure: String?
     var notes: [String] = []
+    var cleared = 0
     /// Turn off to simulate the app crashing/forgetting to confirm a save.
     var confirmSaves = true
 
@@ -48,6 +49,8 @@ struct SyncHarness {
                 failure = message
             case .note(let text):
                 notes.append(text)
+            case .cleared(let records):
+                cleared += records
             }
         }
     }
@@ -198,4 +201,43 @@ func samples(_ count: Int, start: UInt32 = 1_750_000_000) -> [SimulatedBand.Samp
     let viaBand = MetricsEngine.run(minutes: rebuilt, calendar: cal, now: end).sleeps.filter { !$0.isNap }
     #expect(direct.count == 1 && viaBand.count == 1)
     #expect(viaBand.first?.start == direct.first?.start && viaBand.first?.end == direct.first?.end)
+}
+
+// MARK: - A used band: the previous owner's records are dropped, not saved
+
+@Test func oldRecordsAreDroppedAndAckedWithoutSaving() {
+    let cutoff: UInt32 = 1_750_000_000
+    // 300 old records (3 batches of 100), then 150 new ones; batch 4 mixes 0 old + 100 new.
+    let old = samples(300, start: 1_677_044_163)                   // Feb 2023
+    let new = samples(150, start: cutoff + 10)
+    var h = SyncHarness(band: SimulatedBand(samples: old + new, batchSize: 100))
+    h.sync = HistorySync(discardBefore: cutoff)
+    h.run()
+    #expect(h.failure == nil)
+    #expect(h.cleared == 300)
+    #expect(h.sync.recordsCleared == 300)
+    #expect(h.saved.map(\.timestamp) == new.map(\.timestamp))      // only the new owner's data is saved
+    #expect(h.savedTokens.count == 2)                               // the 3 old batches never hit the database
+    #expect(h.band.acksReceived.count == 5)                         // but every batch is acked
+    #expect(h.finished?.records == 150)
+}
+
+@Test func aMixedBatchKeepsOnlyTheNewRecords() {
+    let cutoff: UInt32 = 1_750_000_000
+    let mixed = samples(40, start: cutoff - 40) + samples(60, start: cutoff)
+    var h = SyncHarness(band: SimulatedBand(samples: mixed, batchSize: 100))
+    h.sync = HistorySync(discardBefore: cutoff)
+    h.run()
+    #expect(h.saved.count == 60)
+    #expect(h.saved.allSatisfy { $0.timestamp >= cutoff })
+    #expect(h.sync.recordsCleared == 40)
+    #expect(h.notes.contains { $0.contains("40 old dropped") })
+}
+
+@Test func clearingIsReportedWhileOldRecordsArrive() {
+    var sync = HistorySync(discardBefore: 1_750_000_000)
+    _ = sync.start()
+    let frame = Whoop.parseFrame(SimulatedBand.historyFrame(samples(1, start: 1_677_044_163)[0], counter: 1))!
+    _ = sync.handle(Whoop.decode(frame))
+    #expect(sync.isClearingOldData)
 }

@@ -46,21 +46,34 @@ final class DataLoader {
             defaults.removeObject(forKey: "dataSource")
             defaults.removeObject(forKey: "demoRawImportComplete")
         }
+        // Used band: before this version the pairing day wasn't stored. Pick a safe one.
+        if BandManager.pairedBand(in: context) != nil { BandDataCutoff.setForExistingInstall() }
+        let removedOldOwner = BandDataCutoff.date.map {
+            (try? PulseStore.deleteBandData(before: $0, in: context)) ?? false
+        } ?? false
         state = .ready
         rawDataReady = true
         revision += 1
-        // Real band data was mixed with simulated rows: recalculate from what's left.
-        if removedFromBandData { await recompute(context: context) }
+        // Rows were deleted: recalculate from what's left.
+        if removedFromBandData || removedOldOwner { await recompute(context: context, detectWorkouts: removedOldOwner) }
+    }
+
+    /// Settings > "Your data starts": deletes everything before the new day, then recalculates.
+    func setDataStart(_ day: Date, context: ModelContext) async {
+        BandDataCutoff.set(day)
+        guard let cutoff = BandDataCutoff.date else { return }
+        _ = try? PulseStore.deleteBandData(before: cutoff, in: context)
+        await recompute(context: context, detectWorkouts: true)
     }
 
     /// Settings > "Recalculate": same raw data, fresh numbers (e.g. after changing birth year).
-    func recompute(context: ModelContext) async {
+    func recompute(context: ModelContext, detectWorkouts: Bool = false) async {
         guard rawDataReady, !isBusy else { return }
         state = .recalculating
         let profile = ProfileStore.current(in: context).metricsProfile
         do {
             let output = try await MetricsRecomputer(modelContainer: context.container)
-                .run(profile: profile, calendar: .current, now: .now)
+                .run(profile: profile, calendar: .current, now: .now, detectWorkouts: detectWorkouts)
             try PulseStore.apply(output, to: context)
             state = .ready
             revision += 1

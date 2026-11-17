@@ -22,7 +22,7 @@ enum BackgroundSync {
     /// Ask iOS for the next wake-up. Called whenever the app goes to the background.
     static func schedule() {
         let request = BGAppRefreshTaskRequest(identifier: taskID)
-        request.earliestBeginDate = Date.now.addingTimeInterval(45 * 60)
+        request.earliestBeginDate = Date.now.addingTimeInterval(BandManager.syncInterval)
         try? BGTaskScheduler.shared.submit(request)
     }
 
@@ -38,7 +38,7 @@ enum BackgroundSync {
                 WidgetBridge.publish(context: context)
             }
         }
-        band.syncIfDue(context: context)    // at most every 15 minutes
+        band.syncIfDue(context: context)    // at most every 20 minutes (BandManager.syncInterval)
         let deadline = Date.now.addingTimeInterval(25)
         while band.isBusy && Date.now < deadline {
             try? await Task.sleep(for: .milliseconds(500))

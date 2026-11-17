@@ -41,7 +41,8 @@ enum BandLinkEvent {
     case disconnected(String?)
 }
 
-/// Events are always delivered on the main thread.
+/// Events are delivered on the link's own serial queue, NOT the main thread: packets are parsed
+/// there, so a big download never makes the screens stutter. Methods may be called from any thread.
 protocol BandLink: AnyObject {
     var onEvent: ((BandLinkEvent) -> Void)? { get set }
     func startScanning()
@@ -62,8 +63,10 @@ protocol BandLink: AnyObject {
 /// - Which service UUID it uses (…0000 or …0001). We accept any service starting with 6108.
 /// - Whether iOS shows a pairing prompt (bonding). If the band requires it, iOS asks by itself.
 /// Not done yet: reconnecting in the background (state restoration).
-final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBPeripheralDelegate {
+final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
     var onEvent: ((BandLinkEvent) -> Void)?
+    /// Every CoreBluetooth callback and every state change of this class happens on this queue.
+    let queue = DispatchQueue(label: "dev.pulse.ble", qos: .userInitiated)
 
     private var central: CBCentralManager?
     private var seen: [UUID: CBPeripheral] = [:]
@@ -78,38 +81,48 @@ final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBP
     /// created only when the user actually starts pairing or syncing.
     private func manager() -> CBCentralManager {
         if let central { return central }
-        let created = CBCentralManager(delegate: self, queue: .main)
+        let created = CBCentralManager(delegate: self, queue: queue)
         central = created
         return created
     }
 
     func startScanning() {
-        wantsScan = true
-        let central = manager()
-        if central.state == .poweredOn { scan(central) }
+        queue.async { [self] in
+            wantsScan = true
+            let central = manager()
+            if central.state == .poweredOn { scan(central) }
+        }
     }
 
     func stopScanning() {
-        wantsScan = false
-        if central?.state == .poweredOn { central?.stopScan() }
+        queue.async { [self] in
+            wantsScan = false
+            if central?.state == .poweredOn { central?.stopScan() }
+        }
     }
 
     func connect(to id: UUID) {
-        wantsConnection = id
-        let central = manager()
-        if central.state == .poweredOn { connectNow(central) }
+        queue.async { [self] in
+            wantsConnection = id
+            let central = manager()
+            if central.state == .poweredOn { connectNow(central) }
+        }
     }
 
     func disconnect() {
-        wantsConnection = nil
-        guard let current, let central else { return }
-        disconnectingOnPurpose = true
-        central.cancelPeripheralConnection(current)
+        queue.async { [self] in
+            wantsConnection = nil
+            guard let current, let central else { return }
+            disconnectingOnPurpose = true
+            central.cancelPeripheralConnection(current)
+        }
     }
 
     func write(_ bytes: [UInt8]) {
-        guard let current, let commandCharacteristic else { return }
-        current.writeValue(Data(bytes), for: commandCharacteristic, type: .withResponse)
+        queue.async { [self] in
+            guard let current, let commandCharacteristic else { return }
+            current.writeValue(Data(bytes), for: commandCharacteristic, type: .withResponse)
+        }
     }
 
     private func scan(_ central: CBCentralManager) {

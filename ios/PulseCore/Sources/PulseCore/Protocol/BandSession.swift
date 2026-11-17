@@ -7,8 +7,9 @@ import Foundation
 /// effects it returns. Because it is pure, the exact code that will talk to the real band is
 /// tested on Windows against a simulated band that lives in the test target (BandSessionTests).
 ///
-///   start()            -> ask battery, firmware text and the band's clock
-///   clock answer       -> set the clock if it is wrong, then start the history download
+///   start()            -> live heart rate off, ask battery, firmware text and the band's clock
+///   clock answer       -> set the clock to the phone's time (every connect), read it back to
+///                         confirm it latched, then start the history download
 ///   history batches    -> .persist(records, token)  -- app saves --> didPersist(token) -> ack
 ///   HISTORY_COMPLETE   -> .finished
 ///
@@ -22,10 +23,23 @@ public struct BandSession: Sendable {
         public var batteryPercent: Double?
         public var isCharging: Bool?
         public var isWorn: Bool?
-        /// Readable text from REPORT_VERSION_INFO (its exact layout is unknown).
+        /// Readable text from REPORT_VERSION_INFO (its exact layout is unknown), e.g. "41.17.4".
         public var firmware: String?
-        /// True if we had to set the band's clock in this session.
+        /// The full REPORT_VERSION_INFO body as hex, for the sync log (to decode the layout later).
+        public var firmwareRawHex: String?
+        /// True once SET_CLOCK was sent in this session (it is sent on every connect).
         public var clockWasSet = false
+        /// The band's clock as last read (unix seconds, raw: may be an unset clock like 4242).
+        public var bandClock: UInt32?
+        /// The phone's time (unix seconds) when `bandClock` was read.
+        public var bandClockReadAt: Double?
+        /// Where the reading came from: "GET_CLOCK", or "HISTORY_END" (the band stamps each batch).
+        public var bandClockSource: String?
+        /// Band minus phone, in seconds. nil while unknown or when the band's clock is not set at all.
+        public var clockOffsetSeconds: Double? {
+            guard let bandClock, let bandClockReadAt, Whoop.plausibleUnix(bandClock) else { return nil }
+            return Double(bandClock) - bandClockReadAt
+        }
 
         public init() {}
     }
@@ -42,13 +56,27 @@ public struct BandSession: Sendable {
         public let crcOK: Bool
     }
 
+    /// How far the download is.
+    public struct Progress: Sendable, Equatable {
+        public var recordsSaved = 0
+        public var batchesSaved = 0
+        /// The previous owner's records thrown away (acked, never saved).
+        public var recordsCleared = 0
+        /// 0...1 once the band said how much it holds; nil until then.
+        public var fraction: Double?
+        /// True while the records arriving are older than the cutoff.
+        public var clearingOldData = false
+
+        public init() {}
+    }
+
     public enum Effect: Sendable, Equatable {
         /// Write these bytes to CMD_TO_STRAP (with response).
         case write([UInt8], description: String)
         /// Save these records durably, then call `didPersist(token:recordCount:)`.
         case persist([Whoop.HistoryRecord], token: [UInt8])
         case info(Info)
-        case progress(recordsSaved: Int, batchesSaved: Int)
+        case progress(Progress)
         /// A live heart-rate reading (only while realtime streaming is on).
         case liveHeartRate(Int)
         case finished(records: Int)
@@ -69,12 +97,48 @@ public struct BandSession: Sendable {
     private var seq = Whoop.SeqCounter()
     private var reassemblers: [String: Whoop.FrameReassembler] = [:]
     private var nextLogID = 0
-    /// The band's clock may differ from the phone's by this much before we correct it.
-    public static let clockToleranceSeconds = 5.0
+    /// Write every notification to the sync log in full (Debug > Sync log > Verbose). Off: history
+    /// packets are summarized once per batch.
+    public var verboseTrace = false
+    private var quiet = (notifications: 0, frames: 0, bytes: 0)
+    /// From GET_DATA_RANGE: where the band's unsynced data starts and ends (flash pages).
+    private var range: (trim: UInt32, write: UInt32, capacity: UInt32)?
 
-    public init(maxRetries: Int = 5) {
-        // The hello commands use sequence numbers 0-2; history continues after them.
-        sync = HistorySync(maxRetries: maxRetries, startSeq: 3)
+    /// - Parameter discardBefore: unix seconds; history older than this is the previous owner's and
+    ///   is dropped unread (still acked, which frees the band's memory). nil = keep everything.
+    public init(maxRetries: Int = 5, discardBefore: UInt32? = nil) {
+        // The hello commands use the low sequence numbers; history uses its own range from 32.
+        sync = HistorySync(maxRetries: maxRetries, startSeq: 32, discardBefore: discardBefore)
+    }
+
+    public var progress: Progress {
+        var p = Progress()
+        p.recordsSaved = sync.recordsSaved
+        p.batchesSaved = sync.batchesSaved
+        p.recordsCleared = sync.recordsCleared
+        p.clearingOldData = sync.isClearingOldData
+        p.fraction = fraction
+        return p
+    }
+
+    /// Pages acked so far / pages the band held when we asked. The ack token starts with the
+    /// band's trim page ([OS]), and GET_DATA_RANGE gives the trim and write pages at the start.
+    /// An estimate: the band keeps recording during the download. Capped at 99% until done.
+    private var fraction: Double? {
+        guard let range, range.capacity > 0, let token = sync.lastToken, token.count == 8 else { return nil }
+        let trimNow = LE.u32(token, 0)
+        let cap = Int64(range.capacity)
+        let total = (Int64(range.write) - Int64(range.trim) + cap) % cap
+        guard total > 0, trimNow <= range.capacity else { return nil }
+        let done = (Int64(trimNow) - Int64(range.trim) + cap) % cap
+        return min(0.99, max(0, Double(done) / Double(total)))
+    }
+
+    /// One line for the history packets that were counted instead of logged.
+    private mutating func flushQuiet() -> [Effect] {
+        guard quiet.notifications > 0 else { return [] }
+        defer { quiet = (0, 0, 0) }
+        return [.trace("  … HISTORICAL_DATA: \(quiet.frames) frames in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized; turn on Verbose for every packet)")]
     }
 
     // MARK: - Driving the session
@@ -84,18 +148,24 @@ public struct BandSession: Sendable {
         guard phase == .idle else { return [] }
         phase = .hello
         var effects: [Effect] = []
+        // Battery: the live heart-rate stream must never be left on by a crash or a killed app.
+        // The live workout screen switches it on again when it needs it.
+        effects += write(Whoop.Command.realtimeHR(on: false, seq: seq.next()), "TOGGLE_REALTIME_HR off")
         let battery = Whoop.Command.getBattery(seq: seq.next())
         effects += write(battery, "GET_BATTERY_LEVEL")
         let version = Whoop.Command.reportVersion(seq: seq.next())
         effects += write(version, "REPORT_VERSION_INFO")
         let clock = Whoop.Command.getClock(seq: seq.next())
         effects += write(clock, "GET_CLOCK")
+        // Read-only: how much the band holds, for the progress bar.
+        effects += write(Whoop.Command.getDataRange(seq: seq.next()), "GET_DATA_RANGE")
         return effects
     }
 
-    /// The band did not answer GET_CLOCK in time: download anyway, without touching its clock.
-    public mutating func clockTimedOut() -> [Effect] {
-        beginHistory(setClockTo: nil)
+    /// The band did not answer GET_CLOCK in time: set its clock anyway, then download.
+    /// - Parameter now: the phone's clock (unix seconds).
+    public mutating func clockTimedOut(now: Double) -> [Effect] {
+        beginHistory(setClockTo: now)
     }
 
     /// Feed the bytes of every notification, from any characteristic.
@@ -108,7 +178,21 @@ public struct BandSession: Sendable {
         reassemblers[key] = reassembler
 
         let channel = Self.channelName(key)
-        var effects: [Effect] = [.trace("RX \(channel) \(key) len=\(bytes.count) \(Whoop.hex(bytes))")]
+        let resynced = reassembler.droppedBytes > droppedBefore
+        // A big download is thousands of identical-looking history packets. Unless the log is
+        // verbose, they are counted (not hex-dumped) and summarized at the end of each batch.
+        // That keeps the log small and saves the CPU time of formatting them.
+        let onlyHistory = frames.allSatisfy { $0.valid && $0.packetType == Int(Whoop.PacketType.historicalData.rawValue) }
+        if !verboseTrace && !resynced && key == Whoop.dataUUID && onlyHistory {
+            quiet.notifications += 1
+            quiet.bytes += bytes.count
+            quiet.frames += frames.count
+            var effects: [Effect] = []
+            for frame in frames { effects += handle(Whoop.decode(frame), frame: frame, channel: key, now: now) }
+            return effects
+        }
+        var effects = flushQuiet()
+        effects.append(.trace("RX \(channel) \(key) len=\(bytes.count) \(Whoop.hex(bytes))"))
         for frame in frames {
             let declared = frame.raw.count >= 3 ? Int(frame.raw[1]) | Int(frame.raw[2]) << 8 : -1
             effects.append(.trace("  FRAME \(frame.typeName) seq=\(frame.seq) op=\(frame.opcode) len=\(frame.raw.count) declared=\(declared) crc8=\(frame.headerCRCOK ? "ok" : "FAIL") crc32=\(frame.payloadCRCOK ? "ok" : "FAIL")"))
@@ -119,7 +203,7 @@ public struct BandSession: Sendable {
             }
             effects += handle(Whoop.decode(frame), frame: frame, channel: key, now: now)
         }
-        if reassembler.droppedBytes > droppedBefore {
+        if resynced {
             effects.append(.trace("  RESYNC skipped \(reassembler.droppedBytes - droppedBefore) bytes looking for the next frame start"))
         }
         if reassembler.pendingBytes > 0 {
@@ -144,7 +228,7 @@ public struct BandSession: Sendable {
     public mutating func didPersist(token: [UInt8], recordCount: Int) -> [Effect] {
         var effects = map(sync.didPersist(token: token, recordCount: recordCount))
         if !effects.isEmpty {
-            effects.append(.progress(recordsSaved: sync.recordsSaved, batchesSaved: sync.batchesSaved))
+            effects.append(.progress(progress))
         }
         return effects
     }
@@ -157,15 +241,31 @@ public struct BandSession: Sendable {
             var effects = [log(.fromBand, channel, "\(response.opcodeName) -> \(response.statusName)", frame.raw)]
             var changed = false
             if let battery = response.batteryPercent { info.batteryPercent = battery; changed = true }
-            if response.opcode == Int(Whoop.Cmd.reportVersionInfo.rawValue), let text = response.asciiView {
-                info.firmware = text
+            if let r = response.dataRange, r.capacityPages > 0, r.writePage <= r.capacityPages, r.trimPage <= r.capacityPages {
+                if range == nil { range = (r.trimPage, r.writePage, r.capacityPages) }
+                let behind = (Int64(r.writePage) - Int64(r.trimPage) + Int64(r.capacityPages)) % Int64(r.capacityPages)
+                let span = [r.oldestRecord, r.newestRecord].map { $0.map(HistorySync.utc) ?? "?" }
+                effects.append(.trace("DATA_RANGE \(behind) pages to sync (trim \(r.trimPage), write \(r.writePage), capacity \(r.capacityPages)), used \(r.usedRecords) records, free \(r.freeRecords), oldest \(span[0]), newest \(span[1])"))
+            }
+            if response.opcode == Int(Whoop.Cmd.reportVersionInfo.rawValue), !response.body.isEmpty {
+                info.firmware = response.versionText
+                info.firmwareRawHex = Whoop.hex(response.body)
                 changed = true
             }
             if changed { effects.append(.info(info)) }
-            if response.opcode == Int(Whoop.Cmd.getClock.rawValue), phase == .hello {
-                // `bandClock` is nil when the value is not a plausible date (the clock was never set).
-                let wrong = response.bandClock.map { abs(Double($0) - now) > Self.clockToleranceSeconds } ?? true
-                effects += beginHistory(setClockTo: wrong ? now : nil)
+            if response.opcode == Int(Whoop.Cmd.getClock.rawValue) {
+                if let raw = response.bandClockRaw {
+                    info.bandClock = raw
+                    info.bandClockReadAt = now
+                    info.bandClockSource = "GET_CLOCK"
+                    let offset = info.clockOffsetSeconds.map { String(format: "%+.1f s", $0) } ?? "not set"
+                    effects.append(.trace("CLOCK band \(Whoop.plausibleUnix(raw) ? HistorySync.utc(raw) : "unset (\(raw))"), band - phone = \(offset)"))
+                    effects.append(.info(info))
+                } else {
+                    effects.append(.trace("CLOCK answer without a time: status \(response.statusName), \(response.body.count) body bytes"))
+                }
+                // Always set it to the phone's time: the band's clock dates every record it stores.
+                if phase == .hello { effects += beginHistory(setClockTo: now) }
             }
             return effects
 
@@ -189,7 +289,15 @@ public struct BandSession: Sendable {
 
         case .metadata(let meta):
             // One log line per batch boundary (not per record: a night is ~30,000 records).
-            return [log(.fromBand, channel, "\(meta.metaName)", frame.raw)] + map(sync.handle(packet))
+            var effects = flushQuiet() + [log(.fromBand, channel, "\(meta.metaName)", frame.raw)]
+            // Each HISTORY_END carries the band's own clock: a free reading when GET_CLOCK says nothing.
+            if let stamp = meta.timestamp, info.bandClockSource != "GET_CLOCK" {
+                info.bandClock = stamp
+                info.bandClockReadAt = now
+                info.bandClockSource = "HISTORY_END"
+                effects.append(.info(info))
+            }
+            return effects + map(sync.handle(packet))
 
         case .history:
             return map(sync.handle(packet))
@@ -203,11 +311,14 @@ public struct BandSession: Sendable {
         guard phase == .hello else { return [] }       // only once
         phase = .syncing
         var effects: [Effect] = []
-        if unixTime != nil {
+        if let unixTime {
             info.clockWasSet = true
             effects.append(.info(info))
+            effects += write(Whoop.Command.setClock(seq: seq.next(), unixTime: unixTime), "SET_CLOCK")
+            // Read it back: [OS] warns a wrong SET_CLOCK is acknowledged but silently ignored.
+            effects += write(Whoop.Command.getClock(seq: seq.next()), "GET_CLOCK (check)")
         }
-        return effects + map(sync.start(setClockTo: unixTime))
+        return effects + map(sync.start(setClockTo: nil))
     }
 
     /// Translates the history state machine's actions into session effects.
@@ -228,6 +339,8 @@ public struct BandSession: Sendable {
                 effects.append(.failed(message))
             case .note(let text):
                 effects.append(.trace(text))
+            case .cleared:
+                effects.append(.progress(progress))
             }
         }
         return effects

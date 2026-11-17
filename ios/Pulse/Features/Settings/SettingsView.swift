@@ -19,6 +19,9 @@ struct SettingsView: View {
     @State private var confirmDelete = false
     @State private var showPairing = false
     @State private var showLog = false
+    /// "Your data starts" (the band was bought used). A later day waits for confirmation.
+    @State private var dataStart = BandDataCutoff.date ?? .now
+    @State private var pendingDataStart: Date?
     /// Tapping the version row 7 times also opens the sync log.
     @State private var versionTaps = 0
 
@@ -124,6 +127,20 @@ struct SettingsView: View {
             }
         }
         .monoSheet()
+        .confirmationDialog("Delete band data from before this day?",
+                            isPresented: Binding(get: { pendingDataStart != nil }, set: { if !$0 { pendingDataStart = nil } }),
+                            titleVisibility: .visible) {
+            Button("Delete older data", role: .destructive) {
+                if let day = pendingDataStart { applyDataStart(day) }
+                pendingDataStart = nil
+            }
+            Button("Cancel", role: .cancel) {
+                dataStart = BandDataCutoff.date ?? .now
+                pendingDataStart = nil
+            }
+        } message: {
+            Text("Records from before this day are deleted from this iPhone and never downloaded again.")
+        }
         .confirmationDialog("Forget this band?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget band") { band.forget(context: context) }
         } message: {
@@ -168,6 +185,8 @@ struct SettingsView: View {
                 ValueRow(label: "Last sync",
                          value: record.lastHistorySyncAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never",
                          emphasized: record.lastHistorySyncAt != nil)
+                Hairline()
+                dataStartRow
                 Hairline()
                 HStack(spacing: DS.Space.s) {
                     Button("Sync now") {
@@ -300,6 +319,33 @@ private struct ProfileSection: View {
             .disabled(!changed || loader.isBusy || !loader.rawDataReady)
             .padding(.top, DS.Space.m)
         }
+    }
+
+    /// The day your own data starts. The band was bought used: anything older is the previous
+    /// owner's and is dropped. Moving it later deletes data (after a confirmation); earlier does not
+    /// bring deleted data back.
+    private var dataStartRow: some View {
+        HStack(spacing: DS.Space.m) {
+            Text("Your data starts")
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+            Spacer(minLength: DS.Space.s)
+            DatePicker("Your data starts", selection: $dataStart, in: ...Date.now, displayedComponents: .date)
+                .labelsHidden()
+                .tint(DS.Colors.accent)
+                .disabled(band.isBusy || loader.isBusy)
+        }
+        .frame(minHeight: 52)
+        .onChange(of: dataStart) { _, day in
+            let current = BandDataCutoff.date ?? .distantPast
+            let picked = Calendar.current.startOfDay(for: day)
+            guard picked != current else { return }
+            if picked > current { pendingDataStart = picked } else { applyDataStart(picked) }
+        }
+    }
+
+    private func applyDataStart(_ day: Date) {
+        Task { await loader.setDataStart(day, context: context) }
     }
 
     /// "Label ........ [menu]". The menu shows the current choice.

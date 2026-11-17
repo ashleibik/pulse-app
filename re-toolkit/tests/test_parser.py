@@ -95,3 +95,12 @@ def test_hrm_uint16_contact_and_energy():
     # flags: uint16 HR | contact supported+detected | energy present
     d = parse_heart_rate_measurement(bytes([0x01 | 0x06 | 0x08, 150, 0, 0x10, 0x00]))
     assert d == {"kind": "hrm_2a37", "hr": 150, "contact": True, "rr_ms": []}
+
+
+def test_version_text_keeps_only_readable_runs():
+    from protocol.frames import build_frame, parse_frame
+    from protocol.parser import decode
+    text = build_frame(bytes([0x24, 0x03, 0x07, 0x02, 0x01]) + b"41.17.4" + bytes([0, 1, 2]))
+    binary = build_frame(bytes([0x24, 0x04, 0x07, 0x02, 0x01, 0x29, 0x00, 0x41, 0x00, 0x11, 0x23, 0x04, 0x00]))
+    assert decode(parse_frame(text)).decoded["version_text"] == "41.17.4"
+    assert decode(parse_frame(binary)).decoded["version_text"] is None

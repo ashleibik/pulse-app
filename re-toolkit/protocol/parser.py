@@ -11,6 +11,7 @@ confidence tag from docs/PROTOCOL.md.
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -176,6 +177,10 @@ def decode_command_response(inner: bytes) -> CommandResponse:
         # any, and leave the rest to decode_helper + your eyes.
         text = "".join(chr(c) if 32 <= c < 127 else "." for c in inner[5:])
         r.decoded["ascii_view"] = text
+        # For people: only runs of 4+ readable characters (e.g. "41.17.4"), the binary bytes around
+        # them are dropped instead of shown as dots. None when there is no readable text at all.
+        runs = [run.strip() for run in re.findall(r"[ -~]{4,}", "".join(chr(c) for c in inner[5:]))]
+        r.decoded["version_text"] = " / ".join(run for run in runs if run) or None
     return r
 
 

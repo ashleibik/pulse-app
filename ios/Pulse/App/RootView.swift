@@ -50,6 +50,15 @@ struct RootView: View {
                 BackgroundSync.schedule()               // next sync while the app is closed
             }
         }
+        // While the app is open: check once a minute whether a sync is due (every 20 minutes).
+        // Each sync is a short burst that disconnects when done.
+        .task(id: scenePhase == .active) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                if !Task.isCancelled { band.syncIfDue(context: context) }
+            }
+        }
         // Demo month generated, band synced, recalculated: the widget follows.
         .onChange(of: loader.revision) { _, _ in WidgetBridge.publish(context: context) }
         .onChange(of: loader.state) { _, state in

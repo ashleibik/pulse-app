@@ -100,14 +100,31 @@ struct PairingView: View {
             VStack(alignment: .leading, spacing: DS.Space.s) {
                 HStack(spacing: DS.Space.s) {
                     ProgressView().controlSize(.small)
-                    Text("Downloading your band's history")
+                    Text(band.statusLine)
                 }
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
-                HeroNumber(value: Double(band.recordsSaved) / 60) { PulseFormat.duration(minutes: Int($0.rounded())) }
-                Text("of data saved so far.")
-                    .textStyle(.body)
-                    .foregroundStyle(DS.Colors.secondary)
+                if band.clearingOldData {
+                    // The previous owner's data: dropped unread, acked so the band frees its memory.
+                    if let fraction = band.progress.fraction {
+                        HeroNumber(value: fraction * 100) { "\(Int($0))%" }
+                    } else {
+                        HeroNumber(value: Double(band.recordsCleared)) { "\(Int($0))" }
+                    }
+                    Text(band.progress.fraction == nil ? "old records cleared from the band. They are not saved."
+                                                       : "of the old data cleared from the band. It is not saved.")
+                        .textStyle(.body)
+                        .foregroundStyle(DS.Colors.secondary)
+                } else {
+                    HeroNumber(value: Double(band.recordsSaved) / 60) { PulseFormat.duration(minutes: Int($0.rounded())) }
+                    Text("of data saved so far.")
+                        .textStyle(.body)
+                        .foregroundStyle(DS.Colors.secondary)
+                }
+                if let fraction = band.progress.fraction {
+                    ProgressView(value: fraction)
+                        .tint(DS.Colors.accent)
+                }
             }
             .accessibilityElement(children: .combine)
             bandFacts
@@ -117,8 +134,15 @@ struct PairingView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
         case .upToDate:
-            step(symbol: "checkmark.circle", title: "All synced",
-                 text: "\(PulseFormat.duration(minutes: band.recordsSaved / 60)) of data saved. Your numbers are up to date.")
+            step(symbol: "checkmark.circle", title: "Up to date",
+                 text: "\(PulseFormat.duration(minutes: band.recordsSaved / 60)) of data saved."
+                    + (band.recordsCleared > 0 ? " \(band.recordsCleared) old records from before \(BandDataCutoff.date?.formatted(date: .abbreviated, time: .omitted) ?? "your pairing day") were cleared from the band and not saved." : "")
+                    + " Your numbers are up to date.")
+            bandFacts
+
+        case .paused(let message):
+            step(symbol: "battery.25percent", title: "Charge\nyour band",
+                 text: "\(message). The band's battery is below \(Int(BandManager.lowBatteryPercent))%. Everything downloaded so far is saved; the rest comes with the next sync.")
             bandFacts
 
         case .failed(let message):
@@ -178,10 +202,8 @@ struct PairingView: View {
             ValueRow(label: "Battery",
                      value: band.info.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "Asking…",
                      emphasized: band.info.batteryPercent != nil)
-            if band.info.clockWasSet {
-                Hairline()
-                ValueRow(label: "Band clock", value: "Corrected")
-            }
+            Hairline()
+            BandClockRows()
             if band.badFrames > 0 {
                 Hairline()
                 ValueRow(label: "Damaged packets ignored", value: "\(band.badFrames)")
@@ -211,6 +233,13 @@ struct PairingView: View {
                     }
                     .buttonStyle(.secondaryPill)
                 }
+            case .paused:
+                Button {
+                    band.syncNow(context: context)
+                } label: {
+                    Text("Sync again").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.primaryPill)
             case .upToDate:
                 Button {
                     dismiss()
@@ -234,6 +263,38 @@ struct PairingView: View {
     }
 }
 
+/// Band time vs phone time (debug). The band dates every record with its own clock, so Pulse
+/// sets it to the phone's time on every connect and shows the difference it measured.
+struct BandClockRows: View {
+    @Environment(BandManager.self) private var band
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let info = band.info
+            VStack(alignment: .leading, spacing: 0) {
+                ValueRow(label: "Phone time", value: context.date.formatted(date: .omitted, time: .standard))
+                Hairline()
+                if let offset = info.clockOffsetSeconds {
+                    ValueRow(label: "Band time",
+                             value: context.date.addingTimeInterval(offset).formatted(date: .abbreviated, time: .standard))
+                    Hairline()
+                    ValueRow(label: "Difference",
+                             value: String(format: "%+.1f s", offset) + (info.bandClockSource == "HISTORY_END" ? " (from a batch)" : ""),
+                             emphasized: abs(offset) > 5)
+                } else if let raw = info.bandClock {
+                    ValueRow(label: "Band time", value: "Not set (\(raw))", emphasized: true)
+                } else {
+                    ValueRow(label: "Band time", value: band.isBusy ? "Asking…" : "Unknown", emphasized: false)
+                }
+                if info.clockWasSet {
+                    Hairline()
+                    ValueRow(label: "Band clock", value: "Set to phone time")
+                }
+            }
+        }
+    }
+}
+
 /// The sync log (Settings > Band > Sync log, or after a failed sync): every notification, frame,
 /// command and batch of the last sync, with an export as a text file. Memory only: nothing is
 /// saved or uploaded unless you share the file yourself.
@@ -250,6 +311,13 @@ struct BandLogView: View {
                 Text("\(total) lines · \(band.recordsSaved) records saved in \(band.batchesSaved) batches · \(band.badFrames) damaged frames")
                     .textStyle(.caption)
                     .foregroundStyle(DS.Colors.secondary)
+                BandClockRows()
+                Toggle(isOn: Binding(get: { band.verboseLog }, set: { band.verboseLog = $0 })) {
+                    Text("Verbose (every packet, from the next sync)")
+                        .textStyle(.body)
+                        .foregroundStyle(DS.Colors.primary)
+                }
+                .tint(DS.Colors.accent)
                 HStack(spacing: DS.Space.s) {
                     if let exportURL {
                         ShareLink(item: exportURL) { Text("Share log file") }
@@ -298,8 +366,9 @@ struct BandLogView: View {
     }
 
     private func reload() {
-        lines = band.trace.last(300).reversed()
-        total = band.trace.total
+        let trace = band.traceSnapshot()
+        lines = trace.last(300).reversed()
+        total = trace.total
         exportURL = nil
     }
 
