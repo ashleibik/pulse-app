@@ -236,6 +236,33 @@ struct SettingsView: View {
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(version) (\(build))"
     }
+
+    /// The day your own data starts. The band was bought used: anything older is the previous
+    /// owner's and is dropped. Moving it later deletes data (after a confirmation); earlier does not
+    /// bring deleted data back.
+    private var dataStartRow: some View {
+        HStack(spacing: DS.Space.m) {
+            Text("Your data starts")
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+            Spacer(minLength: DS.Space.s)
+            DatePicker("Your data starts", selection: $dataStart, in: ...Date.now, displayedComponents: .date)
+                .labelsHidden()
+                .tint(DS.Colors.accent)
+                .disabled(band.isBusy || loader.isBusy)
+        }
+        .frame(minHeight: 52)
+        .onChange(of: dataStart) { _, day in
+            let current = BandDataCutoff.date ?? .distantPast
+            let picked = Calendar.current.startOfDay(for: day)
+            guard picked != current else { return }
+            if picked > current { pendingDataStart = picked } else { applyDataStart(picked) }
+        }
+    }
+
+    private func applyDataStart(_ day: Date) {
+        Task { await loader.setDataStart(day, context: context) }
+    }
 }
 
 /// A titled group of rows with an optional small note under it.
@@ -319,33 +346,6 @@ private struct ProfileSection: View {
             .disabled(!changed || loader.isBusy || !loader.rawDataReady)
             .padding(.top, DS.Space.m)
         }
-    }
-
-    /// The day your own data starts. The band was bought used: anything older is the previous
-    /// owner's and is dropped. Moving it later deletes data (after a confirmation); earlier does not
-    /// bring deleted data back.
-    private var dataStartRow: some View {
-        HStack(spacing: DS.Space.m) {
-            Text("Your data starts")
-                .textStyle(.body)
-                .foregroundStyle(DS.Colors.primary)
-            Spacer(minLength: DS.Space.s)
-            DatePicker("Your data starts", selection: $dataStart, in: ...Date.now, displayedComponents: .date)
-                .labelsHidden()
-                .tint(DS.Colors.accent)
-                .disabled(band.isBusy || loader.isBusy)
-        }
-        .frame(minHeight: 52)
-        .onChange(of: dataStart) { _, day in
-            let current = BandDataCutoff.date ?? .distantPast
-            let picked = Calendar.current.startOfDay(for: day)
-            guard picked != current else { return }
-            if picked > current { pendingDataStart = picked } else { applyDataStart(picked) }
-        }
-    }
-
-    private func applyDataStart(_ day: Date) {
-        Task { await loader.setDataStart(day, context: context) }
     }
 
     /// "Label ........ [menu]". The menu shows the current choice.
