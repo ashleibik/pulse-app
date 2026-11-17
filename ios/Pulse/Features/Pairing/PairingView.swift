@@ -240,6 +240,14 @@ struct PairingView: View {
                     Text("Sync again").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.primaryPill)
+                // One manual sync below the threshold (e.g. to finish a nearly done download).
+                // Automatic and background syncs still pause.
+                Button {
+                    band.syncNow(context: context, overrideLowBattery: true)
+                } label: {
+                    Text("Sync anyway").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.secondaryPill)
             case .upToDate:
                 Button {
                     dismiss()

@@ -61,6 +61,9 @@ final class BandManager {
     @ObservationIgnored private var generation = 0
     /// True between "connected" and "done / disconnected".
     @ObservationIgnored private var hasSession = false
+    /// "Sync anyway": this one manual sync ignores the low-battery pause. Reset by every new sync.
+    @ObservationIgnored private var lowBatteryOverride = false
+    @ObservationIgnored private var overrideLogged = false
     private var context: ModelContext?
     private var target: DiscoveredBand?
     private static let logLimit = 400
@@ -79,7 +82,7 @@ final class BandManager {
     /// sync that stopped early is resumed after this pause instead of waiting 20 minutes.
     static let backlogRetry: TimeInterval = 2 * 60
     /// Below this the download is paused: a long drain must not run the band flat.
-    static let lowBatteryPercent = 10.0
+    static let lowBatteryPercent = 5.0
     static let chargeMessage = "Charge your band to keep syncing"
 
     private static func isLow(_ percent: Double?, charging: Bool?) -> Bool {
@@ -132,9 +135,13 @@ final class BandManager {
     }
 
     /// Sync again with the band that is already paired.
-    func syncNow(context: ModelContext) {
+    /// - Parameter overrideLowBattery: "Sync anyway" on the charge screen: this one sync runs even
+    ///   below the low-battery threshold. Automatic and background syncs never pass true.
+    func syncNow(context: ModelContext, overrideLowBattery: Bool = false) {
         guard !isBusy, let record = Self.pairedBand(in: context) else { return }
         prepare(context: context)
+        lowBatteryOverride = overrideLowBattery
+        overrideLogged = false
         lastAttemptAt = .now
         UserDefaults.standard.set(Date.now, forKey: "lastSyncAttemptAt")
         target = DiscoveredBand(id: record.peripheralID, name: record.name, signal: 0)
@@ -237,6 +244,7 @@ final class BandManager {
         endSession()
         self.context = context
         progress = BandSession.Progress()
+        lowBatteryOverride = false
         badFrames = 0
         log = []
         generation += 1
@@ -372,8 +380,15 @@ final class BandManager {
                     record.firmwareVersion = newInfo.firmware
                 }
                 if stage == .syncing, Self.isLow(newInfo.batteryPercent, charging: newInfo.isCharging) {
-                    pauseForLowBattery(newInfo.batteryPercent ?? 0)
-                    return
+                    if lowBatteryOverride {
+                        if !overrideLogged {
+                            overrideLogged = true
+                            traceLine("FORCED: user override at band battery \(Int((newInfo.batteryPercent ?? 0).rounded()))%")
+                        }
+                    } else {
+                        pauseForLowBattery(newInfo.batteryPercent ?? 0)
+                        return
+                    }
                 }
 
             case .progress(let newProgress):
