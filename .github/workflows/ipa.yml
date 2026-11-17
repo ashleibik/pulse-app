@@ -11,6 +11,10 @@ name: Build IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Mac to build on (macos-15-intel when the Apple Silicon queue is full)"
+        default: macos-latest
 
 permissions:
   contents: read
@@ -18,7 +22,7 @@ permissions:
 jobs:
   ipa:
     name: Unsigned device build
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner || 'macos-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
