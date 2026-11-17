@@ -5,7 +5,7 @@ import Foundation
 ///
 /// The app's Bluetooth layer feeds it the raw bytes of every notification and carries out the
 /// effects it returns. Because it is pure, the exact code that will talk to the real band is
-/// tested on Windows against `SimulatedBand` (BandSessionTests).
+/// tested on Windows against a simulated band that lives in the test target (BandSessionTests).
 ///
 ///   start()            -> ask battery, firmware text and the band's clock
 ///   clock answer       -> set the clock if it is wrong, then start the history download
@@ -54,6 +54,8 @@ public struct BandSession: Sendable {
         case finished(records: Int)
         case failed(String)
         case log(LogEntry)
+        /// One line for the sync log (every notification, frame and batch). Debug only.
+        case trace(String)
     }
 
     public enum Phase: Sendable, Equatable { case idle, hello, syncing, finished, failed }
@@ -70,7 +72,7 @@ public struct BandSession: Sendable {
     /// The band's clock may differ from the phone's by this much before we correct it.
     public static let clockToleranceSeconds = 5.0
 
-    public init(maxRetries: Int = 3) {
+    public init(maxRetries: Int = 5) {
         // The hello commands use sequence numbers 0-2; history continues after them.
         sync = HistorySync(maxRetries: maxRetries, startSeq: 3)
     }
@@ -101,11 +103,15 @@ public struct BandSession: Sendable {
     public mutating func receive(characteristic: String, bytes: [UInt8], now: Double) -> [Effect] {
         let key = characteristic.lowercased()
         var reassembler = reassemblers[key] ?? Whoop.FrameReassembler()
+        let droppedBefore = reassembler.droppedBytes
         let frames = reassembler.feed(bytes)
         reassemblers[key] = reassembler
 
-        var effects: [Effect] = []
+        let channel = Self.channelName(key)
+        var effects: [Effect] = [.trace("RX \(channel) \(key) len=\(bytes.count) \(Whoop.hex(bytes))")]
         for frame in frames {
+            let declared = frame.raw.count >= 3 ? Int(frame.raw[1]) | Int(frame.raw[2]) << 8 : -1
+            effects.append(.trace("  FRAME \(frame.typeName) seq=\(frame.seq) op=\(frame.opcode) len=\(frame.raw.count) declared=\(declared) crc8=\(frame.headerCRCOK ? "ok" : "FAIL") crc32=\(frame.payloadCRCOK ? "ok" : "FAIL")"))
             guard frame.valid else {
                 badFrames += 1
                 effects.append(log(.fromBand, key, "Bad checksum (\(frame.typeName))", frame.raw, ok: false))
@@ -113,7 +119,19 @@ public struct BandSession: Sendable {
             }
             effects += handle(Whoop.decode(frame), frame: frame, channel: key, now: now)
         }
+        if reassembler.droppedBytes > droppedBefore {
+            effects.append(.trace("  RESYNC skipped \(reassembler.droppedBytes - droppedBefore) bytes looking for the next frame start"))
+        }
+        if reassembler.pendingBytes > 0 {
+            effects.append(.trace("  WAITING \(reassembler.pendingBytes) bytes of a frame that continues in the next notification"))
+        }
         return effects
+    }
+
+    /// The app's watchdog saw no data for a while during the download.
+    public mutating func stalled() -> [Effect] {
+        guard phase == .syncing else { return [] }
+        return map(sync.stalled())
     }
 
     /// Turns the band's live heart-rate stream on or off (used by the live workout screen).
@@ -206,14 +224,19 @@ public struct BandSession: Sendable {
                 effects.append(.finished(records: records))
             case .failed(let message):
                 phase = .failed
+                effects.append(.trace("FAILED: \(message)"))
                 effects.append(.failed(message))
+            case .note(let text):
+                effects.append(.trace(text))
             }
         }
         return effects
     }
 
     private mutating func write(_ bytes: [UInt8], _ description: String) -> [Effect] {
-        [log(.toBand, Whoop.cmdToStrapUUID, description, bytes), .write(bytes, description: description)]
+        [log(.toBand, Whoop.cmdToStrapUUID, description, bytes),
+         .trace("TX CMD \(description) len=\(bytes.count) \(Whoop.hex(bytes))"),
+         .write(bytes, description: description)]
     }
 
     private mutating func log(_ direction: LogEntry.Direction, _ characteristic: String, _ summary: String,
@@ -233,26 +256,5 @@ public struct BandSession: Sendable {
         case Whoop.dataUUID: "DATA"
         default: characteristic
         }
-    }
-}
-
-extension SimulatedBand {
-    /// Turns stored minutes into the per-second samples a band would have recorded, so the
-    /// simulated band can "replay" them. The accel vector's length encodes the activity value
-    /// (the inverse of `MinuteBuilder.activity`). Seconds without a reading (HR 0) are kept: the
-    /// real band also records while it is off the wrist.
-    public static func samples(from minutes: [MinuteSample]) -> [Sample] {
-        var out: [Sample] = []
-        out.reserveCapacity(minutes.count * 60)
-        for minute in minutes {
-            let base = UInt32(max(0, minute.start.timeIntervalSince1970))
-            for second in 0..<60 {
-                let hr = second < minute.heartRate.count ? minute.heartRate[second] : 0
-                let activity = second < minute.activity.count ? minute.activity[second] : 0
-                out.append(Sample(timestamp: base + UInt32(second), heartRate: hr,
-                                  accel: [0, 0, 1 + Float(activity) / Float(MinuteBuilder.activityScale)]))
-            }
-        }
-        return out
     }
 }

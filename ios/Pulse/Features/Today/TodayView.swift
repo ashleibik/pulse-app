@@ -16,14 +16,16 @@ struct TodayView: View {
     @Query(sort: \SleepRecord.end, order: .reverse) private var sleepRecords: [SleepRecord]
     @Query private var journal: [JournalRecord]
     @Environment(\.modelContext) private var context
-    @Environment(DemoDataLoader.self) private var loader
+    @Environment(DataLoader.self) private var loader
+    @Environment(BandManager.self) private var band
+    @Query private var bands: [BandRecord]
 
     @State private var showSettings = LaunchOptions.route == "settings"
     @State private var showRecovery = LaunchOptions.route == "recovery"
     /// A day tapped in the week chart.
     @State private var openedDay: DaySummaryRecord?
     /// Only opened from here by the screenshot job. Normally pairing starts in Settings.
-    @State private var showPairing = LaunchOptions.route == "pairing" || LaunchOptions.route == "pairing-sim"
+    @State private var showPairing = LaunchOptions.route == "pairing"
     @State private var showCoach = LaunchOptions.route == "coach"
     @State private var showStress = false
     @State private var showJournal = false
@@ -268,18 +270,28 @@ struct TodayView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// No recovery yet. There is no demo data to fall back on, so say what to do next.
     private var loadingState: some View {
-        VStack(spacing: DS.Space.m) {
-            ProgressView()
-            Text("Preparing 30 days of demo data")
-                .textStyle(.bodyStrong)
-                .foregroundStyle(DS.Colors.primary)
-            Text("This only happens once.")
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.secondary)
+        VStack(alignment: .leading, spacing: DS.Space.l) {
+            if bands.isEmpty {
+                EmptyState(symbol: "waveform.path.ecg", title: "Pair your band",
+                           text: "Pulse reads your band directly over Bluetooth. Pair it, wear it tonight, and your first recovery appears in the morning.")
+                Button("Pair your band") { showPairing = true }
+                    .buttonStyle(.primaryPill)
+            } else {
+                EmptyState(symbol: "moon.zzz", title: "No recovery yet",
+                           text: "Wear your band tonight to see your first recovery.")
+                Button("Sync now") {
+                    band.syncNow(context: context)
+                    showPairing = true
+                }
+                .buttonStyle(.secondaryPill)
+                .disabled(band.isBusy)
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 200)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DS.Space.side)
+        .padding(.top, DS.Space.xxl)
     }
 
     // MARK: - Helpers
@@ -377,7 +389,7 @@ struct TrailingIconLabelStyle: LabelStyle {
 #Preview("Light") {
     TodayView()
         .modelContainer(PulseStore.previewContainer)
-        .environment(DemoDataLoader())
+        .environment(DataLoader())
         .environment(BandManager())
         .environment(CloudManager())
         .preferredColorScheme(.light)
@@ -386,7 +398,7 @@ struct TrailingIconLabelStyle: LabelStyle {
 #Preview("Dark") {
     TodayView()
         .modelContainer(PulseStore.previewContainer)
-        .environment(DemoDataLoader())
+        .environment(DataLoader())
         .environment(BandManager())
         .environment(CloudManager())
         .preferredColorScheme(.dark)

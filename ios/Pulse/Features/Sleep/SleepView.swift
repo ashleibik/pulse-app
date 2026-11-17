@@ -11,7 +11,7 @@ struct SleepView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @Query private var profiles: [ProfileRecord]
     @Environment(\.modelContext) private var context
-    @Environment(DemoDataLoader.self) private var loader
+    @Environment(DataLoader.self) private var loader
 
     @State private var nightIndex = 0          // 0 = last night, 1 = the night before, ...
     @State private var heartRate: [ChartPoint] = []
@@ -323,13 +323,13 @@ struct SleepView: View {
 #Preview("Light") {
     SleepView()
         .modelContainer(PulseStore.previewContainer)
-        .environment(DemoDataLoader())
+        .environment(DataLoader())
         .preferredColorScheme(.light)
 }
 
 #Preview("Dark") {
     SleepView()
         .modelContainer(PulseStore.previewContainer)
-        .environment(DemoDataLoader())
+        .environment(DataLoader())
         .preferredColorScheme(.dark)
 }

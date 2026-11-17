@@ -7,7 +7,7 @@ import PulseCore
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
-    @Environment(DemoDataLoader.self) private var loader
+    @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
     @Environment(HealthExporter.self) private var health
     @Query private var profiles: [ProfileRecord]
@@ -15,12 +15,11 @@ struct SettingsView: View {
     @State private var remindersOn = UserDefaults.standard.bool(forKey: "remindersEnabled")
     /// The export file, once it has been written.
     @State private var exportURL: URL?
-    @State private var confirmRegenerate = false
     @State private var confirmForget = false
     @State private var confirmDelete = false
     @State private var showPairing = false
     @State private var showLog = false
-    /// Tapping the version row 7 times opens the band log (a hidden debug screen).
+    /// Tapping the version row 7 times also opens the sync log.
     @State private var versionTaps = 0
 
     var body: some View {
@@ -33,15 +32,6 @@ struct SettingsView: View {
                 }
 
                 bandSection
-
-                SettingsSection("Demo data") {
-                    ValueRow(label: "State", value: stateText)
-                    Hairline()
-                    Button("Generate a new month") { confirmRegenerate = true }
-                        .buttonStyle(.secondaryPill)
-                        .disabled(loader.isBusy)
-                        .padding(.top, DS.Space.m)
-                }
 
                 SettingsSection("Apple Health", footer: healthFooter) {
                     ValueRow(label: "Export", value: health.isEnabled ? "On" : "Off",
@@ -96,12 +86,10 @@ struct SettingsView: View {
                         Button("Export my data") { export() }
                             .buttonStyle(.secondaryPill)
                     }
-                    if DataSourceSetting.current == .band {
-                        Button("Delete all band data") { confirmDelete = true }
-                            .buttonStyle(.secondaryPill)
-                            .disabled(band.isBusy || loader.isBusy)
-                            .padding(.top, DS.Space.s)
-                    }
+                    Button("Delete all band data") { confirmDelete = true }
+                        .buttonStyle(.secondaryPill)
+                        .disabled(band.isBusy || loader.isBusy)
+                        .padding(.top, DS.Space.s)
                 }
 
                 SettingsSection("About", footer: "Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.") {
@@ -136,12 +124,6 @@ struct SettingsView: View {
             }
         }
         .monoSheet()
-        .confirmationDialog("Replace all demo data with a new random month?",
-                            isPresented: $confirmRegenerate, titleVisibility: .visible) {
-            Button("Generate new data") {
-                Task { await loader.regenerate(context: context) }
-            }
-        }
         .confirmationDialog("Forget this band?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget band") { band.forget(context: context) }
         } message: {
@@ -169,7 +151,7 @@ struct SettingsView: View {
         case .working: "Exporting…"
         case .done(let message): message
         case .failed(let message): message
-        case .idle: "Saves sleep, resting heart rate and workouts to Apple Health. Pulse never reads from Apple Health, and demo data is never written there."
+        case .idle: "Saves sleep, resting heart rate and workouts to Apple Health. Pulse never reads from Apple Health."
         }
     }
 
@@ -199,9 +181,13 @@ struct SettingsView: View {
                         .disabled(band.isBusy)
                 }
                 .padding(.top, DS.Space.m)
+                // Every packet of the last sync, exportable as a text file (for debugging).
+                Button("Sync log") { showLog = true }
+                    .buttonStyle(.secondaryPill)
+                    .padding(.top, DS.Space.s)
             }
         } else {
-            SettingsSection("Band", footer: "Until a band is paired, Pulse shows a simulated month run through the real metrics engine.") {
+            SettingsSection("Band", footer: "Pulse only shows what your band recorded. Pair it to get started.") {
                 ValueRow(label: "Status", value: "Not paired", emphasized: false)
                 Hairline()
                 Button("Pair your band") { showPairing = true }
@@ -223,16 +209,6 @@ struct SettingsView: View {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-export.json")
         try? data.write(to: url, options: .atomic)
         exportURL = url
-    }
-
-    private var stateText: String {
-        switch loader.state {
-        case .idle: "Not loaded"
-        case .generating: "Generating…"
-        case .recalculating: "Recalculating…"
-        case .ready: loader.rawDataReady ? "30 days loaded" : "Saving raw data…"
-        case .failed(let message): "Error: \(message)"
-        }
     }
 
     private var appVersion: String {
@@ -276,7 +252,7 @@ private struct SettingsSection<Content: View>: View {
 private struct ProfileSection: View {
     @Bindable var profile: ProfileRecord
     let onRecalculate: () -> Void
-    @Environment(DemoDataLoader.self) private var loader
+    @Environment(DataLoader.self) private var loader
     @State private var changed = false
 
     private static let currentYear = Calendar.current.component(.year, from: .now)

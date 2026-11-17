@@ -521,7 +521,7 @@ extension String {
 
 /// Says where the numbers come from, in words. Outline only, so it stays quiet.
 struct StatusPill: View {
-    @Environment(DemoDataLoader.self) private var loader
+    @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
     @Query private var bands: [BandRecord]
 
@@ -545,15 +545,12 @@ struct StatusPill: View {
         if band.isBusy { return "Syncing…" }
         if case .failed = band.stage { return "Sync failed" }
         switch loader.state {
-        case .idle, .generating: return "Preparing…"
+        case .idle: return "Starting…"
         case .recalculating: return "Recalculating…"
         case .failed: return "Data error"
         case .ready: break
         }
-        guard let record = bands.first else {
-            return DataSourceSetting.current == .band ? "Band data" : "Demo data"
-        }
-        if record.peripheralID == SimulatedBandLink.bandID { return "Simulated band" }
+        guard let record = bands.first else { return "No band paired" }
         guard let synced = record.lastHistorySyncAt else { return "Not synced yet" }
         return "Synced \(synced.formatted(date: .omitted, time: .shortened))"
     }

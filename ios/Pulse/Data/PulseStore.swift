@@ -34,18 +34,7 @@ enum PulseStore {
         }
     }
 
-    /// Small summary records: inserted on the caller's context so @Query views update right away.
-    @MainActor
-    static func insertSummaries(_ data: FakeDataset, into context: ModelContext) throws {
-        for day in data.days {
-            context.insert(DaySummaryRecord(day, algorithmVersion: MetricsEngine.algorithmVersion))
-        }
-        for sleep in data.sleeps { context.insert(SleepRecord(sleep)) }
-        for workout in data.workouts { context.insert(WorkoutRecord(workout)) }
-        try context.save()
-    }
-
-    /// Deletes everything (used by "Regenerate demo data" in Settings).
+    /// Deletes all health data (Settings > "Delete all band data"). The journal and profile stay.
     @MainActor
     static func deleteAllHealthData(in context: ModelContext) throws {
         try context.delete(model: MinuteRecord.self)
@@ -55,20 +44,30 @@ enum PulseStore {
         try context.save()
     }
 
-    /// In-memory database full of demo data, for SwiftUI previews.
+    /// Removes what older versions simulated: the demo month and simulated-band syncs.
+    /// Returns true when real band data was there too (so the numbers must be recalculated).
     @MainActor
-    static let previewContainer: ModelContainer = {
-        let container = makeContainer(inMemory: true)
-        let data = DemoData.make(config: FakeDataConfig(days: 30, seed: 42), calendar: .current)
-        try? insertSummaries(data, into: container.mainContext)
-        // Only the last ~36 hours of raw minutes: enough for last night's charts, fast to insert.
-        let cutoff = Date.now.addingTimeInterval(-36 * 3600)
-        for minute in data.minutes where minute.start >= cutoff {
-            container.mainContext.insert(MinuteRecord(minute))
+    @discardableResult
+    static func removeSimulatedData(in context: ModelContext) throws -> Bool {
+        let simulatedBand = UUID(uuidString: "00000000-0000-4000-8000-0000000051AB")!
+        try context.delete(model: BandRecord.self, where: #Predicate { $0.peripheralID == simulatedBand })
+        // Older versions remembered whether a real band had replaced the demo month.
+        guard UserDefaults.standard.string(forKey: "dataSource") == "band" else {
+            try deleteAllHealthData(in: context)        // demo month only: nothing real to keep
+            return false
         }
-        try? container.mainContext.save()
-        return container
-    }()
+        let simulated = DataSource.simulated.rawValue
+        try context.delete(model: MinuteRecord.self, where: #Predicate { $0.sourceRaw == simulated })
+        try context.delete(model: SleepRecord.self, where: #Predicate { $0.sourceRaw == simulated })
+        try context.delete(model: WorkoutRecord.self, where: #Predicate { $0.sourceRaw == simulated })
+        try context.delete(model: DaySummaryRecord.self, where: #Predicate { $0.sourceRaw == simulated })
+        try context.save()
+        return true
+    }
+
+    /// Empty in-memory database for SwiftUI previews (there is no fake data in the app).
+    @MainActor
+    static let previewContainer: ModelContainer = makeContainer(inMemory: true)
 }
 
 /// Results of re-running the metrics engine, passed from the background actor to the main thread.

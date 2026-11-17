@@ -1,10 +1,12 @@
 import Foundation
+@testable import PulseCore
+
+// TEST SUPPORT ONLY. Lives in the test target, so it can never be part of the app build.
 
 /// A pretend WHOOP band that speaks the protocol byte for byte. It answers commands with
 /// notifications, sends stored history in batches, and waits for acks.
 ///
-/// Used by tests now, and later by the app's "demo band" mode, so the whole Bluetooth pipeline
-/// can be exercised without hardware. Its packet layouts follow docs/PROTOCOL.md; where the real
+/// Used by tests, so the whole Bluetooth pipeline can be exercised without hardware. Its packet layouts follow docs/PROTOCOL.md; where the real
 /// band's behaviour is unknown (e.g. exactly when it resends a batch), it does the simplest
 /// plausible thing, and that is noted here.
 public struct SimulatedBand: Sendable {
@@ -160,6 +162,27 @@ public struct SimulatedBand: Sendable {
             }
             outgoingCount += 1
             i += mtuPayload
+        }
+        return out
+    }
+}
+
+extension SimulatedBand {
+    /// Turns stored minutes into the per-second samples a band would have recorded, so the
+    /// simulated band can "replay" them. The accel vector's length encodes the activity value
+    /// (the inverse of `MinuteBuilder.activity`). Seconds without a reading (HR 0) are kept: the
+    /// real band also records while it is off the wrist.
+    public static func samples(from minutes: [MinuteSample]) -> [Sample] {
+        var out: [Sample] = []
+        out.reserveCapacity(minutes.count * 60)
+        for minute in minutes {
+            let base = UInt32(max(0, minute.start.timeIntervalSince1970))
+            for second in 0..<60 {
+                let hr = second < minute.heartRate.count ? minute.heartRate[second] : 0
+                let activity = second < minute.activity.count ? minute.activity[second] : 0
+                out.append(Sample(timestamp: base + UInt32(second), heartRate: hr,
+                                  accel: [0, 0, 1 + Float(activity) / Float(MinuteBuilder.activityScale)]))
+            }
         }
         return out
     }

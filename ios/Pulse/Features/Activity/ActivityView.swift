@@ -9,7 +9,7 @@ struct ActivityView: View {
     @Query(sort: \WorkoutRecord.start, order: .reverse) private var workouts: [WorkoutRecord]
     @Query private var profiles: [ProfileRecord]
     @Environment(\.modelContext) private var context
-    @Environment(DemoDataLoader.self) private var loader
+    @Environment(DataLoader.self) private var loader
 
     @State private var zoneMinutes: [Int] = []
     /// The open workout (empty = the list is showing).
@@ -181,13 +181,13 @@ struct ActivityView: View {
 #Preview("Light") {
     ActivityView()
         .modelContainer(PulseStore.previewContainer)
-        .environment(DemoDataLoader())
+        .environment(DataLoader())
         .preferredColorScheme(.light)
 }
 
 #Preview("Dark") {
     ActivityView()
         .modelContainer(PulseStore.previewContainer)
-        .environment(DemoDataLoader())
+        .environment(DataLoader())
         .preferredColorScheme(.dark)
 }

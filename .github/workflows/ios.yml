@@ -130,7 +130,6 @@ jobs:
           capture dark
           shot 0-welcome-dark 6
           # Last, because it writes data: a full pairing + history download from the simulated band.
-          shot 9-pairing-simulated-dark 40 $SEEN -screenshotTab today -screenshotRoute pairing-sim
           shot 9-today-after-sync-dark 7 $SEEN -screenshotTab today
           shot 9-settings-paired-dark 7 $SEEN -screenshotTab today -screenshotRoute settings
           ls -la screenshots

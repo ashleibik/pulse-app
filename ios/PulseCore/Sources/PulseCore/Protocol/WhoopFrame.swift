@@ -86,6 +86,9 @@ extension Whoop {
 
         public init() {}
 
+        /// Bytes waiting for the rest of their frame (debug log: a frame split across notifications).
+        public var pendingBytes: Int { buffer.count }
+
         public mutating func feed(_ chunk: [UInt8]) -> [Frame] {
             buffer.append(contentsOf: chunk)
             if buffer.count > Self.maxBuffer {
@@ -176,6 +179,24 @@ extension Whoop {
             guard token.count == 8 else { return nil }
             return allowed(.historicalDataResult, [0x01] + token, seq)
         }
+    }
+}
+
+// MARK: - Hex (debug log)
+
+extension Whoop {
+    private static let hexDigits = Array("0123456789abcdef".utf8)
+
+    /// "aa 18 00 ..." Fast enough to run on every notification of a big sync.
+    public static func hex(_ bytes: some Collection<UInt8>) -> String {
+        var out = [UInt8]()
+        out.reserveCapacity(bytes.count * 3)
+        for byte in bytes {
+            if !out.isEmpty { out.append(0x20) }
+            out.append(hexDigits[Int(byte >> 4)])
+            out.append(hexDigits[Int(byte & 0x0F)])
+        }
+        return String(decoding: out, as: UTF8.self)
     }
 }
 

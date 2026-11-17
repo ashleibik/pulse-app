@@ -3,7 +3,7 @@ import SwiftData
 import PulseCore
 
 /// Week / month view: averages vs the previous period, plain-language insights, and one chart per metric.
-/// Mono design (ios/design/DESIGN.md): "better" / "worse" is written out, never shown as green / red.
+/// "Better" / "worse" is always written out (ios/design/DESIGN.md).
 struct TrendsView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @State private var period: Period = .week
@@ -22,6 +22,11 @@ struct TrendsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.xxl) {
+              if days.isEmpty {
+                EmptyState(symbol: "chart.xyaxis.line", title: "No trends yet",
+                           text: "Wear your band for a few days and nights. Trends compare this week with the one before.")
+                    .padding(.top, DS.Space.xl)
+              } else {
                 summary.riseIn(0)
                 Button(period == .week ? "See this week's report" : "See this month's report") { showReport = true }
                     .buttonStyle(.secondaryPill)
@@ -31,6 +36,7 @@ struct TrendsView: View {
                 lineSection(.restingHeartRate) { $0.restingHeartRate }
                 barSection(.sleep) { $0.sleepMinutes.map { Double($0) / 60 } }
                 barSection(.strain) { $0.strain }
+              }
             }
             .padding(.horizontal, DS.Space.side)
             .padding(.top, DS.Space.l)

@@ -33,7 +33,8 @@ Sources:
 | 2026-11-13 | [OS] HISTORY_END layout vs [BW] sync-end sample | 🟢 timestamp (2024-06-17), count 67, token all sane |
 | 2026-11-13 | Swift port (`ios/PulseCore/.../Protocol`) vs this Python package on `shared/test-vectors/protocol_v1.json` | ✅ identical: CRCs, frames, all builders, allowlist, reassembly, decoding |
 | 2026-11-13 | Reassembler fix: zero padding is skipped at the top of the loop, so the result no longer depends on how BLE splits notifications | ✅ tested for chunk sizes 1-244 |
-| _TBD_ | First capture from **my** band | |
+| 2026-11-17 | First real sync (my WS40) failed: "Batch kept arriving incomplete (4 tries)" | ❌ root cause: we treated HISTORY_END `[9:13]` ("expected packets") as a hard gate. OpenStrap/edge documents that on WHOOP 4 it does NOT match the records actually sent (gap varies run to run) and keeps it advisory (`burstCountGateEnforced = false`, test "a short gen4 burst is still ACKed with the verbatim token"). Now advisory + logged. Meaning of the field: 🔴 unknown, pin it from a sync log |
+| _TBD_ | First full sync log from **my** band (Settings > Band > Sync log > Export) | |
 
 ## 1. GATT layout
 

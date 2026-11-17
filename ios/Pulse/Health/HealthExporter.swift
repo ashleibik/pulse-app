@@ -85,7 +85,7 @@ final class HealthExporter {
             let plan = HealthExport.plan(sleeps: sleeps.map(\.value), workouts: workouts.map(\.value),
                                          days: days.map(\.value), since: since)
             guard !plan.isEmpty else {
-                status = .done("Nothing to export yet. Demo data is never written to Apple Health.")
+                status = .done("Nothing to export yet. Sync your band first.")
                 return
             }
             for session in plan.sleeps { try await write(session, context: context) }

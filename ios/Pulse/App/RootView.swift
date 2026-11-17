@@ -6,7 +6,7 @@ struct RootView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: Tab = Tab(rawValue: LaunchOptions.tab ?? "") ?? .today
-    @State private var loader = DemoDataLoader()
+    @State private var loader = DataLoader()
     /// Shared with BackgroundSync, which can run before (or without) this screen.
     @State private var band = BandManager.shared
     @State private var health = HealthExporter()
@@ -33,7 +33,6 @@ struct RootView: View {
                 .tag(Tab.trends)
         }
         .sensoryFeedback(.selection, trigger: tab)                    // light tick when switching tabs
-        .sensoryFeedback(.success, trigger: loader.state == .ready)   // when demo data finishes loading
         .environment(loader)
         .environment(band)
         .environment(health)
@@ -57,7 +56,6 @@ struct RootView: View {
             if state == .ready { WidgetBridge.publish(context: context) }
         }
         .task {
-            // Until the band is paired, fill the app with demo data on first launch.
             band.onDataChanged = { [loader, health, cloud, context] in
                 loader.dataChanged()
                 Notifier.refresh(context: context)
@@ -69,7 +67,7 @@ struct RootView: View {
                 }
             }
             await cloud.load()
-            await loader.loadIfEmpty(context: context)
+            await loader.prepare(context: context)      // also removes old simulated data, once
         }
     }
 }

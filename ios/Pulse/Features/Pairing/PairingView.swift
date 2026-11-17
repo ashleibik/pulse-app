@@ -6,12 +6,12 @@ import PulseCore
 /// The screen only shows what `BandManager.stage` says; all the work happens there.
 /// Mono design (ios/design/DESIGN.md).
 struct PairingView: View {
+    @State private var showLog = false
     @Environment(BandManager.self) private var band
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
 
     /// The real band the user tapped, waiting for the "replace demo data" confirmation.
-    @State private var chosen: DiscoveredBand?
 
     var body: some View {
         ScrollView {
@@ -34,27 +34,7 @@ struct PairingView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { actions }
         .monoSheet()
         .animation(DS.Motion.spring, value: band.stage)
-        .confirmationDialog("Replace the demo month with this band's data?",
-                            isPresented: Binding(get: { chosen != nil }, set: { if !$0 { chosen = nil } }),
-                            titleVisibility: .visible) {
-            Button("Connect and replace") {
-                if let chosen { band.connect(chosen) }
-                chosen = nil
-            }
-        } message: {
-            Text("The simulated month is deleted. Your band's history is downloaded instead.")
-        }
-        .task {
-            // Only the screenshot job sets this: run the simulated band without any taps.
-            if LaunchOptions.route == "pairing-sim", band.stage == .idle {
-                band.startPairing(simulated: true, context: context)
-            }
-        }
-        .onChange(of: band.found) { _, found in
-            if LaunchOptions.route == "pairing-sim", band.stage == .searching, let first = found.first {
-                band.connect(first)
-            }
-        }
+        .sheet(isPresented: $showLog) { BandLogView() }
         .sensoryFeedback(.success, trigger: band.stage == .upToDate)
     }
 
@@ -70,10 +50,8 @@ struct PairingView: View {
                 ValueRow(label: "Band charged and nearby", value: "", symbol: "battery.75percent")
                 Hairline()
                 ValueRow(label: "Official WHOOP app closed", value: "", symbol: "xmark.app")
-                Hairline()
-                ValueRow(label: "Demo month gets replaced", value: "", symbol: "arrow.triangle.2.circlepath")
             }
-            Text("A band talks to one app at a time. This part of Pulse has not been tried with a real band yet, so expect rough edges.")
+            Text("A band talks to one app at a time. The first sync can take several minutes if the band holds a lot of old data: keep the app open and the band close.")
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -98,11 +76,7 @@ struct PairingView: View {
                     ForEach(Array(band.found.enumerated()), id: \.element.id) { index, found in
                         if index > 0 { Hairline() }
                         Button {
-                            if found.id == SimulatedBandLink.bandID {
-                                band.connect(found)         // nothing is deleted for the simulated band
-                            } else {
-                                chosen = found
-                            }
+                            band.connect(found)
                         } label: {
                             foundRow(found)
                         }
@@ -223,19 +197,20 @@ struct PairingView: View {
             switch band.stage {
             case .idle, .unavailable, .failed:
                 Button {
-                    band.startPairing(simulated: false, context: context)
+                    band.startPairing(context: context)
                 } label: {
                     Text(band.stage == .idle ? "Search for my band" : "Try again")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.primaryPill)
-                Button {
-                    band.startPairing(simulated: true, context: context)
-                } label: {
-                    Text("Try a simulated band")
-                        .frame(maxWidth: .infinity)
+                if case .failed = band.stage {
+                    Button {
+                        showLog = true
+                    } label: {
+                        Text("See the sync log").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.secondaryPill)
                 }
-                .buttonStyle(.secondaryPill)
             case .upToDate:
                 Button {
                     dismiss()
@@ -259,48 +234,76 @@ struct PairingView: View {
     }
 }
 
-/// The hidden debug screen (Settings > tap the version 7 times): the last packets to and from
-/// the band. Kept in memory only, never saved or uploaded.
+/// The sync log (Settings > Band > Sync log, or after a failed sync): every notification, frame,
+/// command and batch of the last sync, with an export as a text file. Memory only: nothing is
+/// saved or uploaded unless you share the file yourself.
 struct BandLogView: View {
     @Environment(BandManager.self) private var band
     @Environment(\.dismiss) private var dismiss
+    @State private var lines: [String] = []
+    @State private var total = 0
+    @State private var exportURL: URL?
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                Text("\(band.log.count) lines · \(band.badFrames) damaged packets")
+            VStack(alignment: .leading, spacing: DS.Space.m) {
+                Text("\(total) lines · \(band.recordsSaved) records saved in \(band.batchesSaved) batches · \(band.badFrames) damaged frames")
                     .textStyle(.caption)
                     .foregroundStyle(DS.Colors.secondary)
-                    .padding(.bottom, DS.Space.s)
-                if band.log.isEmpty {
-                    Text("Nothing yet. Pair or sync a band and its packets appear here.")
+                HStack(spacing: DS.Space.s) {
+                    if let exportURL {
+                        ShareLink(item: exportURL) { Text("Share log file") }
+                            .buttonStyle(.primaryPill)
+                    } else {
+                        Button("Export as text file") { exportURL = band.exportTrace() }
+                            .buttonStyle(.primaryPill)
+                            .disabled(total == 0)
+                    }
+                    Button("Refresh") { reload() }
+                        .buttonStyle(.secondaryPill)
+                }
+                Text("The log contains raw band data (your heart rate). It stays on this iPhone unless you share it.")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if lines.isEmpty {
+                    Text("Nothing yet. Sync your band and every packet appears here.")
                         .textStyle(.body)
                         .foregroundStyle(DS.Colors.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                ForEach(band.log.reversed()) { entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(entry.direction == .toBand ? "→" : "←") \(entry.channel) · \(entry.summary)\(entry.crcOK ? "" : " · bad checksum")")
-                            .textStyle(.caption)
-                            .foregroundStyle(DS.Colors.primary)
-                        Text(entry.hex)
+                Text("Newest first (last 300 lines; the export has everything)")
+                    .textStyle(.label)
+                    .foregroundStyle(DS.Colors.secondary)
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
                             .font(.caption2.monospaced())
-                            .foregroundStyle(DS.Colors.secondary)
-                            .lineLimit(2)
+                            .foregroundStyle(isProblem(line) ? DS.Colors.alert : DS.Colors.secondary)
+                            .lineLimit(4)
+                            .textSelection(.enabled)
                     }
-                    .padding(.vertical, DS.Space.s)
-                    .accessibilityElement(children: .combine)
-                    Hairline()
                 }
             }
             .padding(.horizontal, DS.Space.side)
             .padding(.bottom, DS.Space.xxl)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            ScreenHeader(title: "Band log", isSheet: true) {
+            ScreenHeader(title: "Sync log", isSheet: true) {
                 IconButton(systemName: "xmark", label: "Close") { dismiss() }
             }
         }
         .monoSheet()
+        .onAppear { reload() }
+    }
+
+    private func reload() {
+        lines = band.trace.last(300).reversed()
+        total = band.trace.total
+        exportURL = nil
+    }
+
+    private func isProblem(_ line: String) -> Bool {
+        line.contains("FAIL") || line.contains("WATCHDOG") || line.contains("RESYNC") || line.contains("Disconnected")
     }
 }

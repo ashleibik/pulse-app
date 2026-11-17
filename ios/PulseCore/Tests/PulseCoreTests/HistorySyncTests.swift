@@ -13,6 +13,7 @@ struct SyncHarness {
     var savedTokens: [[UInt8]] = []
     var finished: (batches: Int, records: Int)?
     var failure: String?
+    var notes: [String] = []
     /// Turn off to simulate the app crashing/forgetting to confirm a save.
     var confirmSaves = true
 
@@ -45,6 +46,8 @@ struct SyncHarness {
                 finished = (batches, records)
             case .failed(let message):
                 failure = message
+            case .note(let text):
+                notes.append(text)
             }
         }
     }
@@ -82,28 +85,64 @@ func samples(_ count: Int, start: UInt32 = 1_750_000_000) -> [SimulatedBand.Samp
     if case .send(_, let description) = actions.first { #expect(description == "HISTORY_ACK") }
 }
 
-@Test func lostNotificationMeansRetryNotHalfSave() {
+// Regression test for the first real band sync ("Batch kept arriving incomplete (4 tries)"):
+// on the WHOOP 4.0 the count in HISTORY_END doesn't match what is sent, so it must never block.
+@Test func announcedCountIsAdvisoryNotAGate() {
+    var sync = HistorySync()
+    _ = sync.start()
+    let token: [UInt8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    let end = Whoop.Packet.metadata(Whoop.Metadata(metaType: 2, metaName: "HISTORY_END", timestamp: nil,
+                                                   expectedPackets: 100, token: token))
+    let actions = sync.handle(end)
+    #expect(actions.count == 2)
+    if case .note(let text) = actions.first { #expect(text.contains("announced 100, received 0")) }
+    #expect(actions.last == .persist([], token: token))
+    #expect(sync.retries == 0)
+}
+
+@Test func lostNotificationStillSavesTheRestOfTheBatch() {
     var band = SimulatedBand(samples: samples(250), batchSize: 100, mtuPayload: 20)
     band.dropNotificationIndex = 30          // lose a chunk in the middle of batch 1
     var h = SyncHarness(band: band)
     h.run()
     #expect(h.failure == nil)
-    #expect(h.sync.retries == 0)              // reset after the successful retry
-    #expect(h.saved.count == 250)             // nothing missing, nothing duplicated
-    #expect(Set(h.saved.map(\.timestamp)).count == 250)
-    #expect(h.band.commandsReceived.filter { $0 == "SEND_HISTORICAL_DATA" }.count == 2)
+    #expect(h.finished != nil)
+    #expect(h.saved.count >= 240 && h.saved.count < 250)       // only the damaged record(s) are missing
+    #expect(Set(h.saved.map(\.timestamp)).count == h.saved.count)  // nothing duplicated
+    #expect(h.band.commandsReceived.filter { $0 == "SEND_HISTORICAL_DATA" }.count == 1)  // no retry loop
+    #expect(h.notes.contains { $0.contains("advisory") })
 }
 
-@Test func givesUpAfterRepeatedLosses() {
+@Test func quietBandIsAskedAgainThenGivenUpOn() {
     var sync = HistorySync(maxRetries: 2)
     _ = sync.start()
-    let incompleteEnd = Whoop.Packet.metadata(Whoop.Metadata(metaType: 2, metaName: "HISTORY_END", timestamp: nil,
-                                                             expectedPackets: 100, token: [1, 2, 3, 4, 5, 6, 7, 8]))
-    #expect(sync.handle(incompleteEnd).count == 1)   // retry 1
-    #expect(sync.handle(incompleteEnd).count == 1)   // retry 2
-    let last = sync.handle(incompleteEnd)
-    guard case .failed = last.first else { Issue.record("expected failure"); return }
-    #expect(sync.state != .receiving)
+    let first = sync.stalled()
+    #expect(first.contains { if case .send(_, let d) = $0 { d.contains("retry 1") } else { false } })
+    _ = sync.stalled()
+    let last = sync.stalled()
+    guard case .failed(let message) = last.first else { Issue.record("expected failure"); return }
+    #expect(message.contains("saved"))
+}
+
+@Test func waitingForSaveIsNotAStall() {
+    var sync = HistorySync()
+    _ = sync.start()
+    let end = Whoop.Packet.metadata(Whoop.Metadata(metaType: 2, metaName: "HISTORY_END", timestamp: nil,
+                                                   expectedPackets: nil, token: [1, 2, 3, 4, 5, 6, 7, 8]))
+    _ = sync.handle(end)
+    #expect(sync.stalled().isEmpty)     // the band waits for our ack: nothing to resend
+}
+
+@Test func syncTraceKeepsStartAndEnd() {
+    var trace = SyncTrace(headLimit: 3, tailLimit: 2)
+    for i in 0..<10 { trace.add("line \(i)", at: 100 + Double(i)) }
+    #expect(trace.total == 10 && trace.omitted == 5)
+    let lines = trace.lines
+    #expect(lines.count == 5)
+    #expect(lines.first?.hasSuffix("line 0") == true && lines.last?.hasSuffix("line 9") == true)
+    #expect(lines[3].hasSuffix("line 8"))
+    #expect(lines[1].contains("+    1.000"))
+    #expect(trace.text(header: "h").contains("5 lines skipped"))
 }
 
 @Test func emptyBandFinishesImmediately() {

@@ -38,7 +38,7 @@ enum BackgroundSync {
                 WidgetBridge.publish(context: context)
             }
         }
-        band.syncIfDue(context: context)    // real band only, at most every 15 minutes
+        band.syncIfDue(context: context)    // at most every 15 minutes
         let deadline = Date.now.addingTimeInterval(25)
         while band.isBusy && Date.now < deadline {
             try? await Task.sleep(for: .milliseconds(500))
@@ -59,7 +59,7 @@ enum WidgetBridge {
         let snapshot = WidgetSnapshot(day: today.date, recovery: today.recoveryScore, zone: today.zone?.rawValue,
                                       word: today.zone?.word ?? "Learning", strain: today.strain,
                                       sleepMinutes: today.sleepMinutes,
-                                      simulated: DataSourceSetting.current == .demo, updated: .now)
+                                      simulated: false, updated: .now)
         if snapshot.save() { WidgetCenter.shared.reloadAllTimelines() }
     }
 }

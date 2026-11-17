@@ -8,7 +8,7 @@ import PulseCore
 /// band the timer still runs and the workout is still saved. The saved numbers (average heart
 /// rate, zones, strain) are filled in from the band's stored data, at the next sync at the latest.
 ///
-/// ⚠ The live stream has only been run against the simulated band.
+/// ⚠ The live stream has only been tested in unit tests so far, not with the real band.
 struct LiveWorkoutView: View {
     @Environment(BandManager.self) private var band
     @Environment(\.modelContext) private var context

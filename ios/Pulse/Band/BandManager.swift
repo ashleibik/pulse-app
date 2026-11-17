@@ -32,12 +32,17 @@ final class BandManager {
     private(set) var info = BandSession.Info()
     /// Seconds of band data saved in this sync (the band records about one sample per second).
     private(set) var recordsSaved = 0
-    /// Newest last. Only kept in memory, capped, and only shown on the hidden debug screen.
+    private(set) var batchesSaved = 0
+    /// Newest last. Only kept in memory, capped.
     private(set) var log: [BandSession.LogEntry] = []
     private(set) var badFrames = 0
     /// The band's live heart rate while a live workout is open. `nil` = no live reading.
     private(set) var liveHeartRate: Int?
     private var wantsLive = false
+
+    /// The detailed sync log (every notification, frame, command, batch). Memory only; exported
+    /// from the debug screen. Not observed: it changes thousands of times per second during a sync.
+    @ObservationIgnored private(set) var trace = SyncTrace()
 
     /// Called after new data was saved and the metrics were recalculated.
     var onDataChanged: (() -> Void)?
@@ -46,24 +51,31 @@ final class BandManager {
     private var session: BandSession?
     private var context: ModelContext?
     private var target: DiscoveredBand?
-    private var usingSimulatedBand = false
     private static let logLimit = 400
+
+    /// Watchdog: if the band sends nothing for this long during the download, ask again.
+    /// Generous on purpose: a first sync can have weeks of data and the band pauses between batches.
+    private static let stallSeconds: TimeInterval = 25
+    @ObservationIgnored private var lastActivity = Date.now
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
 
     var isBusy: Bool { stage == .searching || stage == .connecting || stage == .syncing }
 
     // MARK: - What the screens call
 
-    /// Start looking for a band. `simulated: true` uses the pretend band (no Bluetooth needed).
-    func startPairing(simulated: Bool, context: ModelContext) {
-        prepare(simulated: simulated, context: context)
+    /// Start looking for a band.
+    func startPairing(context: ModelContext) {
+        prepare(context: context)
         found = []
         stage = .searching
+        traceLine("Searching for bands")
         link?.startScanning()
     }
 
     func connect(_ band: DiscoveredBand) {
         target = band
         stage = .connecting
+        traceLine("Connecting to \(band.name) \(band.id) (signal \(band.signal) dBm)")
         link?.stopScanning()
         link?.connect(to: band.id)
     }
@@ -71,17 +83,17 @@ final class BandManager {
     /// Sync again with the band that is already paired.
     func syncNow(context: ModelContext) {
         guard !isBusy, let record = Self.pairedBand(in: context) else { return }
-        prepare(simulated: record.peripheralID == SimulatedBandLink.bandID, context: context)
+        prepare(context: context)
         target = DiscoveredBand(id: record.peripheralID, name: record.name, signal: 0)
         stage = .connecting
+        traceLine("Sync: connecting to \(record.name) \(record.peripheralID)")
         link?.connect(to: record.peripheralID)
     }
 
-    /// Called whenever the app comes to the screen: syncs quietly if a real band is paired and
-    /// the last sync is more than 15 minutes old. (The simulated band never syncs by itself.)
+    /// Called whenever the app comes to the screen: syncs quietly if a band is paired and
+    /// the last sync is more than 15 minutes old.
     func syncIfDue(context: ModelContext) {
-        guard !isBusy, !wantsLive, let record = Self.pairedBand(in: context),
-              record.peripheralID != SimulatedBandLink.bandID else { return }
+        guard !isBusy, !wantsLive, let record = Self.pairedBand(in: context) else { return }
         if let last = record.lastHistorySyncAt, Date.now.timeIntervalSince(last) < 15 * 60 { return }
         syncNow(context: context)
     }
@@ -108,9 +120,11 @@ final class BandManager {
     }
 
     func cancel() {
+        traceLine("Cancelled")
         link?.stopScanning()
         link?.disconnect()
         session = nil
+        stopWatchdog()
         if isBusy { stage = .idle }
     }
 
@@ -127,26 +141,42 @@ final class BandManager {
         try? context.fetch(FetchDescriptor<BandRecord>()).first
     }
 
+    /// The sync log as a text file, for the share sheet. nil if nothing was logged yet.
+    func exportTrace() -> URL? {
+        guard trace.total > 0 else { return nil }
+        let info = Bundle.main.infoDictionary
+        let version = "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+        let started = trace.startedAt.map { Date(timeIntervalSince1970: $0).formatted(date: .abbreviated, time: .standard) } ?? "?"
+        let header = """
+        Pulse sync log
+        app \(version), exported \(Date.now.formatted(date: .abbreviated, time: .standard)), log started \(started)
+        stage: \(stage), records saved: \(recordsSaved), batches: \(batchesSaved), damaged frames: \(badFrames)
+        band: battery \(self.info.batteryPercent.map { "\($0)%" } ?? "?"), firmware \(self.info.firmware ?? "?")
+        Contains raw band data (heart rate). Only share it with someone you trust.
+        """
+        let stamp = Int(Date.now.timeIntervalSince1970)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-sync-log-\(stamp).txt")
+        do {
+            try trace.text(header: header).write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: - Link events
 
-    private func prepare(simulated: Bool, context: ModelContext) {
+    private func prepare(context: ModelContext) {
         link?.disconnect()
+        stopWatchdog()
         self.context = context
-        usingSimulatedBand = simulated
         session = nil
         recordsSaved = 0
+        batchesSaved = 0
         badFrames = 0
         log = []
-        let newLink: BandLink
-        if simulated {
-            // The pretend band "recorded" the last two days that are already stored.
-            newLink = SimulatedBandLink { [weak self] in
-                guard let context = self?.context else { return [] }
-                return PulseStore.minutes(from: Date.now.addingTimeInterval(-48 * 3600), to: .now, in: context)
-            }
-        } else {
-            newLink = BluetoothBandLink()
-        }
+        trace = SyncTrace()
+        let newLink = BluetoothBandLink()
         newLink.onEvent = { [weak self] event in
             // BandLink promises the main thread.
             MainActor.assumeIsolated { self?.handle(event) }
@@ -157,11 +187,12 @@ final class BandManager {
     private func handle(_ event: BandLinkEvent) {
         switch event {
         case .availability(let availability):
+            traceLine("Bluetooth: \(availability)")
             switch availability {
             case .ready: break
             case .poweredOff: stage = .unavailable("Bluetooth is off. Turn it on in Control Centre, then try again.")
             case .notAllowed: stage = .unavailable("Pulse isn't allowed to use Bluetooth. Allow it in Settings > Privacy & Security > Bluetooth.")
-            case .unsupported: stage = .unavailable("This device has no Bluetooth (for example the iOS simulator). You can still try the simulated band.")
+            case .unsupported: stage = .unavailable("This device has no Bluetooth.")
             }
 
         case .discovered(let band):
@@ -169,36 +200,45 @@ final class BandManager {
                 found[index] = band
             } else {
                 found.append(band)
+                traceLine("Found \(band.name) \(band.id) (signal \(band.signal) dBm)")
             }
 
+        case .note(let text):
+            traceLine(text)
+
         case .connected:
+            traceLine("Connected, notifications on")
             startSession()
 
         case .notification(let characteristic, let bytes):
-            guard var current = session else { return }
+            lastActivity = .now
+            guard var current = session else {
+                traceLine("RX (no session) \(characteristic) len=\(bytes.count) \(Whoop.hex(bytes))")
+                return
+            }
             let effects = current.receive(characteristic: characteristic, bytes: bytes, now: Date().timeIntervalSince1970)
             session = current
             badFrames = current.badFrames
             run(effects)
 
         case .disconnected(let reason):
+            traceLine("Disconnected: \(reason ?? "on purpose")")
+            let wasSyncing = stage == .syncing
             session = nil
             liveHeartRate = nil
+            stopWatchdog()
             if let reason, isBusy {
                 stage = .failed(reason)
             } else if isBusy {
                 stage = .idle
             }
+            // The link dropped mid-download: what was saved is real data, so show it.
+            if wasSyncing && recordsSaved > 0 { recomputeSaved() }
         }
     }
 
     private func startSession() {
         guard let context, let target else { return }
-        // First time with a REAL band: its data replaces the demo month, so the two never mix.
-        if !usingSimulatedBand && Self.pairedBand(in: context) == nil {
-            try? PulseStore.deleteAllHealthData(in: context)
-            DataSourceSetting.current = .band
-        }
         let record = Self.pairedBand(in: context) ?? {
             let created = BandRecord(peripheralID: target.id, name: target.name)
             context.insert(created)
@@ -211,16 +251,42 @@ final class BandManager {
         let effects = fresh.start()
         session = fresh
         stage = .syncing
+        lastActivity = .now
         run(effects)
+        startWatchdog()
 
         // If the band never answers the clock question, download anyway after 3 seconds.
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
             guard let self, var current = self.session, current.phase == .hello else { return }
+            self.traceLine("No answer to GET_CLOCK after 3 s: downloading without setting the clock")
             let late = current.clockTimedOut()
             self.session = current
             self.run(late)
         }
+    }
+
+    // MARK: - Watchdog
+
+    private func startWatchdog() {
+        stopWatchdog()
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, var current = self.session, self.stage == .syncing else { continue }
+                guard Date.now.timeIntervalSince(self.lastActivity) > Self.stallSeconds else { continue }
+                self.traceLine("WATCHDOG: no data for \(Int(Self.stallSeconds)) s")
+                self.lastActivity = .now
+                let effects = current.stalled()
+                self.session = current
+                self.run(effects)
+            }
+        }
+    }
+
+    private func stopWatchdog() {
+        watchdog?.cancel()
+        watchdog = nil
     }
 
     // MARK: - Carrying out what the session asks for
@@ -242,39 +308,53 @@ final class BandManager {
                     record.firmwareVersion = newInfo.firmware
                 }
 
-            case .progress(let saved, _):
+            case .progress(let saved, let batches):
                 recordsSaved = saved
+                batchesSaved = batches
 
             case .liveHeartRate(let bpm):
                 liveHeartRate = bpm
 
             case .finished:
+                stopWatchdog()
                 finish()
 
             case .failed(let message):
+                stopWatchdog()
                 stage = .failed(message)
                 link?.disconnect()
+                if recordsSaved > 0 { recomputeSaved() }
 
             case .log(let entry):
                 log.append(entry)
                 if log.count > Self.logLimit { log.removeFirst(log.count - Self.logLimit) }
+
+            case .trace(let line):
+                trace.add(line, at: Date().timeIntervalSince1970)
             }
         }
+    }
+
+    private func traceLine(_ line: String) {
+        trace.add(line, at: Date().timeIntervalSince1970)
     }
 
     /// Saves one batch on a background thread. Only when that is done does the band get its ack.
     private func save(_ records: [Whoop.HistoryRecord], token: [UInt8]) {
         guard let context else { return }
         let container = context.container
-        let source: DataSource = usingSimulatedBand ? .simulated : .history
+        let started = Date.now
         Task { [weak self] in
             do {
-                try await BandImporter(modelContainer: container).save(records, source: source)
+                try await BandImporter(modelContainer: container).save(records, source: .history)
                 guard let self, var current = self.session else { return }
+                self.traceLine("SAVED \(records.count) records in \(Int(Date.now.timeIntervalSince(started) * 1000)) ms: sending ack")
+                self.lastActivity = .now
                 let effects = current.didPersist(token: token, recordCount: records.count)
                 self.session = current
                 self.run(effects)
             } catch {
+                self?.traceLine("SAVE FAILED: \(error.localizedDescription)")
                 self?.stage = .failed("Could not save the band's data: \(error.localizedDescription)")
                 self?.link?.disconnect()
             }
@@ -284,6 +364,7 @@ final class BandManager {
     /// History is complete: recalculate every metric from the new raw data, then update the screens.
     private func finish() {
         guard let context else { return }
+        traceLine("HISTORY_COMPLETE: \(recordsSaved) records in \(batchesSaved) batches. Recalculating.")
         let container = context.container
         let profile = ProfileStore.current(in: context).metricsProfile
         Task { [weak self] in
@@ -312,17 +393,19 @@ final class BandManager {
             }
         }
     }
-}
 
-/// Where the numbers on screen come from. Remembered between launches (a UI setting, not health
-/// data, so UserDefaults is the right place).
-enum DataSourceSetting: String {
-    case demo, band
-
-    private static let key = "dataSource"
-
-    static var current: DataSourceSetting {
-        get { DataSourceSetting(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .demo }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    /// The sync stopped early, but some batches are safely saved: show them anyway.
+    /// The stage stays `.failed` so the screen still says what went wrong.
+    private func recomputeSaved() {
+        guard let context else { return }
+        traceLine("Recalculating with the \(recordsSaved) records saved before the sync stopped")
+        let container = context.container
+        let profile = ProfileStore.current(in: context).metricsProfile
+        Task { [weak self] in
+            guard let output = try? await MetricsRecomputer(modelContainer: container)
+                .run(profile: profile, calendar: .current, now: .now, detectWorkouts: true) else { return }
+            try? PulseStore.apply(output, to: context)
+            self?.onDataChanged?()
+        }
     }
 }

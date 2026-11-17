@@ -14,7 +14,7 @@ struct WelcomeView: View {
         ("lock.shield", "Your data\nstays yours",
          "Everything is calculated on this iPhone. Pulse talks to your band directly over Bluetooth, never to anyone's servers unless you turn on a connection yourself."),
         ("flask", "Honest\nnumbers",
-         "Until your band is paired, Pulse shows a simulated month so you can explore. Every formula is documented, and Pulse is for general wellness, not medical advice."),
+         "Pulse only shows what your band actually recorded: no made-up numbers. Every formula is documented, and Pulse is for general wellness, not medical advice."),
     ]
 
     private var isLastPage: Bool { page >= pages.count - 1 }

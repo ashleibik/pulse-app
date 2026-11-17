@@ -115,9 +115,6 @@ struct MetricExplainerView: View {
                 }
                 block("How we calculate it", kind.method)
                 VStack(alignment: .leading, spacing: DS.Space.s) {
-                    if today?.isSimulated == true {
-                        Text("Until your band is paired, the heartbeats are simulated, but every number here is calculated by the real engine.")
-                    }
                     Text("Pulse is for general wellness, not medical advice.")
                 }
                 .textStyle(.caption)

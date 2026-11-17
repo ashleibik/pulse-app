@@ -15,6 +15,7 @@ struct SessionHarness {
     var failure: String?
     var lastInfo: BandSession.Info?
     var logLines = 0
+    var trace: [String] = []
     var progressReports = 0
 
     init(band: SimulatedBand, now: Double) {
@@ -51,6 +52,7 @@ struct SessionHarness {
             case .finished(let records): finishedRecords = records
             case .failed(let message): failure = message
             case .log: logLines += 1
+            case .trace(let line): trace.append(line)
             }
         }
     }
@@ -100,8 +102,12 @@ struct SessionHarness {
     frame[frame.count - 1] ^= 0xFF                              // break the checksum
     let effects = session.receive(characteristic: Whoop.eventsUUID.uppercased(), bytes: frame, now: 0)
     #expect(session.badFrames == 1)
-    #expect(effects.count == 1)
-    if case .log(let entry) = effects[0] {
+    let logs = effects.filter { if case .log = $0 { true } else { false } }
+    #expect(logs.count == 1)
+    // The sync log says exactly which check failed.
+    let traces = effects.compactMap { if case .trace(let line) = $0 { line } else { nil } }
+    #expect(traces.contains { $0.contains("crc8=ok crc32=FAIL") })
+    if case .log(let entry) = logs[0] {
         #expect(!entry.crcOK && entry.channel == "EVENT")
     } else {
         Issue.record("expected a log line")
@@ -199,4 +205,18 @@ struct SessionHarness {
                                       end: dataset.minutes[0].start.addingTimeInterval(1800),
                                       minutes: dataset.minutes, restingHeartRate: 55)
     #expect(demo.source == .simulated)
+}
+
+@Test func syncLogShowsEveryNotificationAndSplitFrames() {
+    var session = BandSession()
+    _ = session.start()
+    let frame = Whoop.buildFrame(inner: [Whoop.PacketType.event.rawValue, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    // One frame split across two notifications, like a small MTU does.
+    let first = session.receive(characteristic: Whoop.eventsUUID, bytes: Array(frame[0..<6]), now: 0)
+    let second = session.receive(characteristic: Whoop.eventsUUID, bytes: Array(frame[6...]), now: 0)
+    let a = first.compactMap { if case .trace(let line) = $0 { line } else { nil } }
+    let b = second.compactMap { if case .trace(let line) = $0 { line } else { nil } }
+    #expect(a.first?.hasPrefix("RX EVENT") == true && a.first?.contains("len=6") == true)
+    #expect(a.contains { $0.contains("WAITING 6 bytes") })
+    #expect(b.contains { $0.contains("FRAME") && $0.contains("crc8=ok crc32=ok") })
 }

@@ -5,10 +5,8 @@ import PulseCore
 // The "wire" to a band: bytes out, bytes in. Nothing in this file understands the protocol;
 // that is PulseCore's job (BandSession), which is tested without hardware.
 //
-// Two implementations:
-//   BluetoothBandLink  - the real thing (CoreBluetooth). ⚠ Never run against a real band yet.
-//   SimulatedBandLink  - PulseCore's SimulatedBand, so the whole pipeline can be tried in the
-//                        simulator and before the band arrives.
+// BluetoothBandLink is the only implementation (CoreBluetooth). The simulated band that used to
+// live here is gone: it exists only in PulseCore's unit tests now.
 
 /// A band seen while scanning.
 struct DiscoveredBand: Identifiable, Equatable {
@@ -37,6 +35,8 @@ enum BandLinkEvent {
     /// Connected, characteristics found, notifications switched on: ready for commands.
     case connected
     case notification(characteristic: String, bytes: [UInt8])
+    /// A line for the sync log (services found, subscriptions, MTU). No effect on the sync.
+    case note(String)
     /// `nil` = we disconnected on purpose.
     case disconnected(String?)
 }
@@ -190,6 +190,8 @@ final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBP
             central?.cancelPeripheralConnection(peripheral)
             return
         }
+        let all = (peripheral.services ?? []).map { $0.uuid.uuidString.lowercased() }.joined(separator: ", ")
+        onEvent?(.note("Services: \(all)"))
         for service in bandServices { peripheral.discoverCharacteristics(nil, for: service) }
     }
 
@@ -197,6 +199,12 @@ final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBP
         let notifying = [Whoop.cmdFromStrapUUID, Whoop.eventsUUID, Whoop.dataUUID]
         for characteristic in service.characteristics ?? [] {
             let uuid = characteristic.uuid.uuidString.lowercased()
+            let props = characteristic.properties
+            let flags = [props.contains(.read) ? "read" : nil, props.contains(.write) ? "write" : nil,
+                         props.contains(.writeWithoutResponse) ? "writeNoResp" : nil,
+                         props.contains(.notify) ? "notify" : nil, props.contains(.indicate) ? "indicate" : nil]
+                .compactMap { $0 }.joined(separator: "/")
+            onEvent?(.note("Characteristic \(uuid) [\(flags)]\(notifying.contains(uuid) ? " -> subscribing" : "")\(uuid == Whoop.cmdToStrapUUID ? " -> command channel" : "")"))
             if uuid == Whoop.cmdToStrapUUID { commandCharacteristic = characteristic }
             if notifying.contains(uuid) {
                 notifyPending += 1
@@ -214,99 +222,20 @@ final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBP
             onEvent?(.disconnected("The band refused notifications: \(error.localizedDescription)"))
             return
         }
+        onEvent?(.note("Notifications \(characteristic.isNotifying ? "on" : "off") for \(characteristic.uuid.uuidString.lowercased())"))
         notifyPending -= 1
-        if notifyPending == 0 && commandCharacteristic != nil { onEvent?(.connected) }
+        if notifyPending == 0 && commandCharacteristic != nil {
+            // How big one notification / write can be on this connection. History frames are often
+            // bigger than this, so they arrive split across notifications (the reassembler joins them).
+            let noResponse = peripheral.maximumWriteValueLength(for: .withoutResponse)
+            let withResponse = peripheral.maximumWriteValueLength(for: .withResponse)
+            onEvent?(.note("MTU: \(noResponse) bytes per packet (ATT MTU ≈ \(noResponse + 3)), \(withResponse) bytes per write with response"))
+            onEvent?(.connected)
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let data = characteristic.value else { return }
         onEvent?(.notification(characteristic: characteristic.uuid.uuidString.lowercased(), bytes: [UInt8](data)))
-    }
-}
-
-// MARK: - Simulated band
-
-/// A pretend band, for the simulator and for trying the app before the real band arrives.
-/// It "replays" minutes handed to it as if the band had recorded them, byte for byte through the
-/// same protocol code as the real band.
-final class SimulatedBandLink: BandLink {
-    /// Fixed identifier, so the app can tell the simulated band from a real one.
-    static let bandID = UUID(uuidString: "00000000-0000-4000-8000-0000000051AB")!
-    static let bandName = "Simulated band"
-
-    var onEvent: ((BandLinkEvent) -> Void)?
-
-    /// Gives the minutes the band should have "recorded" (the last two days of stored data).
-    private let recordedMinutes: () -> [MinuteSample]
-    private var band: SimulatedBand?
-    private var outbox: AsyncStream<[SimulatedBand.Notification]>.Continuation?
-    private var pump: Task<Void, Never>?
-    /// Sends a made-up live heart rate once a second while the app has asked for the stream.
-    private var liveTask: Task<Void, Never>?
-
-    init(recordedMinutes: @escaping () -> [MinuteSample]) {
-        self.recordedMinutes = recordedMinutes
-    }
-
-    func startScanning() {
-        onEvent?(.availability(.ready))
-        // A short pause, so the "Searching" state is visible like with a real band.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(700))
-            self?.onEvent?(.discovered(DiscoveredBand(id: Self.bandID, name: Self.bandName, signal: -48)))
-        }
-    }
-
-    func stopScanning() {}
-
-    func connect(to id: UUID) {
-        let samples = SimulatedBand.samples(from: recordedMinutes())
-        band = SimulatedBand(samples: samples, batchSize: 3600, mtuPayload: 244,
-                             clock: UInt32(Date().timeIntervalSince1970))
-        // One consumer delivers notifications in order, yielding often so the screen stays responsive.
-        let (stream, continuation) = AsyncStream<[SimulatedBand.Notification]>.makeStream()
-        outbox = continuation
-        pump = Task { @MainActor [weak self] in
-            for await batch in stream {
-                for (index, notification) in batch.enumerated() {
-                    guard let self, !Task.isCancelled else { return }
-                    self.onEvent?(.notification(characteristic: notification.characteristic, bytes: notification.bytes))
-                    if index % 100 == 99 { await Task.yield() }
-                }
-            }
-        }
-        onEvent?(.connected)
-    }
-
-    func disconnect() {
-        pump?.cancel()
-        liveTask?.cancel()
-        liveTask = nil
-        outbox?.finish()
-        band = nil
-        onEvent?(.disconnected(nil))
-    }
-
-    func write(_ bytes: [UInt8]) {
-        guard var simulated = band else { return }
-        let notifications = simulated.receive(write: bytes)
-        band = simulated
-        outbox?.yield(notifications)
-        if simulated.realtimeOn, liveTask == nil {
-            liveTask = Task { @MainActor [weak self] in
-                var heartRate = 96.0
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(1))
-                    guard let self, self.band?.realtimeOn == true else { return }
-                    heartRate = min(168, max(88, heartRate + Double.random(in: -3...4)))
-                    let frame = SimulatedBand.realtimeFrame(timestamp: UInt32(Date().timeIntervalSince1970),
-                                                            heartRate: UInt8(heartRate))
-                    self.outbox?.yield([SimulatedBand.Notification(characteristic: Whoop.dataUUID, bytes: frame)])
-                }
-            }
-        } else if !simulated.realtimeOn {
-            liveTask?.cancel()
-            liveTask = nil
-        }
     }
 }

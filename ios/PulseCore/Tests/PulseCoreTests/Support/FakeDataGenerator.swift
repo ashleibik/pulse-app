@@ -1,4 +1,7 @@
 import Foundation
+@testable import PulseCore
+
+// TEST SUPPORT ONLY. Lives in the test target, so it can never be part of the app build.
 
 /// Settings for the fake data generator.
 public struct FakeDataConfig: Sendable {
