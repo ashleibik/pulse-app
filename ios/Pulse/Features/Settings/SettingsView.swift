@@ -12,9 +12,11 @@ struct SettingsView: View {
     @Environment(HealthExporter.self) private var health
     @Query private var profiles: [ProfileRecord]
     @Query private var bands: [BandRecord]
+    @Query private var sleepCorrections: [SleepCorrectionRecord]
+    @State private var showMotionCheck = false
     @State private var remindersOn = UserDefaults.standard.bool(forKey: "remindersEnabled")
-    /// The export file, once it has been written.
-    @State private var exportURL: URL?
+    /// What the last backup export or import did.
+    @State private var backupMessage: String?
     @State private var confirmForget = false
     @State private var confirmDelete = false
     @State private var showPairing = false
@@ -58,6 +60,16 @@ struct SettingsView: View {
                     }
                     .disabled(health.status == .working || !health.isAvailable)
                     .padding(.top, DS.Space.m)
+                    Toggle(isOn: Binding(get: { health.writesSleepStages },
+                                         set: { on in Task { await health.setWritesSleepStages(on, context: context) } })) {
+                        Text("Write sleep stages to Apple Health (estimated)")
+                            .textStyle(.body)
+                            .foregroundStyle(DS.Colors.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .tint(DS.Colors.accent)
+                    .disabled(health.status == .working)
+                    .padding(.top, DS.Space.m)
                 }
 
                 CloudSettingsView()
@@ -81,13 +93,13 @@ struct SettingsView: View {
                     .padding(.top, DS.Space.m)
                 }
 
-                SettingsSection("Your data", footer: "The export is one readable file with your days, nights, workouts and journal. Raw heartbeats are not included.") {
-                    if let exportURL {
-                        ShareLink(item: exportURL) { Text("Share the export file") }
+                SettingsSection("Your data", footer: backupMessage ?? "The backup is one JSON file with all your band data, workouts, journal and profile. Use it to move Pulse to a new install. Importing adds to what is here and never deletes anything.") {
+                    BackupButtons(message: $backupMessage)
+                    if !sleepCorrections.isEmpty {
+                        Button("Undo my sleep edits (\(sleepCorrections.count))") { undoSleepEdits() }
                             .buttonStyle(.secondaryPill)
-                    } else {
-                        Button("Export my data") { export() }
-                            .buttonStyle(.secondaryPill)
+                            .disabled(loader.isBusy)
+                            .padding(.top, DS.Space.s)
                     }
                     Button("Delete all band data") { confirmDelete = true }
                         .buttonStyle(.secondaryPill)
@@ -157,6 +169,7 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showPairing) { PairingView() }
         .sheet(isPresented: $showLog) { BandLogView() }
+        .sheet(isPresented: $showMotionCheck) { MotionCheckView() }
         .task {
             if profiles.isEmpty { _ = ProfileStore.current(in: context) }
         }
@@ -168,7 +181,7 @@ struct SettingsView: View {
         case .working: "Exporting…"
         case .done(let message): message
         case .failed(let message): message
-        case .idle: "Saves sleep, resting heart rate and workouts to Apple Health. Pulse never reads from Apple Health."
+        case .idle: "Backs up sleep (asleep and awake), heart rate, resting heart rate, HRV and workouts. Sleep stages are estimates from heart rate and motion, so they stay in Pulse unless you turn them on. Steps and calories are never written. Pulse reads Apple Health only to avoid duplicates."
         }
     }
 
@@ -176,7 +189,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var bandSection: some View {
         if let record = bands.first {
-            SettingsSection("Band", footer: "Pulse stays connected and pulls new data by itself every few minutes. \"Sync now\" and the sync log are for troubleshooting. Pulse talks to the band directly over Bluetooth and never to WHOOP's servers.") {
+            SettingsSection("Band", footer: "Pulse stays connected and pulls new data by itself every few minutes. These tools are for troubleshooting. Pulse talks to the band directly over Bluetooth and never to WHOOP's servers.") {
                 ValueRow(label: "Name", value: record.name)
                 Hairline()
                 ValueRow(label: "Connection", value: band.statusLine, emphasized: band.isConnected)
@@ -194,19 +207,27 @@ struct SettingsView: View {
                 dataStartRow
                 Hairline()
                 HStack(spacing: DS.Space.s) {
-                    Button("Sync now") {
-                        band.syncNow(context: context)
-                        showPairing = true
-                    }
-                    .buttonStyle(.secondaryPill)
-                    .disabled(band.stage == .syncing)
+                    // Works in place: the Connection row above shows how it goes.
+                    Button("Sync now") { band.syncNow(context: context) }
+                        .buttonStyle(.secondaryPill)
+                        .disabled(band.stage == .syncing)
                     Button("Forget") { confirmForget = true }
                         .buttonStyle(.secondaryPill)
                         .disabled(band.stage == .syncing)
                 }
                 .padding(.top, DS.Space.m)
+                // One manual sync below the low-battery threshold. Automatic syncs still pause.
+                if case .paused = band.stage {
+                    Button("Sync anyway") { band.syncNow(context: context, overrideLowBattery: true) }
+                        .buttonStyle(.secondaryPill)
+                        .padding(.top, DS.Space.s)
+                }
                 // Every packet of the last sync, exportable as a text file (for debugging).
                 Button("Sync log") { showLog = true }
+                    .buttonStyle(.secondaryPill)
+                    .padding(.top, DS.Space.s)
+                // Do the band's motion readings change when you move?
+                Button("Motion check") { showMotionCheck = true }
                     .buttonStyle(.secondaryPill)
                     .padding(.top, DS.Space.s)
             }
@@ -221,18 +242,16 @@ struct SettingsView: View {
         }
     }
 
-    /// Writes the export file to a temporary folder, ready for the share sheet.
-    private func export() {
-        let days = ((try? context.fetch(FetchDescriptor<DaySummaryRecord>())) ?? []).map(\.value)
-        let sleeps = ((try? context.fetch(FetchDescriptor<SleepRecord>())) ?? []).map(\.value)
-        let workouts = ((try? context.fetch(FetchDescriptor<WorkoutRecord>())) ?? []).map(\.value)
-        var journal: [Date: Set<Habit>] = [:]
-        for record in (try? context.fetch(FetchDescriptor<JournalRecord>())) ?? [] { journal[record.day] = record.habits }
-        guard let data = try? DataExport.json(days: days, sleeps: sleeps, workouts: workouts, journal: journal,
-                                              calendar: .current, now: .now) else { return }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-export.json")
-        try? data.write(to: url, options: .atomic)
-        exportURL = url
+    /// Back to what Pulse detected by itself.
+    private func undoSleepEdits() {
+        let changed = sleepCorrections.map(\.value)
+        for record in sleepCorrections { context.delete(record) }
+        try? context.save()
+        guard let from = changed.map(\.detectedStart).min(), let to = changed.map(\.detectedEnd).max() else { return }
+        Task {
+            await loader.recompute(context: context)
+            await health.sleepChanged(from: from, to: to, context: context)
+        }
     }
 
     private var appVersion: String {
@@ -310,7 +329,7 @@ private struct ProfileSection: View {
     private static let years: [Int] = Array(((currentYear - 90)...(currentYear - 13)).reversed())
 
     var body: some View {
-        SettingsSection("Profile", footer: "Used only for the formulas: max heart rate is estimated from age (208 − 0.7 × age), sex picks the strain coefficients, and the goal is your baseline sleep need. Stays on this iPhone.") {
+        SettingsSection("Profile", footer: "Used only for the formulas: max heart rate is estimated from age (208 − 0.7 × age), sex picks the strain coefficients, the goal is your baseline sleep need, and weight and height feed the calorie estimate. Stays on this iPhone.") {
             pickerRow("Birth year") {
                 Picker("Birth year", selection: Binding(
                     get: { profile.birthYear ?? 0 },
@@ -327,6 +346,24 @@ private struct ProfileSection: View {
                     Text("Not specified").tag(BiologicalSex.unspecified)
                     Text("Female").tag(BiologicalSex.female)
                     Text("Male").tag(BiologicalSex.male)
+                }
+            }
+            Hairline()
+            pickerRow("Weight") {
+                Picker("Weight", selection: Binding(
+                    get: { Int(profile.weightKg?.rounded() ?? 0) },
+                    set: { profile.weightKg = $0 == 0 ? nil : Double($0) })) {
+                    Text("Not set").tag(0)
+                    ForEach(Array(30...250), id: \.self) { Text("\($0) kg").tag($0) }
+                }
+            }
+            Hairline()
+            pickerRow("Height") {
+                Picker("Height", selection: Binding(
+                    get: { Int(profile.heightCm?.rounded() ?? 0) },
+                    set: { profile.heightCm = $0 == 0 ? nil : Double($0) })) {
+                    Text("Not set").tag(0)
+                    ForEach(Array(120...230), id: \.self) { Text("\($0) cm").tag($0) }
                 }
             }
             Hairline()

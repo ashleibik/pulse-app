@@ -57,7 +57,7 @@ WHOOP band --Bluetooth--> BandSession (decode, checksums, command allowlist)
                               v
                     MetricsEngine + WorkoutDetector (pure Swift, tested)
                               v
-        SwiftUI screens ----> Apple Health (sleep, resting HR, workouts; write only)
+        SwiftUI screens ----> Apple Health (sleep, heart rate, resting HR, HRV, workouts)
                               |
                               v  summaries only, if you turn it on
         your Supabase project --> MCP server --> Claude        (read only)

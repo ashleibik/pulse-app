@@ -148,6 +148,7 @@ final class SyncWorker: @unchecked Sendable {
     private func save(_ records: [Whoop.HistoryRecord], token: [UInt8]) {
         let importer = self.importer
         let started = Date()
+        trace.add(MotionCheck.traceLine(records), at: started.timeIntervalSince1970)
         Task.detached { [self] in
             do {
                 try await importer.save(records, source: .history)

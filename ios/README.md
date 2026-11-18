@@ -88,18 +88,23 @@ band  --Bluetooth-->  BandLink        bytes in / out                 (app, CoreB
 
 ## Apple Health (Phase 6)
 
-Settings > Apple Health > *Turn on*. Pulse asks for **write access only** and never reads from
-Apple Health.
+Settings > Apple Health > *Turn on*. Pulse reads Apple Health only to avoid writing something twice.
 
 | Written | Not written, and why |
 |---|---|
-| Sleep: in bed, asleep, awake | Sleep stages (REM / deep): Pulse does not measure them |
-| Resting heart rate, one per day | HRV: Apple Health stores SDNN, Pulse calculates RMSSD (different numbers) |
-| Workouts: type, start, end | Calories: only a rough guess |
+| Sleep: in bed, asleep, awake | Sleep stages, unless you turn on *Write sleep stages to Apple Health (estimated)*. REM is never written |
+| Heart rate, one sample per worn minute | Steps and active energy: the Apple Watch owns those |
+| Resting heart rate, one per day | Calories: the estimate stays in the app |
+| HRV as SDNN, one per night, from the real beats (no beats, no sample) | |
+| Workouts: type, start, end | |
 
-- **Demo and simulated data are never exported** (rule and test: `HealthExport` in PulseCore).
-- Exporting twice does not duplicate: Pulse first deletes what it wrote before for the same time span.
-- After every band sync the last 3 days are exported again. *Export all* sends the whole history.
+- With that setting on, light is written as Core and restful as Deep. They are **estimates** from heart
+  rate and motion, so the setting stays off until the stages have been validated.
+- **Simulated data and data from before the cutoff are never exported** (`HealthExport` in PulseCore).
+- **No duplicates:** stable sync identifiers, a ledger of what was written, and a workout the Apple
+  Watch already recorded is skipped. Samples from an earlier install of Pulse are left alone.
+- After every band sync and when the app opens, what is new or changed is written. *Export all* goes
+  through the whole history.
 - **Not tested on a real iPhone yet.** It needs the signed app with the HealthKit capability
   (`Pulse/Pulse.entitlements`); the unsigned CI builds can't exercise it.
 
@@ -134,8 +139,11 @@ keeps HealthKit, if you ever want that.
 
 ## Widget and background sync
 
-- **Widget:** long-press the home screen > **+** > Pulse. Small (recovery ring), medium (recovery,
-  strain, sleep), and three lock screen sizes. The app writes today's numbers into a shared App
+- **Moving to a new install (SideStore):** Settings > Your data > *Export all data*, save the file to
+  Files, install the new build (same bundle ID, `dev.pulse.app`), then *Import data*. The file holds raw
+  band data, workouts, journal, profile and the data cutoff. Importing twice changes nothing.
+- **Widget:** long-press the home screen > **+** > Pulse. Last night's recovery, sleep score and sleep
+  time: small, medium, and three lock screen sizes. The app writes the numbers into a shared App
   Group after every change; the widget only displays them. If the widget says "Open Pulse once",
   open the app; if it still says that, the sideloading tool did not keep the App Group (see below).
 - **Background sync:** iOS wakes Pulse now and then (iOS picks the time, roughly hourly at best) to

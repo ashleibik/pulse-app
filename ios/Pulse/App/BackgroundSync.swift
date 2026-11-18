@@ -76,16 +76,22 @@ enum BackgroundSync {
     }
 }
 
-/// Writes today's numbers for the widget and asks iOS to redraw it.
+/// Writes last night's numbers for the widget and asks iOS to redraw it.
 @MainActor
 enum WidgetBridge {
     static func publish(context: ModelContext) {
-        var newest = FetchDescriptor<DaySummaryRecord>(sortBy: [SortDescriptor(\.date, order: .reverse)])
-        newest.fetchLimit = 1
-        guard let today = try? context.fetch(newest).first else { return }
-        let snapshot = WidgetSnapshot(day: today.date, recovery: today.recoveryScore, zone: today.zone?.rawValue,
-                                      word: today.zone?.word ?? "Learning", strain: today.strain,
-                                      sleepMinutes: today.sleepMinutes,
+        let days = (try? context.fetch(FetchDescriptor<DaySummaryRecord>())) ?? []
+        guard let night = LastNight.day(in: days.map(\.value)),
+              let record = days.first(where: { $0.date == night.date }) else {
+            // No night yet: the widget shows empty values, never made-up ones.
+            if WidgetSnapshot.empty.save() { WidgetCenter.shared.reloadAllTimelines() }
+            return
+        }
+        let sleeps = (try? context.fetch(FetchDescriptor<SleepRecord>())) ?? []
+        let snapshot = WidgetSnapshot(day: record.date, recovery: record.recoveryScore,
+                                      sleepScore: NightVitals.performance(for: record, sleeps: sleeps)?.score,
+                                      zone: record.zone?.rawValue, word: record.zone?.word ?? "Learning",
+                                      strain: record.strain, sleepMinutes: record.sleepMinutes,
                                       simulated: false, updated: .now)
         if snapshot.save() { WidgetCenter.shared.reloadAllTimelines() }
     }

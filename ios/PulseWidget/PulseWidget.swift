@@ -1,7 +1,7 @@
 import WidgetKit
 import SwiftUI
 
-// Home screen + lock screen widget: today's recovery, strain and sleep.
+// Home screen + lock screen widget: last night's recovery, sleep score and sleep time.
 // It never computes anything itself: it shows the snapshot the app wrote (Shared/WidgetSnapshot.swift).
 
 struct PulseEntry: TimelineEntry {
@@ -12,12 +12,12 @@ struct PulseEntry: TimelineEntry {
 
 struct PulseProvider: TimelineProvider {
     func placeholder(in context: Context) -> PulseEntry {
-        PulseEntry(date: .now, snapshot: .sample)
+        PulseEntry(date: .now, snapshot: .empty)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (PulseEntry) -> Void) {
         let stored = WidgetSnapshot.load()
-        completion(PulseEntry(date: .now, snapshot: context.isPreview ? (stored ?? .sample) : stored))
+        completion(PulseEntry(date: .now, snapshot: context.isPreview ? (stored ?? .empty) : stored))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<PulseEntry>) -> Void) {
@@ -116,13 +116,13 @@ struct PulseWidgetView: View {
                 Text("Recovery \(s.recoveryText) · \(s.word)")
                     .font(.headline)
                     .widgetAccentable()
-                Text("Strain \(String(format: "%.1f", s.strain))")
-                Text("Sleep \(s.sleepText)")
+                Text("Sleep score \(s.sleepScoreText)")
+                Text("Slept \(s.sleepText)")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
         case .accessoryInline:
-            Text("Recovery \(s.recoveryText) · \(s.word)")
+            Text("Recovery \(s.recoveryText) · Sleep \(s.sleepScoreText)")
 
         case .systemMedium:
             HStack(spacing: 16) {
@@ -132,23 +132,40 @@ struct PulseWidgetView: View {
                     Text(s.word.uppercased())
                         .font(numberFont(22))
                         .foregroundStyle(Glow.zone(s.zone))
-                    stat("Strain", String(format: "%.1f", s.strain))
-                    stat("Sleep", s.sleepText)
+                    stat("Sleep score", s.sleepScoreText)
+                    stat("Sleep time", s.sleepText)
                     footer(s)
                 }
                 Spacer(minLength: 0)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(spokenSummary(s))
 
         default:    // systemSmall
             VStack(spacing: 6) {
-                Ring(snapshot: s)
-                Text(s.word.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(Glow.zone(s.zone))
+                Ring(snapshot: s, lineWidth: 5, numberSize: 24)
+                HStack(spacing: 8) {
+                    smallStat("Sleep", s.sleepScoreText)
+                    smallStat("Time", s.sleepText)
+                }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Recovery \(s.recoveryText), \(s.word)")
+            .accessibilityLabel(spokenSummary(s))
+        }
+    }
+
+    private func spokenSummary(_ s: WidgetSnapshot) -> String {
+        "Recovery \(s.recoveryText), \(s.word). Sleep score \(s.sleepScoreText), slept \(s.sleepText)."
+    }
+
+    private func smallStat(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 0) {
+            Text(value)
+                .font(numberFont(15))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            CapsLabel(text: label)
         }
     }
 
@@ -161,11 +178,10 @@ struct PulseWidgetView: View {
         }
     }
 
-    /// "Updated 7:42" (or "Demo data"), so an old number is never mistaken for a fresh one.
+    /// "Updated 7:42", or the day it is from, so an old number is never mistaken for a fresh one.
     private func footer(_ s: WidgetSnapshot) -> some View {
         let isToday = Calendar.current.isDateInToday(s.day)
-        let text = s.simulated ? "Demo data"
-            : isToday ? "Updated \(s.updated.formatted(date: .omitted, time: .shortened))"
+        let text = isToday ? "Updated \(s.updated.formatted(date: .omitted, time: .shortened))"
             : "From \(s.day.formatted(.dateTime.weekday(.abbreviated)))"
         return Text(text)
             .font(.system(size: 11))
@@ -200,8 +216,8 @@ struct PulseWidget: Widget {
             PulseWidgetView(entry: entry)
                 .containerBackground(Glow.background, for: .widget)
         }
-        .configurationDisplayName("Recovery")
-        .description("Today's recovery, strain and sleep.")
+        .configurationDisplayName("Last night")
+        .description("Last night's recovery, sleep score and sleep time.")
         .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular, .accessoryInline])
     }
 }

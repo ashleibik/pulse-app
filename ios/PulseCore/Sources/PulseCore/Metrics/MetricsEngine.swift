@@ -22,11 +22,16 @@ public struct MetricsResult: Sendable {
 ///
 /// Steps (docs/METRICS.md):
 ///   1. lay the minutes on a gap-aware timeline (missing minutes = not worn)
-///   2. detect sleep (Cole-Kripke + HR gate) and group into sessions
+///   2. detect sleep (Cole-Kripke + HR gate), group into sessions, confirm them, keep the finished
+///      ones, and apply what the user corrected
 ///   3. for each calendar day: main sleep -> resting HR + overnight HRV
 ///   4. baseline = previous 14 days; sleep need; recovery; day strain; plain-language explanation
 public enum MetricsEngine {
-    public static let algorithmVersion = 1
+    /// 2: sleeps must be confirmed and finished (docs/METRICS.md §4, steps 6-9).
+    public static let algorithmVersion = 2
+    /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v1.json).
+    /// The confirmation stage on top of them is Swift only.
+    public static let sharedFormulaVersion = 1
     public static let baselineDays = 14
 
     /// Minute-by-minute arrays with no gaps.
@@ -61,8 +66,25 @@ public enum MetricsEngine {
         return t
     }
 
+    /// The user's corrections, oldest first, on top of what was detected.
+    static func applying(_ corrections: [SleepCorrection], to detected: [SleepDetector.Session], timeline tl: Timeline,
+                         asleep: [Bool]) -> [SleepDetector.Session] {
+        var sessions = detected
+        let moving = SleepDetector.coleKripke(tl.activity)
+        for correction in corrections.sorted(by: { $0.createdAt < $1.createdAt }) {
+            sessions.removeAll { correction.applies(toStart: tl.date($0.start), end: tl.date($0.end)) }
+            guard let start = correction.start, let end = correction.end else { continue }
+            let from = max(0, tl.index(start)), to = min(tl.count, tl.index(end))
+            guard from < to else { continue }
+            // The user says this was sleep: only minutes that clearly moved count as awake.
+            let flags = tl.hr.indices.map { asleep[$0] || moving[$0] < 1 }
+            sessions.append(SleepDetector.session(start: from, end: to, asleep: flags))
+        }
+        return sessions.sorted { $0.start < $1.start }
+    }
+
     public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
-                           calendar: Calendar, now: Date) -> MetricsResult {
+                           calendar: Calendar, now: Date, corrections: [SleepCorrection] = []) -> MetricsResult {
         guard let tl = timeline(minutes) else { return MetricsResult(sleeps: [], days: []) }
 
         // 1-2. Sleep. HR threshold per 24 h block starting at local noon (docs/METRICS.md §4).
@@ -71,7 +93,12 @@ public enum MetricsEngine {
         if anchor > tl.start { anchor = calendar.date(byAdding: .day, value: -1, to: anchor)! }
         let blocks = (0..<tl.count).map { Int((tl.date($0).timeIntervalSince(anchor) / 86_400).rounded(.down)) }
         let asleep = SleepDetector.classify(hr: tl.hr, activity: tl.activity, blocks: blocks)
-        let found = SleepDetector.sessions(asleep)
+        let finished = SleepDetector.confirmed(SleepDetector.sessions(asleep), asleep: asleep, hr: tl.hr, activity: tl.activity)
+            .filter { session in
+                SleepDetector.isFinished(session, asleep: asleep, hr: tl.hr, activity: tl.activity,
+                                         minutesSinceEnd: now.timeIntervalSince(tl.date(session.end)) / 60)
+            }
+        let found = applying(corrections, to: finished, timeline: tl, asleep: asleep)
         let sleeps = found.map { s -> SleepSession in
             // Deterministic ID from the start time: re-running the engine updates, not duplicates.
             var idSource = SeededRandom(seed: UInt64(bitPattern: Int64(tl.date(s.start).timeIntervalSince1970)))

@@ -84,6 +84,32 @@ final class SleepRecord {
     }
 }
 
+/// A sleep the user edited or said wasn't sleep. Sleeps are rebuilt from the raw minutes on every
+/// recalculation, so the user's word is kept here and applied on top each time.
+@Model
+final class SleepCorrectionRecord {
+    @Attribute(.unique) var id: UUID
+    var detectedStart: Date
+    var detectedEnd: Date
+    var start: Date?
+    var end: Date?
+    var createdAt: Date
+
+    init(_ c: SleepCorrection) {
+        id = c.id
+        detectedStart = c.detectedStart
+        detectedEnd = c.detectedEnd
+        start = c.start
+        end = c.end
+        createdAt = c.createdAt
+    }
+
+    var value: SleepCorrection {
+        SleepCorrection(id: id, detectedStart: detectedStart, detectedEnd: detectedEnd, start: start, end: end,
+                        createdAt: createdAt)
+    }
+}
+
 @Model
 final class WorkoutRecord {
     @Attribute(.unique) var id: UUID
@@ -216,6 +242,9 @@ final class ProfileRecord {
     var maxHeartRateOverride: Int?
     var sleepGoalMinutes: Int
     var sexRaw: String = BiologicalSex.unspecified.rawValue
+    /// For the calorie estimate. nil = not entered (no estimate is shown).
+    var weightKg: Double?
+    var heightCm: Double?
 
     init(sleepGoalMinutes: Int = 480) {
         self.sleepGoalMinutes = sleepGoalMinutes
@@ -238,6 +267,13 @@ final class ProfileRecord {
 
     var metricsProfile: MetricsProfile {
         MetricsProfile(maxHeartRate: estimatedMaxHeartRate(), sex: sex, sleepGoalMinutes: Double(sleepGoalMinutes))
+    }
+
+    /// What the calorie estimate needs. nil until all of it has been entered: nothing is guessed.
+    func calorieBody(now: Date = .now, calendar: Calendar = .current) -> DailyCalories.Body? {
+        guard let weightKg, let heightCm, let birthYear, sex != .unspecified else { return nil }
+        return DailyCalories.Body(weightKg: weightKg, heightCm: heightCm,
+                                  age: Double(calendar.component(.year, from: now) - birthYear), sex: sex)
     }
 }
 

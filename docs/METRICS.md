@@ -54,6 +54,11 @@ Lipponen & Tarvainen, *J Med Eng Technol* 2019; 43(3):173–181.
 few noisy segments. *Our choice:* WHOOP reportedly weights the last slow-wave sleep. We can't detect sleep stages
 reliably, so we use the whole night.
 
+**SDNN (Apple Health only):** Apple Health stores HRV as SDNN, so the backup calculates it separately. Same walk
+through the night; each 5-minute segment needs ≥ 120 clean beats, `SDNN = sample standard deviation` of those beats,
+and the night's value is the **median** of the segments (≥ 3 segments). RMSSD stays the number used inside Pulse.
+*Source:* Task Force 1996.
+
 ## 3. Resting heart rate
 
 The **lowest mean HR over any 10 consecutive asleep minutes** in the main sleep (awake/off-wrist minutes break
@@ -90,6 +95,26 @@ not worn).
    - Keep sessions spanning ≥ 20 minutes. A span under 180 minutes = **nap**.
    - Inside a session: `awake` = non-asleep minutes, `disturbances` = number of separate awake runs.
 5. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
+
+Steps 1–4 only find *candidates*. Sitting at a computer can pass them, so a candidate has to be confirmed
+(`SleepConfirmation.swift`, Swift only, algorithm v2):
+
+6. **Onset:** a sleep starts at the first minute of **45 minutes** (90 if the band reports no motion at all) in which
+   ≥ 85% of minutes have near-zero motion (`A ≤ 4`), no moving stretch is longer than 5 minutes, ≥ 85% of heart rates
+   are within 8 bpm of the median, no heart-rate surge (2+ minutes, 10+ bpm above the median) happens with a still
+   wrist, and the next 90 minutes hold at most one surge of any kind.
+7. **Heart rate:** the sleep's median HR must be at least **5 bpm or 8%** (whichever is more) below the median of calm
+   awake minutes in the 12 hours before it (after it, on the first night). Fewer than 25% of its minutes may be raised
+   10+ bpm, with at most 2 surges per hour. With no awake data to compare, only a span of 3+ hours counts.
+8. **End:** short awake bursts stay inside the sleep. **20 minutes** that are ≥ 70% moving end it.
+9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (moving, or HR 10+ bpm
+   above the sleep's), or the band was off the wrist for an hour, or 6 hours have passed without newer data.
+
+The user's edits ("I wasn't asleep", new start / end) are applied last and survive every recalculation.
+
+*Our choice:* all thresholds in steps 6–9. They are tuned on simulated nights and one reported real evening, and
+**must be checked against real nights**. Holding very still with a low heart rate for 45+ minutes can still look like
+sleep, which is why a sleep can be edited or removed.
 
 *Our choice:* the HR gate and the session rules. Actigraphy alone confuses "sitting still" with sleep; requiring
 a low HR fixes most of that. **Sleep stages (REM/deep) are deliberately not estimated:** HR + motion can't
@@ -144,6 +169,8 @@ and one SD better than normal scores about 84%.
 
 ## 8. Validation status
 
+(Calories are §9, below.)
+
 | Check | Status |
 |---|---|
 | Swift = Python on shared vectors | ✅ automated (both test suites) |
@@ -157,6 +184,21 @@ and one SD better than normal scores about 84%.
   must re-calibrate it with labelled real nights.
 - **The first 4 days show no recovery score** (no baseline yet). That's on purpose: a number with no baseline would
   be made up.
+
+## 9. Estimated daily calories (app only, never written to Apple Health)
+
+Needs weight, height, birth year and sex. Without them, or without band data for the day, nothing is shown.
+
+- **Resting (Mifflin–St Jeor):** `10 × kg + 6.25 × cm − 5 × age`, then `+ 5` (male) or `− 161` (female), per day.
+  Every minute of the day so far costs one 1440th of it.
+- **Active (Keytel):** for a worn minute with an average heart rate of **≥ 90 bpm**, in kcal/min:
+  male `(−55.0969 + 0.6309 × HR + 0.1988 × kg + 0.2017 × age) / 4.184`,
+  female `(−20.4022 + 0.4472 × HR − 0.1263 × kg + 0.074 × age) / 4.184`.
+  Only what it adds above the resting rate counts, and it never subtracts.
+
+*Sources:* Mifflin et al., *Am J Clin Nutr* 1990; 51:241–247. Keytel et al., *J Sports Sci* 2005; 23:289–297.
+*Our choice:* the 90 bpm threshold, because Keytel was derived from exercise and overstates low heart rates. It is an
+estimate and has not been compared with a calorimeter.
 
 ### Bugs the truth tests caught while building v1
 1. One HR threshold for the whole month split nights where resting HR ran a few beats high → per-noon-block threshold.

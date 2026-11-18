@@ -50,13 +50,35 @@ public enum HRV {
     ///   - asleep: one flag per minute (asleep AND band worn).
     public static func overnightRMSSD(minuteRR: [[Double]], asleep: [Bool],
                                       segmentMinutes: Int = 5, minSegments: Int = 3) -> Double? {
+        overnightMedian(minuteRR: minuteRR, asleep: asleep, segmentMinutes: segmentMinutes,
+                        minSegments: minSegments) { rmssd(cleanRR($0)) }
+    }
+
+    /// Standard deviation of the clean beats (sample SD, in ms). This is the kind of HRV Apple
+    /// Health stores. nil with fewer than `minBeats` clean beats.
+    public static func sdnn(_ rr: [Double?], minBeats: Int = 120) -> Double? {
+        let beats = rr.compactMap { $0 }
+        guard beats.count >= minBeats else { return nil }
+        return Stats.sampleSD(beats)
+    }
+
+    /// Overnight SDNN: median SDNN of 5-minute fully-asleep segments, walked the same way as
+    /// `overnightRMSSD`. nil if fewer than 3 segments have enough clean beats.
+    public static func overnightSDNN(minuteRR: [[Double]], asleep: [Bool],
+                                     segmentMinutes: Int = 5, minSegments: Int = 3) -> Double? {
+        overnightMedian(minuteRR: minuteRR, asleep: asleep, segmentMinutes: segmentMinutes,
+                        minSegments: minSegments) { sdnn(cleanRR($0)) }
+    }
+
+    private static func overnightMedian(minuteRR: [[Double]], asleep: [Bool], segmentMinutes: Int,
+                                        minSegments: Int, metric: ([Double]) -> Double?) -> Double? {
         var values: [Double] = []
         var i = 0
         let n = minuteRR.count
         while i + segmentMinutes <= n {
             if asleep[i..<(i + segmentMinutes)].allSatisfy({ $0 }) {
                 let beats = minuteRR[i..<(i + segmentMinutes)].flatMap { $0 }
-                if let v = rmssd(cleanRR(beats)) { values.append(v) }
+                if let v = metric(beats) { values.append(v) }
                 i += segmentMinutes
             } else {
                 i += 1

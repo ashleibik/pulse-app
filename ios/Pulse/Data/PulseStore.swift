@@ -6,7 +6,7 @@ import PulseCore
 enum PulseStore {
     static let schema = Schema([
         MinuteRecord.self, SleepRecord.self, WorkoutRecord.self, DaySummaryRecord.self,
-        BandRecord.self, ProfileRecord.self, PacketRecord.self, JournalRecord.self,
+        BandRecord.self, ProfileRecord.self, PacketRecord.self, JournalRecord.self, SleepCorrectionRecord.self,
     ])
 
     static func makeContainer(inMemory: Bool = false) -> ModelContainer {
@@ -41,6 +41,7 @@ enum PulseStore {
         try context.delete(model: SleepRecord.self)
         try context.delete(model: WorkoutRecord.self)
         try context.delete(model: DaySummaryRecord.self)
+        try context.delete(model: SleepCorrectionRecord.self)
         try context.save()
         RawHistoryArchive.delete()
     }
@@ -95,7 +96,9 @@ actor MetricsRecomputer {
         if let cutoff = BandDataCutoff.date { descriptor.predicate = #Predicate { $0.start >= cutoff } }
         let records = try modelContext.fetch(descriptor)
         let minutes = records.map(\.value)
-        let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now)
+        let corrections = try modelContext.fetch(FetchDescriptor<SleepCorrectionRecord>()).map(\.value)
+        let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now,
+                                       corrections: corrections)
         var strain: [UUID: Double] = [:]
         var manual: [UUID: Workout] = [:]
         for workout in try modelContext.fetch(FetchDescriptor<WorkoutRecord>()) {

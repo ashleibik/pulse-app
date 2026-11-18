@@ -13,6 +13,7 @@ struct SleepDetailView: View {
     @Query private var profiles: [ProfileRecord]
     @Environment(\.modelContext) private var context
     @State private var explaining = false
+    @State private var editing: SleepEditTarget?
     @State private var heartRate: [ChartPoint] = []
     @State private var segments: [SleepSegment] = []
     @State private var sleepStress: Double?
@@ -38,11 +39,16 @@ struct SleepDetailView: View {
         .navigationTitle(Calendar.current.isDateInToday(day) ? "TODAY" : day.formatted(.dateTime.weekday(.wide).month().day()).uppercased())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if let sleep {
+                    Button { editing = SleepEditTarget(start: sleep.start, end: sleep.end) } label: { Image(systemName: "pencil") }
+                        .accessibilityLabel("Edit this sleep")
+                }
                 Button { explaining = true } label: { Image(systemName: "info.circle") }
                     .accessibilityLabel("How sleep is measured")
             }
         }
+        .sheet(item: $editing) { SleepEditView(target: $0) }
         .sheet(isPresented: $explaining) {
             MetricExplainerView(kind: .sleep, today: summary, history: Array(days.prefix(14)))
                 .presentationDetents([.medium, .large])

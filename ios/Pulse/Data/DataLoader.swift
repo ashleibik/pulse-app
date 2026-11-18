@@ -24,6 +24,8 @@ final class DataLoader {
 
     /// Set once the simulated data of older versions has been removed from this iPhone.
     private static let simulatedRemovedKey = "simulatedDataRemoved.v1"
+    /// The formula version the stored days were last calculated with.
+    private static let formulasKey = "metricsAlgorithmVersion"
 
     /// Call after a band sync (or a delete) changed the stored data.
     func dataChanged() {
@@ -54,8 +56,13 @@ final class DataLoader {
         state = .ready
         rawDataReady = true
         revision += 1
+        // A new version of the formulas (for example stricter sleep detection) applies to old days too.
+        let formulasChanged = defaults.integer(forKey: Self.formulasKey) != MetricsEngine.algorithmVersion
+        defaults.set(MetricsEngine.algorithmVersion, forKey: Self.formulasKey)
         // Rows were deleted: recalculate from what's left.
-        if removedFromBandData || removedOldOwner { await recompute(context: context, detectWorkouts: removedOldOwner) }
+        if removedFromBandData || removedOldOwner || formulasChanged {
+            await recompute(context: context, detectWorkouts: removedOldOwner)
+        }
     }
 
     /// Settings > "Your data starts": deletes everything before the new day, then recalculates.

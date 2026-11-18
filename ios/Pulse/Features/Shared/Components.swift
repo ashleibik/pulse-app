@@ -520,9 +520,9 @@ extension String {
 
 // MARK: - Status pill
 
-/// The only sync UI in normal use (like WHOOP's app): the band battery when all is well, a small
-/// spinner only while a big chunk is being pulled (e.g. the night), and a short warning only when
-/// something needs you (Bluetooth off, band not found for a long time, band battery low).
+/// Syncing never shows (like WHOOP's app): the band battery when all is well, and a short warning
+/// only when something needs you (Bluetooth off, band not found for a long time, band battery low,
+/// a sync problem).
 struct StatusPill: View {
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
@@ -553,11 +553,6 @@ struct StatusPill: View {
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Band: \(warning)")
-        } else if band.showsSyncSpinner {
-            ProgressView()
-                .controlSize(.small)
-                .frame(minWidth: 28, minHeight: 28)
-                .accessibilityLabel("Syncing with your band")
         } else if let record, let battery = record.batteryPercent {
             HStack(spacing: 4) {
                 Text("\(Int(battery.rounded()))%")

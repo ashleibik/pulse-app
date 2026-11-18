@@ -39,6 +39,8 @@ struct TodayView: View {
     /// Today's stress picture and numbers so far (from today's raw minutes).
     @State private var stress: StressMonitor.Day?
     @State private var soFar: TodaySoFar?
+    /// The selected day's estimated calories (nil = no band data that day, or the profile is incomplete).
+    @State private var calories: DailyCalories.Estimate?
     /// Respiratory rate of the selected night and the 30 nights before (for the health monitor).
     @State private var respiratory: (today: Double?, history: [Double]) = (nil, [])
     /// The live heart-rate card is streaming (only while this screen is open).
@@ -93,7 +95,7 @@ struct TodayView: View {
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
             }
-            .task(id: "\(loader.revision)-\(loader.rawDataReady)-\(selectedDay.timeIntervalSince1970)") { load() }
+            .task(id: "\(loader.revision)-\(loader.rawDataReady)-\(selectedDay.timeIntervalSince1970)-\(String(describing: calorieBody))") { load() }
             .onChange(of: scenePhase) { _, phase in if phase != .active { setLive(false) } }
             .onDisappear { setLive(false) }
             .sensoryFeedback(.impact(weight: .light), trigger: taps)
@@ -125,6 +127,7 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: DS.Space.xl) {
             rings.riseIn(1)
             monitors.riseIn(2)
+            caloriesCard.riseIn(2)
             myDay.riseIn(3)
             if days.isEmpty { firstNightCard.riseIn(4) }
             liveCard.riseIn(4)
@@ -194,6 +197,45 @@ struct TodayView: View {
         return inRange == checks.count
             ? ("Within range", "\(inRange)/\(checks.count) metrics", "checkmark", DS.Colors.accent)
             : ("Out of range", "\(inRange)/\(checks.count) metrics", "exclamationmark", DS.Colors.warn)
+    }
+
+    // MARK: - Calories
+
+    private var calorieBody: DailyCalories.Body? { profiles.first?.calorieBody() }
+
+    /// An estimate, and labelled as one. Stays in the app: it is never written to Apple Health.
+    private var caloriesCard: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            HStack(spacing: 6) {
+                Image(systemName: "flame")
+                Text("CALORIES")
+                Spacer()
+                Text("Estimated").textStyle(.caption).foregroundStyle(DS.Colors.secondary)
+            }
+            .textStyle(.label)
+            .foregroundStyle(DS.Colors.primary)
+            if calorieBody == nil {
+                Button { open { showSettings = true } } label: {
+                    Text("Add your weight, height, birth year and sex in Settings to see this.")
+                        .textStyle(.body)
+                        .foregroundStyle(DS.Colors.secondary)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.pressable)
+            } else {
+                Text(calories.map { $0.total.formatted() } ?? "--")
+                    .textStyle(.title)
+                    .foregroundStyle(DS.Colors.primary)
+                    .contentTransition(.numericText())
+                Text(calories.map { "\($0.resting.formatted()) resting + \($0.active.formatted()) active" } ?? "No band data for this day")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .monoCard(padding: DS.Space.m)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - My Day
@@ -411,6 +453,11 @@ struct TodayView: View {
         let minutes = PulseStore.minutes(from: start, to: .now, in: context)
         let profile = profiles.first?.metricsProfile ?? MetricsProfile()
         soFar = TodaySoFar.compute(minutes: minutes, profile: profile)
+        let dayEnd = min(calendar.date(byAdding: .day, value: 1, to: selectedDay) ?? selectedDay, .now)
+        calories = calorieBody.flatMap { body in
+            DailyCalories.estimate(minutes: isToday ? minutes : PulseStore.minutes(from: selectedDay, to: dayEnd, in: context),
+                                   body: body, dayStart: selectedDay, end: dayEnd)
+        }
         stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value),
                                    restingHR: days.first?.restingHeartRate ?? 60, maxHR: profile.maxHeartRate,
                                    now: .now, calendar: calendar)

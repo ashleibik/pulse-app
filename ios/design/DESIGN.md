@@ -62,22 +62,36 @@ All styles follow Dynamic Type.
 - Buttons: pills, height 52. Primary = `accent` fill with a glow, dark text. Secondary = quiet fill.
 - Tab screens and sheets pin a slim header (`ScreenHeader`); pushed screens keep the system bar.
   The title never truncates: the status pill next to it gives way first.
-- Syncing is invisible (no sheets, popups or toasts). The status pill (`StatusPill`) is the only
-  sync UI: band battery when all is well, a small spinner only while a big chunk is pulled, and a
-  `warn` outline + one word only when something needs you (Bluetooth off, band not found, battery
-  low). Pull to refresh on Today is the manual way; "Sync now" and the log live in Settings > Band.
+- Syncing is invisible (no sheets, popups, toasts or spinners). The status pill (`StatusPill`) shows
+  the band battery when all is well, and a `warn` outline + one word only when something needs you
+  (Bluetooth off, band not found, battery low, sync problem). Pull to refresh on any tab is the
+  manual way; "Sync now", "Sync anyway" (only while paused for low battery) and the log live in
+  Settings > Band, and act in place without opening a sheet.
 
 ## 4b. Today (home)
 
 Top to bottom: header (settings · "‹ TODAY ›" day switcher · band battery) → three rings
 (Sleep %, Recovery %, Strain) → two monitor cards (Health: "within range n/n metrics";
-Stress: level + value + time) → "MY DAY" with a + button → daily outlook row (opens Coach) →
+Stress: level + value + time) → calories card (`title` number, labelled "Estimated", resting +
+active underneath; asks for the missing profile details instead of guessing) → "MY DAY" with a + button → daily outlook row (opens Coach) →
 today's activities card (sleep and workouts as rows with their times; Add / Start activity) →
 live heart rate. The rings use `sleepTint`, the recovery zone colour, and `strainTint`.
 Tapping a ring opens its page: a big ring + score, a card of rows (each with a three-step
 Poor / Sufficient / Optimal indicator, or today vs your 30-day average with ▲▼), then one
 plain-language paragraph.
 - Minimum tap target 44 pt.
+
+## 4b-2. Sleep is only shown when it is finished
+
+A sleep appears once you are clearly up again; until then the night stays empty. The Sleep tab and
+the Sleep page have a pencil button that opens "Edit sleep" (fix the times, or "I wasn't asleep").
+Settings > Your data offers to undo those edits. Settings > Band has a "Motion check" sheet.
+
+## 4c. Home Screen widget
+
+Last night at a glance: recovery ring (zone colour + the word), sleep score and sleep time. Small
+shows the ring with both sleep numbers under it; medium adds the word and when it was updated. No
+number is ever invented: before the first night, and in the widget gallery, values show `--`.
 
 ## 5. The glow
 

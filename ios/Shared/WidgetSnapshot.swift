@@ -4,11 +4,13 @@ import Foundation
 ///
 /// The widget runs in its own little process and can't open the app's database, so after every
 /// change the app writes this snapshot into a shared "App Group" storage, and the widget reads it.
-/// Only today's summary numbers go in here: no raw heartbeats, nothing leaves the phone.
+/// Only last night's summary numbers go in here: no raw heartbeats, nothing leaves the phone.
 struct WidgetSnapshot: Codable, Equatable {
-    /// The day these numbers belong to (start of day).
+    /// The day these numbers belong to (start of day). A day owns the sleep that ended that morning.
     var day: Date
     var recovery: Double?
+    /// Last night's sleep performance, 0-100. nil = no night yet.
+    var sleepScore: Double?
     /// "green" / "yellow" / "red" (PulseCore's RecoveryZone raw value). nil = not enough data yet.
     var zone: String?
     /// "Ready" / "Steady" / "Rest" / "Learning": said in words too, so color is never the only signal.
@@ -72,7 +74,10 @@ struct WidgetSnapshot: Codable, Equatable {
 
     var recoveryText: String { recovery.map { "\(Int($0.rounded()))%" } ?? "--" }
 
-    /// Shown in the widget gallery and while the real snapshot loads.
-    static let sample = WidgetSnapshot(day: Calendar.current.startOfDay(for: .now), recovery: 72, zone: "green",
-                                       word: "Ready", strain: 11.4, sleepMinutes: 452, simulated: true, updated: .now)
+    var sleepScoreText: String { sleepScore.map { "\(Int($0.rounded()))%" } ?? "--" }
+
+    /// Shown in the widget gallery and while the real snapshot loads. Pulse shows no made-up
+    /// numbers, so every value is empty.
+    static let empty = WidgetSnapshot(day: Calendar.current.startOfDay(for: .now), recovery: nil, sleepScore: nil, zone: nil,
+                                      word: "No data", strain: 0, sleepMinutes: nil, simulated: false, updated: .now)
 }

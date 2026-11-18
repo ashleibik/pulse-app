@@ -10,6 +10,7 @@ struct ActivityView: View {
     @Query private var profiles: [ProfileRecord]
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
+    @Environment(BandManager.self) private var band
 
     @State private var zoneMinutes: [Int] = []
     /// The open workout (empty = the list is showing).
@@ -33,6 +34,7 @@ struct ActivityView: View {
                 .padding(.top, DS.Space.l)
                 .padding(.bottom, DS.Space.xxl)
             }
+            .refreshable { await band.refresh(context: context) }
             .safeAreaInset(edge: .top, spacing: 0) {
                 ScreenHeader(title: "Activity") {
                     IconButton(systemName: "play", label: "Start a workout") { showLive = true }
@@ -182,6 +184,7 @@ struct ActivityView: View {
     ActivityView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DataLoader())
+        .environment(BandManager())
         .preferredColorScheme(.light)
 }
 
@@ -189,5 +192,6 @@ struct ActivityView: View {
     ActivityView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DataLoader())
+        .environment(BandManager())
         .preferredColorScheme(.dark)
 }

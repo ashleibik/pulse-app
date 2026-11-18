@@ -12,6 +12,7 @@ struct SleepView: View {
     @Query private var profiles: [ProfileRecord]
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
+    @Environment(BandManager.self) private var band
 
     @State private var nightIndex = 0          // 0 = last night, 1 = the night before, ...
     @State private var heartRate: [ChartPoint] = []
@@ -22,6 +23,7 @@ struct SleepView: View {
     @State private var selectedSegment: SleepSegment?
     /// The phase whose explanation sheet is open.
     @State private var explainedPhase: SleepPhaseSelection?
+    @State private var editing: SleepEditTarget?
 
     private var sleeps: [SleepRecord] { allSleeps.filter { !$0.isNap } }
 
@@ -40,6 +42,7 @@ struct SleepView: View {
             .padding(.top, DS.Space.l)
             .padding(.bottom, DS.Space.xxl)
         }
+        .refreshable { await band.refresh(context: context) }
         .safeAreaInset(edge: .top, spacing: 0) { header }
         // Only the screenshot job sets this (to capture the lower half of the screen).
         .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
@@ -48,6 +51,7 @@ struct SleepView: View {
         .sensoryFeedback(.selection, trigger: nightIndex)
         .sensoryFeedback(.selection, trigger: selectedSegment)
         .onChange(of: nightIndex) { _, _ in selectedSegment = nil }
+        .sheet(item: $editing) { SleepEditView(target: $0) }
         .sheet(item: $explainedPhase) { item in
             let totals = SleepTimeline.totals(segments)
             SleepPhaseInfoView(phase: item.phase, minutes: totals[item.phase] ?? 0,
@@ -70,6 +74,12 @@ struct SleepView: View {
     /// Title on the left, older / newer night on the right.
     private var header: some View {
         ScreenHeader(title: "Sleep") {
+            if !sleeps.isEmpty {
+                IconButton(systemName: "pencil", label: "Edit this sleep") {
+                    let night = sleeps[min(nightIndex, sleeps.count - 1)]
+                    editing = SleepEditTarget(start: night.start, end: night.end)
+                }
+            }
             IconButton(systemName: "chevron.left", label: "Previous night") { nightIndex += 1 }
                 .disabled(nightIndex >= sleeps.count - 1)
             IconButton(systemName: "chevron.right", label: "Next night") { nightIndex -= 1 }
@@ -324,6 +334,7 @@ struct SleepView: View {
     SleepView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DataLoader())
+        .environment(BandManager())
         .preferredColorScheme(.light)
 }
 
@@ -331,5 +342,6 @@ struct SleepView: View {
     SleepView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DataLoader())
+        .environment(BandManager())
         .preferredColorScheme(.dark)
 }

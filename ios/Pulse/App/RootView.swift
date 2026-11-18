@@ -47,6 +47,8 @@ struct RootView: View {
                 band.appBecameActive(context: context)
                 Notifier.refresh(context: context)      // tonight's bedtime reminder
                 WidgetBridge.publish(context: context)
+                // Data pulled while the app was closed reaches Apple Health now.
+                if loader.rawDataReady { Task { await health.export(context: context) } }
             } else if phase == .background {
                 BackgroundSync.schedule()               // wake-ups while the app is closed
             }

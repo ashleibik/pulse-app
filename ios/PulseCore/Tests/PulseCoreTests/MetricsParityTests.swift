@@ -64,7 +64,7 @@ func close(_ a: Double?, _ b: Double?, _ tol: Double = vectors.tolerance) -> Boo
 }
 
 @Test func vectorsMatchThisAlgorithmVersion() {
-    #expect(vectors.algorithmVersion == MetricsEngine.algorithmVersion)
+    #expect(vectors.algorithmVersion == MetricsEngine.sharedFormulaVersion)
 }
 
 @Test func parityRRClean() {
