@@ -29,15 +29,26 @@ public enum HRV {
         let valid: [Double?] = rr.map { (rrMinMs...rrMaxMs).contains($0) ? $0 : nil }
         var out: [Double?] = []
         out.reserveCapacity(rr.count)
+        var neighbours: [Double] = []           // kept in order, and reused for every beat
+        neighbours.reserveCapacity(2 * halfWindow + 1)
         for (i, beat) in valid.enumerated() {
             guard let x = beat else {
                 out.append(nil)
                 continue
             }
-            let lo = max(0, i - halfWindow)
-            let hi = min(valid.count, i + halfWindow + 1)
-            let neighbours = valid[lo..<hi].compactMap { $0 }
-            let m = Stats.median(neighbours)
+            neighbours.removeAll(keepingCapacity: true)
+            for j in max(0, i - halfWindow)..<min(valid.count, i + halfWindow + 1) {
+                guard let value = valid[j] else { continue }
+                var k = neighbours.count
+                neighbours.append(value)
+                while k > 0, neighbours[k - 1] > value {
+                    neighbours[k] = neighbours[k - 1]
+                    k -= 1
+                }
+                neighbours[k] = value
+            }
+            let mid = neighbours.count / 2
+            let m = neighbours.count % 2 == 1 ? neighbours[mid] : (neighbours[mid - 1] + neighbours[mid]) / 2.0
             out.append(abs(x - m) <= tolerance * m ? x : nil)
         }
         return out

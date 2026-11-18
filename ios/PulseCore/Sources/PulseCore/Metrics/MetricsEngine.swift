@@ -22,15 +22,16 @@ public struct MetricsResult: Sendable {
 ///
 /// Steps (docs/METRICS.md):
 ///   1. lay the minutes on a gap-aware timeline (missing minutes = not worn)
-///   2. detect sleep (Cole-Kripke + HR gate), group into sessions, confirm them, keep the finished
-///      ones, and apply what the user corrected
+///   2. estimate the chance of being asleep per minute (SleepModel), group into sessions, keep the
+///      finished ones, and apply what the user corrected
 ///   3. for each calendar day: main sleep -> resting HR + overnight HRV
 ///   4. baseline = previous 14 days; sleep need; recovery; day strain; plain-language explanation
 public enum MetricsEngine {
     /// 2: sleeps must be confirmed and finished (docs/METRICS.md §4, steps 6-9).
     /// 3: calibrated on a real night: movement without the band's resting offset, short wake-ups stay
     ///    inside a sleep, cleaner beats for HRV, and one definition of the awake minutes of a sleep.
-    public static let algorithmVersion = 3
+    /// 4: sleep is a probability per minute from several signals, learned from the person's own nights and edits.
+    public static let algorithmVersion = 4
     /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v2.json).
     /// The confirmation stage on top of them is Swift only.
     public static let sharedFormulaVersion = 2
@@ -104,17 +105,23 @@ public enum MetricsEngine {
 
     public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
                            calendar: Calendar, now: Date, corrections: [SleepCorrection] = []) -> MetricsResult {
-        guard let tl = timeline(minutes) else { return MetricsResult(sleeps: [], days: []) }
+        var cache = SleepModelCache()
+        return run(minutes: minutes, profile: profile, calendar: calendar, now: now, corrections: corrections, sleepCache: &cache)
+    }
 
-        // 1-2. Sleep. HR threshold per 24 h block starting at local noon (docs/METRICS.md §4).
-        let startMidnight = calendar.startOfDay(for: tl.start)
-        var anchor = calendar.date(byAdding: .hour, value: 12, to: startMidnight)!
-        if anchor > tl.start { anchor = calendar.date(byAdding: .day, value: -1, to: anchor)! }
-        let blocks = (0..<tl.count).map { Int((tl.date($0).timeIntervalSince(anchor) / 86_400).rounded(.down)) }
-        let candidates = SleepDetector.classify(hr: tl.hr, activity: tl.movement, blocks: blocks)
-        let joined = SleepDetector.joiningShortWakes(SleepDetector.sessions(candidates), asleep: candidates)
-        let finished = SleepDetector.confirmed(joined, asleep: candidates, hr: tl.hr,
-                                               activity: tl.movement, rawActivity: tl.activity)
+    /// - Parameter sleepCache: what the last run worked out. Weeks whose data didn't change are reused from it.
+    public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
+                           calendar: Calendar, now: Date, corrections: [SleepCorrection] = [],
+                           sleepCache: inout SleepModelCache) -> MetricsResult {
+        guard let tl = timeline(minutes) else {
+            sleepCache = SleepModelCache()
+            return MetricsResult(sleeps: [], days: [])
+        }
+
+        // 1-2. Sleep: the chance of being asleep per minute, then the sleeps in it (docs/METRICS.md §4).
+        let probability = SleepModel.run(timeline: tl, calendar: calendar, corrections: corrections, cache: &sleepCache)
+        let (detected, candidates) = SleepModel.sessions(probability: probability)
+        let finished = detected
             .filter { session in
                 SleepDetector.isFinished(session, asleep: candidates, hr: tl.hr, activity: tl.movement,
                                          minutesSinceEnd: now.timeIntervalSince(tl.date(session.end)) / 60)

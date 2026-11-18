@@ -79,8 +79,8 @@ final class DataLoader {
         state = .recalculating
         let profile = ProfileStore.current(in: context).metricsProfile
         do {
-            let output = try await MetricsRecomputer(modelContainer: context.container)
-                .run(profile: profile, calendar: .current, now: .now, detectWorkouts: detectWorkouts)
+            let output = try await MetricsRecomputer.inBackground(container: context.container, profile: profile,
+                                                                  calendar: .current, now: .now, detectWorkouts: detectWorkouts)
             try PulseStore.apply(output, to: context)
             state = .ready
             revision += 1

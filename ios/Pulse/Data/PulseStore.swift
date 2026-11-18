@@ -87,6 +87,18 @@ struct RecomputeOutput: Sendable {
 /// Used after profile changes, and in Phase 5 after each band sync.
 @ModelActor
 actor MetricsRecomputer {
+    /// What the sleep model worked out last time. iOS may delete it: the next run then simply takes longer.
+    private static var sleepCacheURL: URL { URL.cachesDirectory.appending(path: "sleep-model-cache.bin") }
+
+    /// Creates the actor away from the main thread. An actor created on the main thread would do its work there.
+    static func inBackground(container: ModelContainer, profile: MetricsProfile, calendar: Calendar, now: Date,
+                             detectWorkouts: Bool = false) async throws -> RecomputeOutput {
+        try await Task.detached(priority: .userInitiated) {
+            try await MetricsRecomputer(modelContainer: container)
+                .run(profile: profile, calendar: calendar, now: now, detectWorkouts: detectWorkouts)
+        }.value
+    }
+
     /// - Parameter detectWorkouts: also look for workouts in the raw data (used after a band sync;
     ///   the demo month brings its own workouts).
     func run(profile: MetricsProfile, calendar: Calendar, now: Date,
@@ -97,8 +109,14 @@ actor MetricsRecomputer {
         let records = try modelContext.fetch(descriptor)
         let minutes = records.map(\.value)
         let corrections = try modelContext.fetch(FetchDescriptor<SleepCorrectionRecord>()).map(\.value)
+        var sleepCache = (try? Data(contentsOf: Self.sleepCacheURL)).flatMap { SleepModelCache(data: $0) } ?? SleepModelCache()
         let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now,
-                                       corrections: corrections)
+                                       corrections: corrections, sleepCache: &sleepCache)
+        if minutes.isEmpty {
+            try? FileManager.default.removeItem(at: Self.sleepCacheURL)
+        } else {
+            try? sleepCache.encoded().write(to: Self.sleepCacheURL, options: .atomic)
+        }
         var strain: [UUID: Double] = [:]
         var manual: [UUID: Workout] = [:]
         for workout in try modelContext.fetch(FetchDescriptor<WorkoutRecord>()) {

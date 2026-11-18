@@ -54,7 +54,9 @@ public struct MinuteSample: Codable, Sendable, Hashable {
     /// A steady level above `restingOffsetLimit` can't be a resting wrist, so all of it counts.
     public var movement: Double {
         guard !activity.isEmpty else { return 0 }
-        let steady = Stats.median(activity.map { Double($0) })
+        let sorted = activity.sorted()
+        let mid = sorted.count / 2
+        let steady = sorted.count % 2 == 1 ? Double(sorted[mid]) : (Double(sorted[mid - 1]) + Double(sorted[mid])) / 2
         guard steady <= Self.restingOffsetLimit else { return averageActivity }
         return activity.reduce(0.0) { $0 + max(0, Double($1) - steady) } / Double(activity.count)
     }

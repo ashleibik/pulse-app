@@ -1,4 +1,4 @@
-# Pulse Metrics: Specification (algorithm version 3, shared formulas version 2)
+# Pulse Metrics: Specification (algorithm version 4, shared formulas version 2)
 
 This is the **single source of truth** for how Pulse computes its numbers. There are two implementations:
 
@@ -71,54 +71,75 @@ the window).
 *Source:* nocturnal minimum HR is a standard resting-HR proxy (Nanchen, *Heart* 2018; 104:1048–1049). The 10-minute
 window is *our choice*, so that one quiet minute or an artifact can't fake a low value.
 
-## 4. Sleep detection (HR + motion)
+## 4. Sleep detection (a probability per minute)
 
-Per minute: `hr` = mean of valid per-second HR, `A` = **movement** (both null when not worn).
+Code: `SleepModel.swift` (Swift only). The model works out the chance of being asleep for every minute, from several
+signals together, and learns from the owner's own nights and edits.
+
+### Signals
+
+| Signal | Per minute | Starting values? | Why |
+|---|---|---|---|
+| **Movement** | `ln(1 + A)`, see below | yes | Actigraphy is the classic sleep/wake signal (Cole et al. 1992) |
+| **Heart rate drop** | `100 × (awake HR − hr) / awake HR`, against the owner's own awake HR over the past 24 h | yes | Combining motion and heart rate beats motion alone (Walch et al. 2019) |
+| **Heart rate steadiness** | SD of minute HR over the 15 minutes around this one | yes | *Our choice*: awake heart rate swings with what you are doing |
+| **Clean beats** | Clean beats per minute over 5 minutes (§1) | no, learned | *Found in the owner's data*: see the table below |
+| **HRV** | `ln(RMSSD)` over 5 minutes (§2) | no, learned | Parasympathetic activity rises in NREM sleep (Trinder et al. 2001; Stein & Pu 2012) |
+| **Time of day** | Typical sleep hours, moved toward the owner's own | yes | Sleep timing follows a circadian process (Borbély 2022), and a clock signal helps wearables (Walch et al. 2019) |
 
 **Movement** removes the band's resting offset. On a real night the per-second activity sat at a steady 0 to 10 for
 minutes at a time, changing only when the wrist settled into a new position, so the raw value says little about
 moving. Sitting awake at a computer mostly reads 3 to 11, the same range. With `s` = the median of the minute's 60 values:
 `A = mean(max(0, value − s))`, or the plain mean when `s > 12` (too high to be a wrist lying still).
 
-1. **Cole–Kripke score** for each minute *i* (activity outside the data or null counts as 0):
+**Left out, on purpose:**
 
-   `D = (106·A₋₄ + 54·A₋₃ + 58·A₋₂ + 76·A₋₁ + 230·A₀ + 74·A₊₁ + 67·A₊₂) / 6000`
+- **Breathing.** Breathing was faster and shallower in every sleep stage than awake in Douglas et al. 1982, so a slower rate
+  is not a sign of sleep. Pulse's estimate from beat intervals (method family: Schäfer & Kratky 2008) also read about 7
+  breaths a minute on the real night, too low to trust, and gave a value in only 16% of awake minutes.
+- **Skin temperature.** Warming of the hands and feet does predict falling asleep quickly (Kräuchi et al. 1999), but Pulse
+  does not decode or store temperature, and the band's raw value has no confirmed unit.
 
-   *Source:* weights from Cole, Kripke et al., *Sleep* 1992; 15(5):461–469 (1-minute epochs).
-   *Our choice:* the divisor (6000) is calibrated to **our** activity units, which aren't the 1992 actigraph's
-   counts. It's tuned on simulated data now and **must be re-calibrated on real band data** (Phase 5).
+**How well each signal separated sleep from wake on the one real night** (AUC: 0.5 = useless, 1 = perfect):
 
-2. **HR gate:** `T = lowerPercentile(worn minute HRs in the same block, 0.10) + 15 bpm`.
-   A *block* is 24 hours starting at local **noon**, so each night sits in the middle of its own block and is
-   compared with its own day. (A single threshold for a whole month fails on nights when your resting HR is a few
-   beats higher than usual. Our tests caught exactly that.)
-3. Minute is **asleep** if worn **and** `D < 1` **and** `hr < T`.
-4. **Sessions:**
-   - *Seeds* = runs of ≥ 10 consecutive asleep minutes.
-   - Merge the next seed into the current session if the gap between them is **≤ 30 minutes**, or it is
-     **≤ 120 minutes and at least 25% asleep**. A restless patch with several short wake-ups stays inside the night;
-     a genuinely awake stretch doesn't. (25%, not 50%: Cole–Kripke also scores the 3–4 minutes *after* each
-     movement as awake, so a restless patch that was mostly sleep only *measures* ~35% asleep. Found by the
-     simulated-truth tests.)
-   - Keep sessions spanning ≥ 20 minutes. A span under 180 minutes = **nap**.
-   - Inside a session: `awake` = non-asleep minutes, `disturbances` = number of separate awake runs.
-5. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
+| Signal | vs all awake minutes | vs the evening at the computer |
+|---|---|---|
+| Clean beats | 0.98 | 0.96 |
+| Heart rate | 0.95 | 0.95 |
+| Movement | 0.92 | 0.91 |
+| HRV (RMSSD) | 0.45 | 0.43 |
 
-Steps 1–4 only find *candidates*. The app also joins two candidates up to **36 minutes** apart (a wake-up under 30
-minutes plus the minutes around it that Cole–Kripke also scores as awake) when the second has at least 30 minutes
-asleep. Sitting at a computer can pass all of this, so a candidate has to be confirmed (`SleepConfirmation.swift`,
-Swift only):
+HRV did not rise during that night's sleep. That may be the owner's physiology, or the beat-to-beat decoding, which is still
+unconfirmed. Because HRV has no starting values, it only counts as far as it really separates the owner's own minutes.
 
-6. **Onset:** a sleep starts at the first minute of **45 minutes** (90 if the band reports no motion at all) in which
-   ≥ 85% of minutes have near-zero movement (`A ≤ 2.5`), no moving stretch is longer than 5 minutes, ≥ 85% of heart rates
-   are within 8 bpm of the median, no heart-rate surge (2+ minutes, 10+ bpm above the median) happens with a still
-   wrist, and the next 90 minutes hold at most one surge of any kind.
-7. **Heart rate:** the sleep's median HR must be at least **5 bpm or 8%** (whichever is more) below the median of calm
-   awake minutes in the 12 hours before it (after it, on the first night). Fewer than 25% of its minutes may be raised
-   10+ bpm, with at most 2 surges per hour. With no awake data to compare, only a span of 3+ hours counts.
-8. **End:** a wake-up under 30 minutes stays inside the sleep. **30 minutes up within 35** end it, where up means
-   moving (`A > 2.5`) or a heart rate 8+ bpm above the sleep's median.
-9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (moving, or HR 10+ bpm
+### The calculation
+
+1. **Evidence.** Each signal has one bell curve for asleep and one for awake. Its evidence for a minute is
+   `0.6 × (ln density asleep − ln density awake)`, limited to ±3. Evidence is added up across signals (naive Bayes; Hand & Yu
+   2001). The 0.6 allows for signals that overlap. A minute with no band data counts −2.
+2. **Time of day.** `0.25 × logit(chance of being asleep at this minute of the day)`, limited to ±0.8. The chance is
+   `(3 × typical + nights asleep at this minute) / (3 + nights)`, averaged over ±15 minutes.
+3. **Smoothing.** A two-state hidden Markov model, run forward and backward over all minutes (Rabiner 1989), gives
+   P(asleep) per minute. Each minute, the chance of falling asleep is 1/720 and of waking up is 1/240.
+4. **Learning.** The model runs three times per week of data. After each run, minutes with P ≥ 0.8 are labelled asleep and P ≤ 0.2 awake,
+   and the curves, the awake heart rate and the sleep hours are updated from those labels. Starting values count as
+   300 minutes of data. A learned-only signal needs 120 labelled minutes of each kind.
+5. **The owner's edits teach it.** "I wasn't asleep" labels those minutes awake. An edited sleep labels its minutes asleep,
+   and the hour on the other side of a time the owner moved as awake. Each edited minute counts as 5.
+
+**Weeks.** The calculation runs one week at a time (17:00 to 17:00), and each week starts from what the week before
+learned. A week's result depends only on its own minutes, the edits that touch it and that starting point, so a week whose
+inputs haven't changed is reused from a cache and gives exactly what a full calculation would. New band data recalculates the
+latest week only. An edit recalculates its own week and, if that changes what was learned, the weeks after it.
+
+### From probability to a sleep
+
+6. A minute is **asleep** when P ≥ 0.5.
+7. **Sessions:** runs of ≥ 15 asleep minutes are merged when they are ≤ 30 minutes apart, or ≤ 120 minutes apart with at
+   least 25% asleep between them. Up to 30 minutes after the end, a further 5 asleep minutes extend the sleep. A sleep lasts at
+   least 45 minutes, and a span under 180 minutes is a **nap**.
+8. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
+9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (`A > 2.5`, or HR 10+ bpm
    above the sleep's), or the band was off the wrist for an hour, or 6 hours have passed without newer data.
 10. **Minutes inside a sleep:** awake = no data, `A ≥ 6`, or HR 10+ bpm above the sleep's median. Restful = `A < 1` and HR at
     or below the median. Light = the rest. Asleep time, awake time, wake-ups and the phases all come from this one rule,
@@ -127,13 +148,28 @@ Swift only):
 The user's edits ("I wasn't asleep", new start / end) are applied last and survive every recalculation. A time the user
 left unchanged follows the detection, so better detection can still correct it.
 
-*Our choice:* all thresholds in steps 6–10. They are calibrated on **one** real night (2026-11-17/18, which includes the
-awake evening before it) plus simulated nights, and **must be checked against more real nights**. Holding very still with
-a low heart rate for 45+ minutes can still look like sleep, which is why a sleep can be edited or removed.
+`SleepDetector.coleKripke` and `classify` stay in the code as the formulas shared with the Python reference, but the app
+no longer uses them to find sleep.
 
-*Our choice:* the HR gate and the session rules. Actigraphy alone confuses "sitting still" with sleep; requiring
-a low HR fixes most of that. **Sleep stages (REM/deep) are deliberately not estimated:** HR + motion can't
-do it accurately enough to be honest.
+*Our choice:* every number in this section. The research above supports which signals to use and how to combine them. It
+does not supply these values. They are set on **one** real night (2026-11-17/18, including the awake evening before it) and
+simulated nights, and **must be checked against more real nights**. Holding very still with a low heart rate for a long time
+can still look like sleep, which is why a sleep can be edited or removed. **Sleep stages (REM/deep) are deliberately not
+estimated:** HR + motion can't do it accurately enough to be honest.
+
+### Sources for this section
+
+- Borbély A. The two-process model of sleep regulation: Beginnings and outlook. *J Sleep Res* 2022. doi:10.1111/jsr.13598
+- Cole RJ, Kripke DF, et al. Automatic sleep/wake identification from wrist activity. *Sleep* 1992; 15(5):461–469
+- Douglas NJ, White DP, Pickett CK, Weil JV, Zwillich CW. Respiration during sleep in normal man. *Thorax* 1982; 37(11):840–844
+- Hand DJ, Yu K. Idiot's Bayes: not so stupid after all? *Int Stat Rev* 2001; 69(3):385–398
+- Kräuchi K, Cajochen C, Werth E, Wirz-Justice A. Warm feet promote the rapid onset of sleep. *Nature* 1999; 401:36–37
+- Rabiner LR. A tutorial on hidden Markov models and selected applications in speech recognition. *Proc IEEE* 1989; 77(2):257–286
+- Schäfer A, Kratky KW. Estimation of breathing rate from respiratory sinus arrhythmia. *Ann Biomed Eng* 2008; 36:476–485
+- Stein PK, Pu Y. Heart rate variability, sleep and sleep disorders. *Sleep Med Rev* 2012; 16(1):47–66
+- Trinder J, et al. Autonomic activity during human sleep as a function of time and sleep stage. *J Sleep Res* 2001; 10(4):253–264
+- Walch O, Huang Y, Forger D, Goldstein C. Sleep stage prediction with raw acceleration and photoplethysmography heart rate
+  data derived from a consumer wearable device. *Sleep* 2019. doi:10.1093/sleep/zsz180
 
 ## 5. Strain (0–21)
 
@@ -190,13 +226,13 @@ and one SD better than normal scores about 84%.
 |---|---|
 | Swift = Python on shared vectors | ✅ automated (both test suites) |
 | Recovers simulated truth over 30 nights | ✅ sleep onset/wake ±10 min, resting HR ±1.5 bpm, HRV ±12%, recovery correlates r > 0.6 with the hidden readiness |
-| Compared against a real device / polysomnography | ❌ needs the band (Phase 5+) |
+| Replays one real night (2026-11-17/18) as the owner reported it, and rejects the evening at the computer | ✅ automated, only on the machine that holds the backup in `logs/` |
+| Compared against a real device / polysomnography | ❌ not done |
 
 ### Known limitations
-- **Asleep time reads low on restless nights.** Cole–Kripke's look-back scores the 3–4 minutes after each movement
-  as awake, so expect roughly 3–4 minutes less sleep per wake-up. Re-check on real data before adding a correction.
-- **The activity divisor (6000) is tuned on simulated motion.** Real WHOOP accelerometer units will differ. Phase 5
-  must re-calibrate it with labelled real nights.
+- **The sleep model is set on one real night.** It matches the owner's own account of that night. It has not been
+  compared with polysomnography or another tracker, and its numbers need checking against more nights.
+- **Clean beats depend on unconfirmed decoding.** The beat-to-beat layout in the band's records is still a best guess.
 - **The first 4 days show no recovery score** (no baseline yet). That's on purpose: a number with no baseline would
   be made up.
 

@@ -694,8 +694,8 @@ final class BandManager {
         let started = Date.now
         Task { [weak self] in
             do {
-                let output = try await MetricsRecomputer(modelContainer: container)
-                    .run(profile: profile, calendar: .current, now: .now, detectWorkouts: true)
+                let output = try await MetricsRecomputer.inBackground(container: container, profile: profile,
+                                                                      calendar: .current, now: .now, detectWorkouts: true)
                 let computed = Date.now
                 try PulseStore.apply(output, to: context)
                 self?.traceLine("RECOMPUTE: \(Int(computed.timeIntervalSince(started) * 1000)) ms in the background, \(Int(Date.now.timeIntervalSince(computed) * 1000)) ms writing results on the main thread")
@@ -715,8 +715,8 @@ final class BandManager {
         let container = context.container
         let profile = ProfileStore.current(in: context).metricsProfile
         Task { [weak self] in
-            guard let output = try? await MetricsRecomputer(modelContainer: container)
-                .run(profile: profile, calendar: .current, now: .now, detectWorkouts: true) else { return }
+            guard let output = try? await MetricsRecomputer.inBackground(container: container, profile: profile,
+                                                                         calendar: .current, now: .now, detectWorkouts: true) else { return }
             try? PulseStore.apply(output, to: context)
             self?.onDataChanged?()
         }

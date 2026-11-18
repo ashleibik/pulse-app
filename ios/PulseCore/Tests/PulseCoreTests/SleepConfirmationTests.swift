@@ -177,6 +177,158 @@ private func nightWithRestingOffset(_ from: Double, _ to: Double) -> [MinuteSamp
     #expect(abs(sleep.end.timeIntervalSince(time(30.5))) <= 10 * 60)
 }
 
+// MARK: - The sleep probability model
+
+private func timeline(_ minutes: [MinuteSample]) throws -> MetricsEngine.Timeline {
+    try #require(MetricsEngine.timeline(minutes))
+}
+
+@Test func probabilitiesAreProbabilitiesAndTheSameEveryTime() throws {
+    let tl = try timeline(daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33))
+    let first = SleepModel.probabilities(timeline: tl, calendar: calendar, corrections: [])
+    #expect(first.count == tl.count && first.allSatisfy { (0...1).contains($0) })
+    #expect(first == SleepModel.probabilities(timeline: tl, calendar: calendar, corrections: []))
+    #expect(first[tl.index(time(26))] > 0.9)        // the middle of the night
+    #expect(first[tl.index(time(14))] < 0.1)        // the middle of the day
+}
+
+@Test func smoothingIgnoresOneOddMinuteButFollowsARealChange() {
+    let asleep = [Double](repeating: 2, count: 60), awake = [Double](repeating: -2, count: 60)
+    var blip = asleep
+    blip[30] = -3
+    #expect(SleepModel.smoothed(blip)[30] > 0.9)
+    let change = SleepModel.smoothed(asleep + awake)
+    #expect(change[30] > 0.9 && change[90] < 0.1)
+}
+
+@Test func aSignalThatDoesNotSeparateSleepAddsNothing() throws {
+    let labels: [SleepModel.Label?] = (0..<600).map { SleepModel.Label(asleep: $0 < 300, weight: 1) }
+    let same: [Double?] = (0..<600).map { (i: Int) -> Double? in 50 + Double(i % 7) }
+    let useless = try #require(SleepModel.learnedFromScratch(values: same, labels: labels, minimumSD: 3))
+    #expect(abs(useless.evidence(50)) < 0.05 && abs(useless.evidence(56)) < 0.05)
+    let useful: [Double?] = (0..<600).map { (i: Int) -> Double? in
+        let level: Double = i < 300 ? 60 : 10
+        return level + Double(i % 7)
+    }
+    let signal = try #require(SleepModel.learnedFromScratch(values: useful, labels: labels, minimumSD: 3))
+    #expect(signal.evidence(62) > 0.5 && signal.evidence(12) < -0.5)
+}
+
+@Test func aSignalWithTooFewLabelledMinutesIsNotUsed() {
+    let labels: [SleepModel.Label?] = (0..<100).map { SleepModel.Label(asleep: $0 < 50, weight: 1) }
+    let values: [Double?] = (0..<100).map { (i: Int) -> Double? in Double(i) }
+    #expect(SleepModel.learnedFromScratch(values: values, labels: labels, minimumSD: 3) == nil)
+}
+
+@Test func theClockLearnsTheHoursThisPersonSleeps() throws {
+    // Night owl: asleep 03:00 to 11:00 on ten days, far from the usual hours.
+    let clock = (0..<(1440 * 10)).map { $0 % 1440 }
+    let nights = (0..<10).map { (1440 * $0 + 180)..<(1440 * $0 + 660) }
+    let before = SleepModel.clockEvidence(nights: [], clock: clock)
+    let after = SleepModel.clockEvidence(nights: nights, clock: clock)
+    #expect(after[600] > before[600] + 0.5)         // 10:00 now looks like sleep
+    #expect(after[60] < before[60] - 0.3)           // 01:00 no longer does
+}
+
+@Test func anEditTeachesTheModelAboutThatKindOfMinute() throws {
+    // Sits very still most afternoons with a low heart rate, and says each time it wasn't sleep.
+    let quietAfternoon = { (from: Double) in stretch(from, from + 2) { _ in (53, 1) } }
+    var minutes = daytime(9, 14) + quietAfternoon(14) + daytime(16, 23) + night(23, 30.5)
+    minutes += daytime(30.5, 38) + quietAfternoon(38) + daytime(40, 47) + night(47, 54.5) + daytime(54.5, 57)
+    let tl = try timeline(minutes)
+    let unedited = SleepModel.probabilities(timeline: tl, calendar: calendar, corrections: [])
+    let edit = SleepCorrection(detectedStart: time(14), detectedEnd: time(16), createdAt: time(57))
+    let edited = SleepModel.probabilities(timeline: tl, calendar: calendar, corrections: [edit])
+    // Only the first afternoon was edited, and the second one becomes less likely to be sleep too.
+    let inside = tl.index(time(38))..<tl.index(time(40))
+    let before = Stats.mean(inside.map { unedited[$0] }), after = Stats.mean(inside.map { edited[$0] })
+    #expect(after < before, "second afternoon: \(before) before the edit, \(after) after it")
+}
+
+// MARK: - Only changed weeks are calculated again
+
+/// Four weeks of ordinary days and nights.
+private func fourWeeks() -> [MinuteSample] {
+    (0..<28).flatMap { day -> [MinuteSample] in
+        let d = Double(day) * 24
+        return daytime(9 + d, 23 + d) + night(23 + d, 30.5 + d) + daytime(30.5 + d, 33 + d)
+    }
+}
+
+private func sameSleeps(_ a: [SleepSession], _ b: [SleepSession]) -> Bool {
+    a.map(\.start) == b.map(\.start) && a.map(\.end) == b.map(\.end) && a.map(\.asleepMinutes) == b.map(\.asleepMinutes)
+}
+
+@Test func aCachedRunGivesExactlyWhatAFullRunGives() {
+    let all = fourWeeks()
+    let now = all.last!.start.addingTimeInterval(3600)
+    var cache = SleepModelCache()
+    // Syncing day by day, the way the phone does.
+    for days in stride(from: 7, through: 28, by: 7) {
+        let soFar = all.filter { $0.start < time(9 + Double(days) * 24) }
+        _ = MetricsEngine.run(minutes: soFar, calendar: calendar, now: now, sleepCache: &cache)
+    }
+    let cached = MetricsEngine.run(minutes: all, calendar: calendar, now: now, sleepCache: &cache)
+    let full = MetricsEngine.run(minutes: all, calendar: calendar, now: now)
+    #expect(!full.sleeps.isEmpty)
+    #expect(sameSleeps(cached.sleeps, full.sleeps))
+    #expect(cached.days.map(\.sleepMinutes) == full.days.map(\.sleepMinutes))
+}
+
+@Test func nothingNewMeansNothingIsCalculated() {
+    let all = fourWeeks()
+    let now = all.last!.start.addingTimeInterval(3600)
+    var cache = SleepModelCache()
+    _ = MetricsEngine.run(minutes: all, calendar: calendar, now: now, sleepCache: &cache)
+    #expect(cache.calculatedWeeks >= 4)
+    _ = MetricsEngine.run(minutes: all, calendar: calendar, now: now, sleepCache: &cache)
+    #expect(cache.calculatedWeeks == 0 && cache.reusedWeeks >= 4)
+}
+
+@Test func newMinutesOnlyRecalculateTheLatestWeek() {
+    let all = fourWeeks()
+    let now = all.last!.start.addingTimeInterval(3600)
+    var cache = SleepModelCache()
+    _ = MetricsEngine.run(minutes: Array(all.dropLast(30)), calendar: calendar, now: now, sleepCache: &cache)
+    _ = MetricsEngine.run(minutes: all, calendar: calendar, now: now, sleepCache: &cache)
+    #expect(cache.calculatedWeeks == 1 && cache.reusedWeeks >= 3)
+}
+
+@Test func anEditRecalculatesItsWeekAndTheWeeksAfterItOnly() throws {
+    let all = fourWeeks()
+    let now = all.last!.start.addingTimeInterval(3600)
+    var cache = SleepModelCache()
+    let before = MetricsEngine.run(minutes: all, calendar: calendar, now: now, sleepCache: &cache)
+    let sleep = try #require(before.sleeps.dropFirst(14).first)
+    let edit = SleepCorrection(detectedStart: sleep.start, detectedEnd: sleep.end, createdAt: now)
+    let cached = MetricsEngine.run(minutes: all, calendar: calendar, now: now, corrections: [edit], sleepCache: &cache)
+    #expect(cache.reusedWeeks >= 1 && cache.calculatedWeeks >= 1)
+    let full = MetricsEngine.run(minutes: all, calendar: calendar, now: now, corrections: [edit])
+    #expect(sameSleeps(cached.sleeps, full.sleeps))
+    #expect(cached.sleeps.count == before.sleeps.count - 1)
+}
+
+@Test func theCacheSurvivesBeingSavedToAFile() throws {
+    let all = fourWeeks()
+    let now = all.last!.start.addingTimeInterval(3600)
+    var cache = SleepModelCache()
+    let first = MetricsEngine.run(minutes: all, calendar: calendar, now: now, sleepCache: &cache)
+    var loaded = try #require(SleepModelCache(data: cache.encoded()))
+    #expect(loaded.weeks == cache.weeks && loaded.recent == cache.recent)
+    let second = MetricsEngine.run(minutes: all, calendar: calendar, now: now, sleepCache: &loaded)
+    #expect(loaded.calculatedWeeks == 0)
+    #expect(sameSleeps(first.sleeps, second.sleeps))
+}
+
+@Test func aDamagedCacheIsIgnored() {
+    var cache = SleepModelCache()
+    _ = MetricsEngine.run(minutes: daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33), calendar: calendar, now: time(33), sleepCache: &cache)
+    let bytes = cache.encoded()
+    #expect(SleepModelCache(data: bytes.dropLast(5)) == nil)
+    #expect(SleepModelCache(data: Data()) == nil)
+    #expect(SleepModelCache(data: Data(repeating: 7, count: 400)) == nil)
+}
+
 // MARK: - Beats for HRV
 
 @Test func cleanBeatsDropsFillerImpossibleBeatsAndBigJumps() {

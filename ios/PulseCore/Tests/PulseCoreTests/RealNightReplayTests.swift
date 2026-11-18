@@ -119,3 +119,16 @@ private func close(_ date: Date, to expected: Date, minutes: Double = 15) -> Boo
         }
     }
 }
+
+@Test(.enabled(if: hasBackup)) func theModelLearnsWhichSignalsSeparateThisPersonsSleep() throws {
+    let backup = try loadBackup()
+    let tl = try #require(MetricsEngine.timeline(backup.minutes))
+    let measured = SleepModel.measurements(tl, calendar: localCalendar)
+    let probability = SleepModel.probabilities(timeline: tl, calendar: localCalendar, corrections: [])
+    let labels = SleepModel.labels(probability: probability, corrections: [], timeline: tl)
+    let beats = try #require(SleepModel.learnedFromScratch(values: measured.cleanBeats, labels: labels, minimumSD: 3))
+    let hrv = try #require(SleepModel.learnedFromScratch(values: measured.hrv, labels: labels, minimumSD: 0.1))
+    func separation(_ s: SleepModel.Signal) -> Double { abs(s.asleep.mean - s.awake.mean) / max(s.asleep.sd, s.awake.sd) }
+    // On this night clean beats tell sleep from wake far better than HRV does.
+    #expect(separation(beats) > 3 * separation(hrv))
+}

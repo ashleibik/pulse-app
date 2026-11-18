@@ -27,9 +27,16 @@ The owner develops on Windows, has no Mac, and installs by sideloading (moving t
   "Write sleep stages to Apple Health (estimated)" is off by default; the owner turns it on only after the stages
   are validated. REM is never written.
 - **A sleep must be confirmed and finished before it is shown (2026-11-18).** The owner sat at a computer from 21:30
-  to 00:30 and got a false 3h06 sleep. Candidates need sustained near-zero motion and a heart rate clearly below
-  their awake level, and a night appears only once they are up again. The owner can edit or remove any sleep.
-  Spec: `docs/METRICS.md` §4, steps 6-9.
+  to 00:30 and got a false 3h06 sleep. A night appears only once they are up again, and the owner can edit or remove
+  any sleep. Spec: `docs/METRICS.md` §4.
+- **Sleep is a learned probability per minute (2026-11-18).** `SleepModel` combines movement, heart rate against the owner's
+  awake level, clean beats, HRV and time of day, and learns from their nights and edits. Breathing and skin temperature are
+  left out until the data supports them. Keep the replay of the real night in `RealNightReplayTests` passing.
+
+## Later
+
+- **Speed up the 1-year case (target under 2 s).** A sync with a year of data takes 3.2 s in an optimized build on the
+  PC (30 days: 0.27 s). One idea: recompute only the last night instead of the whole latest week.
 
 ## Do not break (working on the real band)
 
