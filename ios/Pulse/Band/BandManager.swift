@@ -89,6 +89,23 @@ final class BandManager {
         guard let percent else { return false }
         return percent < lowBatteryPercent && charging != true
     }
+
+    /// The newest battery reading in this session (the stored one is from the last session).
+    @ObservationIgnored private var lastBatteryReading: Double?
+    /// Set once the battery was seen rising in this session: it is on the charger.
+    @ObservationIgnored private var batteryRose = false
+
+    /// Is the band charging right now? The band's own report wins (CHARGING_ON / CHARGING_OFF events,
+    /// or the charging flag in its BATTERY_LEVEL event). Without one: a battery that went up by 1 %
+    /// or more since the last reading is on the charger. nil = unknown.
+    private func chargingState(_ newInfo: BandSession.Info, previousPercent: Double?) -> Bool? {
+        if let reported = newInfo.isCharging { return reported }
+        if !batteryRose, let now = newInfo.batteryPercent, let before = previousPercent, now >= before + 1 {
+            batteryRose = true
+            traceLine(String(format: "CHARGING (inferred): band battery rose from %.1f%% to %.1f%%", before, now))
+        }
+        return batteryRose ? true : nil
+    }
     /// When the last sync started (finished or not). Before, only a COMPLETE sync was remembered,
     /// so an unfinished drain restarted on every app open and every background wake-up.
     @ObservationIgnored private var lastAttemptAt: Date? = UserDefaults.standard.object(forKey: "lastSyncAttemptAt") as? Date
@@ -245,6 +262,8 @@ final class BandManager {
         self.context = context
         progress = BandSession.Progress()
         lowBatteryOverride = false
+        lastBatteryReading = nil
+        batteryRose = false
         badFrames = 0
         log = []
         generation += 1
@@ -374,12 +393,16 @@ final class BandManager {
             switch effect {
             case .info(let newInfo):
                 info = newInfo
-                if let context, let record = Self.pairedBand(in: context) {
-                    record.batteryPercent = newInfo.batteryPercent
-                    record.isCharging = newInfo.isCharging ?? false
-                    record.firmwareVersion = newInfo.firmware
+                let record = context.flatMap { Self.pairedBand(in: $0) }
+                let charging = chargingState(newInfo, previousPercent: lastBatteryReading ?? record?.batteryPercent)
+                if let percent = newInfo.batteryPercent { lastBatteryReading = percent }
+                if let record {
+                    // Only what the band actually reported: an unknown value never wipes the last one.
+                    if let percent = newInfo.batteryPercent { record.batteryPercent = percent }
+                    if let charging { record.isCharging = charging }
+                    if let firmware = newInfo.firmware { record.firmwareVersion = firmware }
                 }
-                if stage == .syncing, Self.isLow(newInfo.batteryPercent, charging: newInfo.isCharging) {
+                if stage == .syncing, Self.isLow(newInfo.batteryPercent, charging: charging) {
                     if lowBatteryOverride {
                         if !overrideLogged {
                             overrideLogged = true

@@ -241,6 +241,11 @@ public struct BandSession: Sendable {
             var effects = [log(.fromBand, channel, "\(response.opcodeName) -> \(response.statusName)", frame.raw)]
             var changed = false
             if let battery = response.batteryPercent { info.batteryPercent = battery; changed = true }
+            if response.opcode == Int(Whoop.Cmd.getBatteryLevel.rawValue) {
+                // Every reading, with where it came from: to tell a real 0% from a bad read later.
+                effects.append(.trace(response.batteryPercent.map { String(format: "BATTERY %.1f%% (GET_BATTERY_LEVEL, fresh)", $0) }
+                    ?? "BATTERY no valid reading: GET_BATTERY_LEVEL status \(response.statusName), body \(Whoop.hex(response.body))"))
+            }
             if let r = response.dataRange, r.capacityPages > 0, r.writePage <= r.capacityPages, r.trimPage <= r.capacityPages {
                 if range == nil { range = (r.trimPage, r.writePage, r.capacityPages) }
                 let behind = (Int64(r.writePage) - Int64(r.trimPage) + Int64(r.capacityPages)) % Int64(r.capacityPages)
@@ -274,11 +279,28 @@ public struct BandSession: Sendable {
             var changed = false
             if let battery = event.batteryPercent { info.batteryPercent = battery; changed = true }
             if let charging = event.charging { info.isCharging = charging; changed = true }
+            let at = Whoop.plausibleUnix(event.timestamp) ? HistorySync.utc(event.timestamp) : "unset clock (\(event.timestamp))"
             switch Whoop.EventID(rawValue: UInt16(truncatingIfNeeded: event.eventID)) {
             case .wristOn: info.isWorn = true; changed = true
             case .wristOff: info.isWorn = false; changed = true
-            case .chargingOn: info.isCharging = true; changed = true
-            case .chargingOff: info.isCharging = false; changed = true
+            case .chargingOn:
+                info.isCharging = true; changed = true
+                effects.append(.trace("CHARGING ON (band event at \(at))"))
+            case .chargingOff:
+                info.isCharging = false; changed = true
+                effects.append(.trace("CHARGING OFF (band event at \(at))"))
+            case .batteryLevel:
+                let volts = event.batteryMillivolts.map { "\($0) mV" } ?? "? mV"
+                let plugged = event.charging == true ? "yes" : "no"
+                effects.append(.trace(event.batteryPercent.map {
+                    String(format: "BATTERY %.1f%%", $0) + " (band event at \(at), \(volts), charging \(plugged))"
+                } ?? "BATTERY event without a valid reading at \(at): body \(Whoop.hex(event.body))"))
+            case .boot:
+                effects.append(.trace("BAND REBOOTED (BOOT event at \(at)): if the battery was near 0%, it ran flat"))
+            case .rtcLost:
+                effects.append(.trace("BAND CLOCK LOST (RTC_LOST event at \(at)): it lost power or reset; records stamped before the next SET_CLOCK have no real date"))
+            case .setRtc:
+                effects.append(.trace("Band confirms its clock was set (SET_RTC event at \(at))"))
             default: break
             }
             if changed { effects.append(.info(info)) }

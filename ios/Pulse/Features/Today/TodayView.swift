@@ -34,6 +34,16 @@ struct TodayView: View {
     @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
     /// Goes up by one on every tap that opens something. Drives the light haptic.
     @State private var taps = 0
+    /// Today's numbers so far (before the first recovery exists).
+    @State private var soFar: TodaySoFar?
+    /// The live heart-rate card is streaming (only while this screen is open).
+    @State private var liveOn = false
+    @Environment(\.scenePhase) private var scenePhase
+    /// "Sync now" from this screen: runs quietly, ends in a toast (the sheet only opens on a problem).
+    @State private var manualSync = false
+    @State private var syncedBefore: Date?
+    @State private var coolingDown = false
+    @State private var toastText: String?
 
     var body: some View {
         NavigationStack {
@@ -79,7 +89,11 @@ struct TodayView: View {
             .sheet(isPresented: $showJournal) {
                 JournalView()
             }
-            .task(id: "\(loader.revision)-\(loader.rawDataReady)") { loadStress() }
+            .task(id: "\(loader.revision)-\(loader.rawDataReady)") { loadToday() }
+            .toast($toastText)
+            .onChange(of: band.stage) { _, stage in manualSyncChanged(stage) }
+            .onChange(of: scenePhase) { _, phase in if phase != .active { setLive(false) } }
+            .onDisappear { setLive(false) }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
@@ -95,15 +109,16 @@ struct TodayView: View {
             hero(today).riseIn(1)
             strain(today).riseIn(2)
             stats(today).riseIn(3)
+            liveCard.riseIn(3)
             extras.riseIn(3)
             week.riseIn(4)
             activity.riseIn(5)
         }
     }
 
-    /// Date on the left, data source + settings on the right.
+    /// Screen name on the left (never truncated), data source + settings on the right.
     private var header: some View {
-        ScreenHeader(title: Date.now.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())) {
+        ScreenHeader(title: "Today") {
             StatusPill()
             IconButton(systemName: "bubble.left", label: "Coach") {
                 open { showCoach = true }
@@ -270,28 +285,122 @@ struct TodayView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// No recovery yet. There is no demo data to fall back on, so say what to do next.
+    /// Before the first night: no recovery yet, so show what there IS (live HR, today so far).
+    @ViewBuilder
     private var loadingState: some View {
-        VStack(alignment: .leading, spacing: DS.Space.l) {
-            if bands.isEmpty {
+        if bands.isEmpty {
+            VStack(alignment: .leading, spacing: DS.Space.l) {
                 EmptyState(symbol: "waveform.path.ecg", title: "Pair your band",
-                           text: "Pulse reads your band directly over Bluetooth. Pair it, wear it tonight, and your first recovery appears in the morning.")
+                           text: "Pulse reads your band directly over Bluetooth. Pair it, wear it tonight, and your first night shows up in the morning.")
                 Button("Pair your band") { showPairing = true }
                     .buttonStyle(.primaryPill)
-            } else {
-                EmptyState(symbol: "moon.zzz", title: "No recovery yet",
-                           text: "Wear your band tonight to see your first recovery.")
-                Button("Sync now") {
-                    band.syncNow(context: context)
-                    showPairing = true
-                }
-                .buttonStyle(.secondaryPill)
-                .disabled(band.isBusy)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.Space.side)
+            .padding(.top, DS.Space.xxl)
+        } else {
+            VStack(alignment: .leading, spacing: DS.Space.xxl) {
+                liveCard.riseIn(1)
+                todaySoFar.riseIn(2)
+                firstNightCard.riseIn(3)
+                Button("Sync now") { startManualSync() }
+                    .buttonStyle(.secondaryPill)
+                    .disabled(band.isBusy || coolingDown)
+                    .accessibilityHint(coolingDown ? "Just synced. Available again in a few seconds." : "")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.Space.side)
+            .padding(.top, DS.Space.l)
+            .padding(.bottom, DS.Space.xxl)
+        }
+    }
+
+    /// The band's heart rate right now. Streams only while you ask and this screen is open
+    /// (the stream costs band battery).
+    private var liveCard: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            HStack(spacing: 6) {
+                Image(systemName: "heart")
+                Text("LIVE HEART RATE")
+            }
+            .textStyle(.label)
+            .foregroundStyle(DS.Colors.primary)
+            .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                Text(liveOn ? (band.liveHeartRate.map(String.init) ?? "--") : "--")
+                    .textStyle(.title)
+                    .foregroundStyle(liveOn && band.liveHeartRate != nil ? DS.Colors.accent : DS.Colors.primary)
+                    .contentTransition(.numericText())
+                    .animation(DS.Motion.spring, value: band.liveHeartRate)
+                Text("bpm")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                Spacer()
+                Button(liveOn ? "Stop" : "Show live") { setLive(!liveOn) }
+                    .buttonStyle(.secondaryPill)
+                    .fixedSize()
+            }
+            Text(liveOn ? (band.liveHeartRate == nil ? "Connecting to your band…" : "Live from your band. Stops when you leave this screen.")
+                        : "Streams while this screen is open. Uses a little band battery.")
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, DS.Space.side)
-        .padding(.top, DS.Space.xxl)
+        .monoCard()
+        .accessibilityElement(children: .contain)
+    }
+
+    /// Today's numbers from what the band has synced so far.
+    private var todaySoFar: some View {
+        VStack(alignment: .leading, spacing: DS.Space.l) {
+            Text("TODAY SO FAR")
+                .textStyle(.label)
+                .foregroundStyle(DS.Colors.primary)
+                .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .top, spacing: DS.Space.m) {
+                stat(.restingHeartRate) {
+                    StatBlock(symbol: "heart", label: "Resting HR", number: soFar?.restingHeartRate,
+                              format: { "\(Int($0.rounded()))" }, unit: "bpm", caption: "lowest so far")
+                }
+                StatBlock(symbol: "waveform.path.ecg", label: "Average HR", number: soFar?.averageHeartRate,
+                          format: { "\(Int($0.rounded()))" }, unit: "bpm", caption: "today")
+            }
+            Hairline()
+            HStack(alignment: .top, spacing: DS.Space.m) {
+                stat(.strain) {
+                    StatBlock(symbol: "flame", label: "Strain", number: soFar?.strain,
+                              format: { PulseFormat.strain($0) }, caption: "so far, of 21")
+                }
+                StatBlock(symbol: "clock", label: "Data", number: soFar.map { Double($0.wornMinutes) },
+                          format: { PulseFormat.duration(minutes: Int($0.rounded())) },
+                          caption: "collected today")
+            }
+            if soFar == nil {
+                Text("Nothing from today yet. Wear the band and sync.")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+        }
+    }
+
+    /// What happens next. Recovery compares a night with YOUR normal, so the score needs a few nights.
+    private var firstNightCard: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(spacing: 6) {
+                Image(systemName: "moon.zzz")
+                Text("FIRST NIGHT TONIGHT")
+            }
+            .textStyle(.label)
+            .foregroundStyle(DS.Colors.primary)
+            Text("Wear it to sleep tonight. Sleep, HRV and resting HR show tomorrow morning; the recovery score comes once it has learned your normal (\(Recovery.minimumBaselineNights) nights).")
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .monoCard()
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Helpers
@@ -320,9 +429,56 @@ struct TodayView: View {
         }
     }
 
-    private func loadStress() {
+    // MARK: - Live heart rate and "Sync now"
+
+    private func setLive(_ on: Bool) {
+        guard on != liveOn else { return }
+        liveOn = on
+        if on { band.startLive(context: context) } else { band.stopLive() }
+    }
+
+    private func startManualSync() {
+        taps += 1
+        syncedBefore = bands.first?.lastHistorySyncAt
+        manualSync = true
+        band.syncNow(context: context)
+    }
+
+    /// A manual sync ended: a toast for "nothing new" / "saved", the sheet only for a problem.
+    /// Then the button rests for 30 seconds.
+    private func manualSyncChanged(_ stage: BandManager.Stage) {
+        guard manualSync else { return }
+        switch stage {
+        case .upToDate:
+            manualSync = false
+            if band.recordsSaved == 0 {
+                let last = syncedBefore.map { " Last synced \($0.formatted(.relative(presentation: .named, unitsStyle: .wide)))." } ?? ""
+                toastText = "Already up to date." + last
+            } else {
+                toastText = "Synced \(PulseFormat.duration(minutes: max(1, band.recordsSaved / 60))) of new data."
+            }
+            coolDown()
+        case .failed, .paused, .unavailable:
+            manualSync = false
+            showPairing = true
+            coolDown()
+        default:
+            break
+        }
+    }
+
+    private func coolDown() {
+        coolingDown = true
+        Task {
+            try? await Task.sleep(for: .seconds(30))
+            coolingDown = false
+        }
+    }
+
+    private func loadToday() {
         let start = Calendar.current.startOfDay(for: .now)
         let minutes = PulseStore.minutes(from: start, to: .now, in: context)
+        soFar = TodaySoFar.compute(minutes: minutes, profile: profiles.first?.metricsProfile ?? MetricsProfile())
         stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value),
                                    restingHR: days.first?.restingHeartRate ?? 60,
                                    maxHR: profiles.first?.estimatedMaxHeartRate() ?? 190,

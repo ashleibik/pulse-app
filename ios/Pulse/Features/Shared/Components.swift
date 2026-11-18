@@ -32,7 +32,8 @@ struct ScreenHeader<Trailing: View>: View {
                 .textStyle(.bodyStrong)
                 .foregroundStyle(DS.Colors.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: true, vertical: false)   // the title never truncates
+                .layoutPriority(1)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: DS.Space.s)
             trailing
@@ -533,12 +534,54 @@ struct StatusPill: View {
             Text(text)
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 28)
         .overlay(Capsule().stroke(DS.Colors.border, lineWidth: 1))
-        .fixedSize()
+        // Not fixed width: on a narrow header the pill shortens, the screen title never does.
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Toast
+
+/// A one-line message near the bottom that leaves by itself (DESIGN.md §4).
+/// Use `.toast($message)` on a screen; setting the message shows it for 3 seconds.
+struct Toast: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .textStyle(.caption)
+            .foregroundStyle(DS.Colors.primary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, DS.Space.l)
+            .padding(.vertical, DS.Space.s)
+            .frame(minHeight: 44)
+            .background(Capsule().fill(DS.Colors.surface))
+            .overlay(Capsule().stroke(DS.Colors.border, lineWidth: 1))
+            .padding(.horizontal, DS.Space.side)
+            .padding(.bottom, DS.Space.l)
+    }
+}
+
+extension View {
+    func toast(_ message: Binding<String?>) -> some View {
+        overlay(alignment: .bottom) {
+            if let text = message.wrappedValue {
+                Toast(text: text)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task(id: text) {
+                        AccessibilityNotification.Announcement(text).post()
+                        try? await Task.sleep(for: .seconds(3))
+                        withAnimation(DS.Motion.spring) { message.wrappedValue = nil }
+                    }
+            }
+        }
+        .animation(DS.Motion.spring, value: message.wrappedValue)
     }
 
     private var text: String {

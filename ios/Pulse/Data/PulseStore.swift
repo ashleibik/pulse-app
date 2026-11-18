@@ -42,6 +42,7 @@ enum PulseStore {
         try context.delete(model: WorkoutRecord.self)
         try context.delete(model: DaySummaryRecord.self)
         try context.save()
+        RawHistoryArchive.delete()
     }
 
     /// Removes what older versions simulated: the demo month and simulated-band syncs.

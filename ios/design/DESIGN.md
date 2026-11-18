@@ -59,6 +59,10 @@ All styles follow Dynamic Type.
 - Cards: `surface`, radius 22, 1 pt `border` edge. Few of them.
 - Buttons: pills, height 52. Primary = `accent` fill with a glow, dark text. Secondary = quiet fill.
 - Tab screens and sheets pin a slim header (`ScreenHeader`); pushed screens keep the system bar.
+  The title never truncates: the status pill next to it gives way first.
+- Toasts (`Toast`): a small `surface` capsule with a `border` edge and one `caption` line, near the
+  bottom; it leaves by itself after 3 s. For quiet outcomes ("Already up to date") that don't
+  deserve a sheet. VoiceOver announces it.
 - Minimum tap target 44 pt.
 
 ## 5. The glow

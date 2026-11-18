@@ -137,9 +137,16 @@ final class SyncWorker: @unchecked Sendable {
             do {
                 try await importer.save(records, source: .history)
                 let ms = Int(Date().timeIntervalSince(started) * 1000)
+                // Raw copy before the ack (the band frees the batch after it). Never blocks the sync.
+                let raw: String
+                switch RawHistoryArchive.append(records) {
+                case .kept: raw = ""
+                case .full: raw = " (raw copy: archive full, not kept)"
+                case .failed(let why): raw = " (raw copy failed: \(why))"
+                }
                 queue.async { [self] in
                     guard var current = session else { return }
-                    trace.add("SAVED \(records.count) records in \(ms) ms: sending ack", at: Date().timeIntervalSince1970)
+                    trace.add("SAVED \(records.count) records in \(ms) ms\(raw): sending ack", at: Date().timeIntervalSince1970)
                     lastActivity = Date()
                     let effects = current.didPersist(token: token, recordCount: records.count)
                     session = current

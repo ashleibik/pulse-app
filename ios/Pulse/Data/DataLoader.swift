@@ -46,8 +46,8 @@ final class DataLoader {
             defaults.removeObject(forKey: "dataSource")
             defaults.removeObject(forKey: "demoRawImportComplete")
         }
-        // Used band: before this version the pairing day wasn't stored. Pick a safe one.
-        if BandManager.pairedBand(in: context) != nil { BandDataCutoff.setForExistingInstall() }
+        // Used band, paired before the pairing day was stored: set the real one (once).
+        if BandManager.pairedBand(in: context) != nil { BandDataCutoff.fixPairingDayOnce() }
         let removedOldOwner = BandDataCutoff.date.map {
             (try? PulseStore.deleteBandData(before: $0, in: context)) ?? false
         } ?? false

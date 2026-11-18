@@ -68,6 +68,9 @@ extension Whoop {
         public let accelG: [Double]?         // [36:48] 3 x float32, gravity vector (nil if implausible)
         public let rrMsUnverified: [Int]     // UNKNOWN layout guess: count [18], i16 from [19]
         public let length: Int
+        /// The whole record as received (inner bytes). Archived for the first nights so RR and
+        /// motion can be decoded again if the layout guesses above turn out wrong.
+        public var raw: [UInt8] = []
     }
 
     public enum Packet: Sendable, Equatable {
@@ -211,7 +214,7 @@ extension Whoop {
         }
         return .history(HistoryRecord(version: Int(inner[1]), counter: LE.u32(inner, 3), timestamp: LE.u32(inner, 7),
                                       subsec: LE.u16(inner, 11), heartRate: Int(inner[17]), accelG: accel,
-                                      rrMsUnverified: rrList(inner, countAt: 18), length: inner.count))
+                                      rrMsUnverified: rrList(inner, countAt: 18), length: inner.count, raw: inner))
     }
 
     // MARK: - Standard Heart Rate Measurement (0x2A37), Bluetooth SIG spec
