@@ -74,7 +74,7 @@ struct BigScoreRing: View {
                 .glow(color)
             VStack(spacing: DS.Space.xs) {
                 Text(text)
-                    .font(.system(size: 72, weight: .bold, width: .condensed))
+                    .font(.system(size: 72, weight: .bold).width(.condensed))
                     .foregroundStyle(DS.Colors.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
