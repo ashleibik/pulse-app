@@ -522,9 +522,9 @@ extension String {
 
 /// Says where the numbers come from, in words. Outline only, so it stays quiet.
 struct StatusPill: View {
-    @Environment(DataLoader.self) private var loader
-    @Environment(BandManager.self) private var band
-    @Query private var bands: [BandRecord]
+    @Environment(DataLoader.self) fileprivate var loader
+    @Environment(BandManager.self) fileprivate var band
+    @Query fileprivate var bands: [BandRecord]
 
     var body: some View {
         HStack(spacing: 6) {
@@ -583,8 +583,10 @@ extension View {
         }
         .animation(DS.Motion.spring, value: message.wrappedValue)
     }
+}
 
-    private var text: String {
+extension StatusPill {
+    fileprivate var text: String {
         if band.isBusy { return band.statusLine }
         if case .failed = band.stage { return "Sync failed" }
         if case .paused(let message) = band.stage { return message }
