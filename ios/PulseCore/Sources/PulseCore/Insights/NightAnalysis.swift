@@ -26,35 +26,50 @@ public struct SleepSegment: Sendable, Equatable, Identifiable {
 
 public enum SleepTimeline {
 
-    /// Classifies each minute of a sleep session, then merges equal neighbours into segments.
+    /// A minute with this much movement (`MinuteSample.movement`) is awake.
+    public static let awakeMovement = 6.0
+    /// A minute with less movement than this can be restful.
+    public static let restfulMovement = 1.0
+
+    /// One phase per minute of a sleep. This is the only place that decides which minutes of a sleep
+    /// count as awake, so the night's headline numbers and its phases always add up to the same total.
     ///
     /// Per minute:
-    ///   awake   = not worn, OR moving (the minute's own Cole-Kripke term >= 1, i.e. activity >= ~26),
-    ///             OR heart rate >= the night's median + 10
-    ///   restful = very still (activity < 3) AND heart rate at or below the night's median
+    ///   awake   = not worn or no data, OR moving, OR heart rate >= the night's median + 10
+    ///   restful = very still AND heart rate at or below the night's median
     ///   light   = everything else
     /// Then non-awake runs shorter than 3 minutes are absorbed by their neighbour, so the chart
     /// shows the shape of the night instead of noise.
-    public static func build(minutes: [MinuteSample], from start: Date, to end: Date) -> [SleepSegment] {
-        let night = minutes.filter { $0.start >= start && $0.start < end }.sorted { $0.start < $1.start }
-        let hrs = night.compactMap(\.averageHeartRate)
-        guard !night.isEmpty, !hrs.isEmpty else { return [] }
-        let median = Stats.median(hrs)
-        let movingThreshold = SleepDetector.coleKripkeDivisor / SleepDetector.coleKripkeWeights[4]
+    public static func phases(hr: [Double?], movement: [Double?]) -> [SleepPhase] {
+        let rates = hr.compactMap { $0 }
+        guard !rates.isEmpty else { return hr.map { _ in .awake } }
+        let median = Stats.median(rates)
+        return smooth(hr.indices.map { i in
+            guard let rate = hr[i], let moved = movement[i] else { return .awake }
+            if moved >= awakeMovement || rate >= median + 10 { return .awake }
+            return (moved < restfulMovement && rate <= median) ? .restful : .light
+        })
+    }
 
-        var phases: [SleepPhase] = night.map { m in
-            guard let hr = m.averageHeartRate else { return .awake }
-            let activity = m.averageActivity
-            if activity >= movingThreshold || hr >= median + 10 { return .awake }
-            return (activity < 3 && hr <= median) ? .restful : .light
+    /// The night as segments that cover every minute from `start` to `end`.
+    public static func build(minutes: [MinuteSample], from start: Date, to end: Date) -> [SleepSegment] {
+        let count = Int((end.timeIntervalSince(start) / 60).rounded(.up))
+        guard count > 0 else { return [] }
+        var hr = [Double?](repeating: nil, count: count)
+        var movement = [Double?](repeating: nil, count: count)
+        for minute in minutes where minute.start >= start && minute.start < end && minute.isWorn {
+            let index = Int(minute.start.timeIntervalSince(start) / 60)
+            hr[index] = minute.averageHeartRate
+            movement[index] = minute.movement
         }
-        phases = smooth(phases)
+        guard hr.contains(where: { $0 != nil }) else { return [] }
+        let phases = SleepTimeline.phases(hr: hr, movement: movement)
 
         var segments: [SleepSegment] = []
         var runStart = 0
-        for i in 1...phases.count where i == phases.count || phases[i] != phases[runStart] {
-            segments.append(SleepSegment(start: night[runStart].start,
-                                         end: night[i - 1].start.addingTimeInterval(60),
+        for i in 1...count where i == count || phases[i] != phases[runStart] {
+            segments.append(SleepSegment(start: start.addingTimeInterval(Double(runStart) * 60),
+                                         end: min(end, start.addingTimeInterval(Double(i) * 60)),
                                          phase: phases[runStart]))
             runStart = i
         }

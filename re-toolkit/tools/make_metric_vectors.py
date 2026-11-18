@@ -1,5 +1,5 @@
 """
-make_metric_vectors.py: write shared/test-vectors/metrics_v1.json.
+make_metric_vectors.py: write shared/test-vectors/metrics_v2.json.
 
 The Python reference computes expected outputs for a set of deterministic inputs. The Swift
 tests (ios/PulseCore/Tests/PulseCoreTests/MetricsParityTests.swift) load the same file and
@@ -44,6 +44,8 @@ def build_vectors() -> dict:
 
     # ---- Overnight HRV ------------------------------------------------------------
     minute_rr = [[r1(rng.gauss(920, 40)) for _ in range(65)] for _ in range(30)]
+    for minute in minute_rr[::3]:      # what the real band does: filler values and impossible beats
+        minute[4], minute[30], minute[50] = 500.0, 1900.0, 2400.0
     asleep_mask = [not (7 <= i <= 8 or i == 21) for i in range(30)]
     overnight = [{"minute_rr": minute_rr, "asleep": asleep_mask, "expected": overnight_rmssd(minute_rr, asleep_mask)},
                  {"minute_rr": minute_rr[:12], "asleep": asleep_mask[:12],

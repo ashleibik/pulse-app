@@ -18,6 +18,8 @@ The owner develops on Windows, has no Mac, and installs by sideloading (moving t
   `group.dev.pulse.app`). Changing it loses the installed app's data.
 - **Do not write steps or active energy to Apple Health.** The owner's Apple Watch owns those.
   Daily calories stay inside the app.
+- **The build is always `Pulse.ipa` in the repo root.** Each new build overwrites it. No extra copies such as
+  `Pulse-<commit>.ipa`. `*.ipa` and `sideloadlydaemon.log` stay in `.gitignore`.
 
 ## Decisions
 

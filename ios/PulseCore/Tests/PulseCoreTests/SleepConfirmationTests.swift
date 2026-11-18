@@ -118,6 +118,88 @@ private func night(_ from: Double, _ to: Double) -> [MinuteSample] {
     #expect(found.allSatisfy { $0.start >= time(26.75) || $0.end <= time(26.1) })
 }
 
+// MARK: - Calibrated on a real night (RealNightReplayTests replays the night itself)
+
+/// Asleep the way the real band reports it: a steady value of 1 to 9 that only changes with the wrist's position.
+private func nightWithRestingOffset(_ from: Double, _ to: Double) -> [MinuteSample] {
+    stretch(from, to) { (UInt8(54 + $0 % 5), [1, 9, 4, 7, 2][($0 / 40) % 5]) }
+}
+
+@Test func aSteadyRestingOffsetIsNotMovement() {
+    let at = time(10)
+    #expect(minute(at, hr: 55, activity: 9).movement == 0)
+    #expect(minute(at, hr: 55, activity: 40).movement == 40)        // too high to be a wrist lying still
+    var fidgeting = minute(at, hr: 70, activity: 9)
+    for second in stride(from: 0, to: 60, by: 3) { fidgeting.activity[second] = 30 }
+    #expect(fidgeting.movement == 7)
+}
+
+@Test func aNightWithARestingOffsetIsFoundFromStartToEnd() throws {
+    let minutes = daytime(9, 23) + nightWithRestingOffset(23, 32) + daytime(32, 34)
+    let found = sleeps(minutes, now: time(34))
+    #expect(found.count == 1)
+    let sleep = try #require(found.first)
+    #expect(abs(sleep.start.timeIntervalSince(time(23))) <= 10 * 60)
+    #expect(abs(sleep.end.timeIntervalSince(time(32))) <= 10 * 60)
+}
+
+@Test func aShortWakeUpDoesNotEndTheNight() throws {
+    let wake = stretch(27, 27 + 25.0 / 60) { _ in (78, 30) }        // 25 minutes up, like 06:40 on the real night
+    let minutes = daytime(9, 23) + nightWithRestingOffset(23, 27) + wake
+        + nightWithRestingOffset(27 + 25.0 / 60, 32) + daytime(32, 34)
+    let found = sleeps(minutes, now: time(34))
+    #expect(found.count == 1)
+    let sleep = try #require(found.first)
+    #expect(abs(sleep.end.timeIntervalSince(time(32))) <= 10 * 60)
+    #expect(sleep.awakeMinutes >= 25)
+}
+
+@Test func aSleepsTotalsAddUpToItsPhases() throws {
+    // Ten minutes of the night never reached the phone.
+    let gap = time(26)..<time(26).addingTimeInterval(10 * 60)
+    let minutes = (daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33)).filter { !gap.contains($0.start) }
+    let sleep = try #require(sleeps(minutes, now: time(33)).first)
+    let segments = SleepTimeline.build(minutes: minutes, from: sleep.start, to: sleep.end)
+    let totals = SleepTimeline.totals(segments)
+    #expect((totals[.light] ?? 0) + (totals[.restful] ?? 0) == sleep.asleepMinutes)
+    #expect((totals[.awake] ?? 0) == sleep.awakeMinutes)
+    #expect(totals.values.reduce(0, +) == Int(sleep.end.timeIntervalSince(sleep.start) / 60))
+    #expect(segments.contains { $0.phase == .awake && $0.start <= gap.lowerBound && $0.end >= gap.upperBound })
+}
+
+@Test func aTimeTheUserLeftAloneFollowsBetterDetection() throws {
+    let minutes = daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33)
+    // Made on an older version that saw only 01:00 to 04:00. The user moved the start and kept the end.
+    let edit = SleepCorrection(detectedStart: time(25), detectedEnd: time(28), start: time(23.5), end: time(28),
+                               createdAt: time(33))
+    let sleep = try #require(sleeps(minutes, now: time(33), corrections: [edit]).first)
+    #expect(sleep.start == time(23.5))
+    #expect(abs(sleep.end.timeIntervalSince(time(30.5))) <= 10 * 60)
+}
+
+// MARK: - Beats for HRV
+
+@Test func cleanBeatsDropsFillerImpossibleBeatsAndBigJumps() {
+    let steady = [Double](repeating: 900, count: 20)
+    var beats = steady
+    beats[3] = 500                  // the band's filler value
+    beats[8] = 2400                 // impossible
+    beats[12] = 1500                // far from its neighbours
+    let clean = HRV.cleanBeats(beats)
+    #expect(clean[3] == nil && clean[8] == nil && clean[12] == nil)
+    #expect(clean.compactMap { $0 }.count == 17)
+    // Each beat is near the local median, but the step between the two is more than 20%.
+    let step = HRV.cleanBeats([800, 800, 800, 800, 800, 800, 980, 980, 980, 980, 980, 980])
+    #expect(step[6] == nil && step[5] == 800 && step[7] == 980)
+}
+
+@Test func hrvNeverPairsBeatsAcrossTwoMinutes() throws {
+    // Every minute is perfectly steady, but at a different pace from the minute before.
+    let minutes = (0..<15).map { [Double](repeating: 900 + Double($0 % 2) * 40, count: 60) }
+    let asleep = [Bool](repeating: true, count: 15)
+    #expect(try #require(HRV.overnightRMSSD(minuteRR: minutes, asleep: asleep)) == 0)
+}
+
 // MARK: - In progress
 
 @Test func aSleepStillGoingIsNotShownUntilThePersonIsUp() throws {

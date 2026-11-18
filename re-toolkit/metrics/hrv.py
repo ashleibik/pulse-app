@@ -6,6 +6,7 @@ from .stats import mean, median
 
 RR_MIN_MS = 300.0
 RR_MAX_MS = 2000.0
+FILLER_RR_MS = 500.0   # the band writes exactly this when it has no beat to report
 
 
 def clean_rr(rr, half_window=5, tolerance=0.20):
@@ -23,6 +24,17 @@ def clean_rr(rr, half_window=5, tolerance=0.20):
         neighbours = [v for v in valid[lo:hi] if v is not None]
         m = median(neighbours)
         out.append(x if abs(x - m) <= tolerance * m else None)
+    return out
+
+
+def clean_beats(rr, tolerance=0.20):
+    """clean_rr without the filler value, and without a beat >20% away from the clean beat right before it."""
+    out = clean_rr([0.0 if x == FILLER_RR_MS else x for x in rr], tolerance=tolerance)
+    previous = None
+    for i, beat in enumerate(out):
+        if beat is not None and previous is not None and abs(beat - previous) > tolerance * previous:
+            out[i] = None
+        previous = out[i]
     return out
 
 
@@ -48,8 +60,11 @@ def overnight_rmssd(minute_rr, asleep, segment_minutes=5, min_segments=3):
     i, n = 0, len(minute_rr)
     while i + segment_minutes <= n:
         if all(asleep[i:i + segment_minutes]):
-            beats = [float(x) for minute in minute_rr[i:i + segment_minutes] for x in minute]
-            v = rmssd(clean_rr(beats))
+            # Each minute is cleaned alone, and the None between minutes stops a pair forming across them.
+            beats = []
+            for minute in minute_rr[i:i + segment_minutes]:
+                beats += clean_beats([float(x) for x in minute]) + [None]
+            v = rmssd(beats)
             if v is not None:
                 values.append(v)
             i += segment_minutes

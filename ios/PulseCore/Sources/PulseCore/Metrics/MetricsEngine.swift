@@ -28,10 +28,12 @@ public struct MetricsResult: Sendable {
 ///   4. baseline = previous 14 days; sleep need; recovery; day strain; plain-language explanation
 public enum MetricsEngine {
     /// 2: sleeps must be confirmed and finished (docs/METRICS.md §4, steps 6-9).
-    public static let algorithmVersion = 2
-    /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v1.json).
+    /// 3: calibrated on a real night: movement without the band's resting offset, short wake-ups stay
+    ///    inside a sleep, cleaner beats for HRV, and one definition of the awake minutes of a sleep.
+    public static let algorithmVersion = 3
+    /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v2.json).
     /// The confirmation stage on top of them is Swift only.
-    public static let sharedFormulaVersion = 1
+    public static let sharedFormulaVersion = 2
     public static let baselineDays = 14
 
     /// Minute-by-minute arrays with no gaps.
@@ -39,6 +41,8 @@ public enum MetricsEngine {
         var start: Date
         var hr: [Double?]
         var activity: [Double?]
+        /// `MinuteSample.movement`: what sleep detection judges, because `activity` holds a resting offset.
+        var movement: [Double?]
         var rr: [[Double]]
         var source: DataSource
 
@@ -54,6 +58,7 @@ public enum MetricsEngine {
         var t = Timeline(start: first.start,
                          hr: Array(repeating: nil, count: count),
                          activity: Array(repeating: nil, count: count),
+                         movement: Array(repeating: nil, count: count),
                          rr: Array(repeating: [], count: count),
                          source: sorted.allSatisfy { $0.source == .simulated } ? .simulated : last.source)
         for m in sorted where m.isWorn {
@@ -61,26 +66,40 @@ public enum MetricsEngine {
             guard i >= 0 && i < count else { continue }
             t.hr[i] = m.averageHeartRate
             t.activity[i] = m.averageActivity
+            t.movement[i] = m.movement
             t.rr[i] = m.rrIntervalsMs.map { Double($0) }
         }
         return t
     }
 
-    /// The user's corrections, oldest first, on top of what was detected.
+    /// The user's corrections, oldest first, on top of what was detected. A time the user left as it
+    /// was follows the detection, so better detection can still move it; a time they changed stays.
     static func applying(_ corrections: [SleepCorrection], to detected: [SleepDetector.Session], timeline tl: Timeline,
                          asleep: [Bool]) -> [SleepDetector.Session] {
         var sessions = detected
-        let moving = SleepDetector.coleKripke(tl.activity)
         for correction in corrections.sorted(by: { $0.createdAt < $1.createdAt }) {
+            let matching = sessions.filter { correction.applies(toStart: tl.date($0.start), end: tl.date($0.end)) }
             sessions.removeAll { correction.applies(toStart: tl.date($0.start), end: tl.date($0.end)) }
-            guard let start = correction.start, let end = correction.end else { continue }
+            guard var start = correction.start, var end = correction.end else { continue }
+            if start == correction.detectedStart, let first = matching.first { start = tl.date(first.start) }
+            if end == correction.detectedEnd, let last = matching.last { end = tl.date(last.end) }
             let from = max(0, tl.index(start)), to = min(tl.count, tl.index(end))
             guard from < to else { continue }
-            // The user says this was sleep: only minutes that clearly moved count as awake.
-            let flags = tl.hr.indices.map { asleep[$0] || moving[$0] < 1 }
-            sessions.append(SleepDetector.session(start: from, end: to, asleep: flags))
+            sessions.append(SleepDetector.session(start: from, end: to, asleep: asleep))
         }
         return sessions.sorted { $0.start < $1.start }
+    }
+
+    /// Counts each sleep's minutes from its phases, so its totals match what the Sleep screens show.
+    /// Returns the sleeps and one flag per minute of the timeline: asleep inside a sleep.
+    static func described(_ sessions: [SleepDetector.Session], timeline tl: Timeline) -> (sessions: [SleepDetector.Session], asleep: [Bool]) {
+        var asleep = [Bool](repeating: false, count: tl.count)
+        for session in sessions {
+            let range = session.start..<session.end
+            let phases = SleepTimeline.phases(hr: Array(tl.hr[range]), movement: Array(tl.movement[range]))
+            for (offset, phase) in phases.enumerated() { asleep[session.start + offset] = phase != .awake }
+        }
+        return (sessions.map { SleepDetector.session(start: $0.start, end: $0.end, asleep: asleep) }, asleep)
     }
 
     public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
@@ -92,13 +111,15 @@ public enum MetricsEngine {
         var anchor = calendar.date(byAdding: .hour, value: 12, to: startMidnight)!
         if anchor > tl.start { anchor = calendar.date(byAdding: .day, value: -1, to: anchor)! }
         let blocks = (0..<tl.count).map { Int((tl.date($0).timeIntervalSince(anchor) / 86_400).rounded(.down)) }
-        let asleep = SleepDetector.classify(hr: tl.hr, activity: tl.activity, blocks: blocks)
-        let finished = SleepDetector.confirmed(SleepDetector.sessions(asleep), asleep: asleep, hr: tl.hr, activity: tl.activity)
+        let candidates = SleepDetector.classify(hr: tl.hr, activity: tl.movement, blocks: blocks)
+        let joined = SleepDetector.joiningShortWakes(SleepDetector.sessions(candidates), asleep: candidates)
+        let finished = SleepDetector.confirmed(joined, asleep: candidates, hr: tl.hr,
+                                               activity: tl.movement, rawActivity: tl.activity)
             .filter { session in
-                SleepDetector.isFinished(session, asleep: asleep, hr: tl.hr, activity: tl.activity,
+                SleepDetector.isFinished(session, asleep: candidates, hr: tl.hr, activity: tl.movement,
                                          minutesSinceEnd: now.timeIntervalSince(tl.date(session.end)) / 60)
             }
-        let found = applying(corrections, to: finished, timeline: tl, asleep: asleep)
+        let (found, asleep) = described(applying(corrections, to: finished, timeline: tl, asleep: candidates), timeline: tl)
         let sleeps = found.map { s -> SleepSession in
             // Deterministic ID from the start time: re-running the engine updates, not duplicates.
             var idSource = SeededRandom(seed: UInt64(bitPattern: Int64(tl.date(s.start).timeIntervalSince1970)))

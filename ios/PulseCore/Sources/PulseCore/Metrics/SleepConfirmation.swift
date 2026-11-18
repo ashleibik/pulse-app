@@ -37,8 +37,9 @@ public struct SleepCorrection: Codable, Sendable, Equatable, Identifiable {
 /// with a long stretch of near-zero motion and a calm heart rate, and the heart rate sits clearly
 /// below the same person's awake resting level.
 extension SleepDetector {
-    /// A minute at or below this average activity is near-zero motion.
-    public static let nearStillActivity = 4.0
+    /// A minute at or below this much movement (`MinuteSample.movement`) is near-zero motion.
+    /// Real night of 2026-11-18: 95% of asleep minutes were under 2.2, half of the awake evening above 2.
+    public static let nearStillActivity = 2.5
     /// Minutes of sustained stillness needed to start a sleep.
     public static let onsetMinutes = 45
     /// The same, when the band reported no motion at all and only heart rate can be judged.
@@ -57,29 +58,42 @@ extension SleepDetector {
     public static let maximumSurgesPerHour = 2.0
     /// Right after the onset a sleep has to settle: at most one surge in this many minutes.
     public static let settlingMinutes = 90
-    /// This many minutes of mostly moving ends a sleep. Shorter awake bursts stay inside it.
-    public static let activePeriodMinutes = 20
-    public static let activePeriodShare = 0.7
+    /// This many minutes of being up, within `activePeriodWindow`, end a sleep. A shorter wake-up stays inside it.
+    public static let activePeriodMinutes = 30
+    public static let activePeriodWindow = 35
+    /// Candidates this close together are one night: a wake-up under 30 minutes, plus the few minutes
+    /// around it that Cole-Kripke also scores as awake.
+    public static let shortWakeGap = 36
+    /// Sleep after a wake-up has to last this many minutes to count as going back to sleep.
+    public static let shortestLastStretch = 30
+    /// A heart rate this far above the sleep's own median counts as being up.
+    public static let awakeHeartRateRise = 8.0
 
     /// The candidates that really are sleep, trimmed to where the sleep starts and ends.
+    /// - Parameters:
+    ///   - activity: movement per minute, without the band's resting offset (`MinuteSample.movement`).
+    ///   - rawActivity: the band's own values, to tell a still wrist from a band reporting no motion at all.
     public static func confirmed(_ candidates: [Session], asleep: [Bool], hr: [Double?],
-                                 activity: [Double?]) -> [Session] {
+                                 activity: [Double?], rawActivity: [Double?]) -> [Session] {
         var excluded = [Bool](repeating: false, count: hr.count)
         for candidate in candidates { for i in candidate.start..<candidate.end { excluded[i] = true } }
 
         var out: [Session] = []
         for candidate in candidates {
             let worn = (candidate.start..<candidate.end).filter { hr[$0] != nil }
-            let moving = worn.filter { (activity[$0] ?? 0) > 0 }
+            let moving = worn.filter { (rawActivity[$0] ?? 0) > 0 }
             let motionKnown = !worn.isEmpty && Double(moving.count) >= 0.2 * Double(worn.count)
             let onset = motionKnown ? onsetMinutes : onsetMinutesWithoutMotion
+            let sleepingRates = worn.filter { asleep[$0] }.compactMap { hr[$0] }
+            guard !sleepingRates.isEmpty else { continue }
+            let usual = Stats.median(sleepingRates)
 
             var cursor = candidate.start
             while cursor + onset <= candidate.end {
                 guard let start = (cursor...(candidate.end - onset)).first(where: {
                     startsSleep(at: $0, length: onset, hr: hr, activity: activity)
                 }) else { break }
-                let stop = firstActivePeriod(from: start + onset, before: candidate.end, hr: hr, activity: activity)
+                let stop = firstActivePeriod(from: start + onset, before: candidate.end, usual: usual, hr: hr, activity: activity)
                 let limit = stop ?? candidate.end
                 guard let last = (start..<limit).last(where: { asleep[$0] }) else { break }
                 let end = stop == nil ? candidate.end : last + 1
@@ -173,13 +187,30 @@ extension SleepDetector {
         return count
     }
 
-    /// The first stretch that is mostly movement, which ends the sleep.
-    private static func firstActivePeriod(from start: Int, before end: Int, hr: [Double?], activity: [Double?]) -> Int? {
-        guard start + activePeriodMinutes <= end else { return nil }
-        return (start...(end - activePeriodMinutes)).first { i in
-            let moving = (i..<(i + activePeriodMinutes)).filter { hr[$0] != nil && (activity[$0] ?? 0) > nearStillActivity }
-            return (activity[i] ?? 0) > nearStillActivity
-                && Double(moving.count) >= activePeriodShare * Double(activePeriodMinutes)
+    /// Joins candidates split by a short wake-up, when the person really went back to sleep afterwards.
+    /// Lying quietly for a few minutes after getting up is not more sleep.
+    public static func joiningShortWakes(_ candidates: [Session], asleep: [Bool]) -> [Session] {
+        var out: [Session] = []
+        for candidate in candidates {
+            if let last = out.last, candidate.start - last.end <= shortWakeGap, candidate.asleep >= shortestLastStretch {
+                out[out.count - 1] = session(start: last.start, end: candidate.end, asleep: asleep)
+            } else {
+                out.append(candidate)
+            }
+        }
+        return out
+    }
+
+    /// The first long stretch of being up (moving, or a heart rate well above the sleep's), which ends the sleep.
+    private static func firstActivePeriod(from start: Int, before end: Int, usual: Double, hr: [Double?],
+                                          activity: [Double?]) -> Int? {
+        func isUp(_ i: Int) -> Bool {
+            guard let rate = hr[i] else { return false }
+            return (activity[i] ?? 0) > nearStillActivity || rate >= usual + awakeHeartRateRise
+        }
+        guard start < end else { return nil }
+        return (start..<end).first { i in
+            isUp(i) && (i..<min(i + activePeriodWindow, hr.count)).filter(isUp).count >= activePeriodMinutes
         }
     }
 

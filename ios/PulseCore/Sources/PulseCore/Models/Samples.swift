@@ -45,4 +45,17 @@ public struct MinuteSample: Codable, Sendable, Hashable {
     public var averageActivity: Double {
         Double(activity.reduce(0) { $0 + Int($1) }) / Double(max(activity.count, 1))
     }
+
+    /// The highest value the band reports for a wrist lying still. On a real night it sat at a steady
+    /// 0 to 10 for minutes at a time, changing only when the wrist settled into a new position.
+    public static let restingOffsetLimit = 12.0
+
+    /// How much the wrist really moved this minute: the seconds above the minute's own steady level.
+    /// A steady level above `restingOffsetLimit` can't be a resting wrist, so all of it counts.
+    public var movement: Double {
+        guard !activity.isEmpty else { return 0 }
+        let steady = Stats.median(activity.map { Double($0) })
+        guard steady <= Self.restingOffsetLimit else { return averageActivity }
+        return activity.reduce(0.0) { $0 + max(0, Double($1) - steady) } / Double(activity.count)
+    }
 }
