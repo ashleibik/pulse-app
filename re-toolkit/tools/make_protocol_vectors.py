@@ -44,6 +44,9 @@ def synthetic_packets() -> dict[str, bytes]:
         struct.pack_into("<I", dr, off, val)
     p["data_range_response"] = build_frame(bytes(dr))
     p["version_response"] = build_frame(bytes([0x24, 0x03, Cmd.REPORT_VERSION_INFO, 0x02, 0x01]) + b"41.17.4\x00\x01\x02")
+    # Binary numbers only, with stray printable bytes ("A", "#"): no readable version text.
+    p["version_response_binary"] = build_frame(bytes([0x24, 0x04, Cmd.REPORT_VERSION_INFO, 0x02, 0x01]) +
+                                               bytes([0x29, 0x00, 0x41, 0x00, 0x11, 0x23, 0x04, 0x00, 0x02, 0x00, 0x00]))
     body = b"\x00" + struct.pack("<I", 543) + struct.pack("<I", 3900) + b"\x01\x00\x00"
     p["event_battery"] = build_frame(bytes([PacketType.EVENT, 0x00]) +
                                      struct.pack("<HIHH", EventId.BATTERY_LEVEL, 1_750_000_100, 7, len(body)) + body)

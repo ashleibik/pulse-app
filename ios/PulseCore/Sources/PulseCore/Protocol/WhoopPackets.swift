@@ -32,7 +32,9 @@ extension Whoop {
         public var bandClock: UInt32?        // nil if implausible (clock not set)
         public var bandClockRaw: UInt32?
         public var dataRange: DataRange?
-        public var asciiView: String?        // REPORT_VERSION_INFO: layout UNKNOWN, show readable text
+        public var asciiView: String?        // REPORT_VERSION_INFO: layout UNKNOWN, every byte (dots for binary)
+        /// REPORT_VERSION_INFO for people: runs of 4+ readable characters joined by " / ". nil = none.
+        public var versionText: String?
     }
 
     /// EVENT (0x30). Layout REPORTED [OS].
@@ -144,10 +146,29 @@ extension Whoop {
                                     oldestRecord: oldest, newestRecord: newest)
         case .reportVersionInfo:
             r.asciiView = String(r.body.map { (32..<127).contains($0) ? Character(UnicodeScalar($0)) : "." })
+            r.versionText = readableRuns(r.body)
         default:
             break
         }
         return r
+    }
+
+    /// Runs of at least 4 printable ASCII characters, trimmed, joined by " / ". Same rule as parser.py.
+    static func readableRuns(_ bytes: [UInt8]) -> String? {
+        var runs: [String] = []
+        var current: [UInt8] = []
+        func close() {
+            if current.count >= 4 {
+                let text = String(decoding: current, as: UTF8.self).trimmingCharacters(in: .whitespaces)
+                if !text.isEmpty { runs.append(text) }
+            }
+            current = []
+        }
+        for byte in bytes {
+            if (32..<127).contains(byte) { current.append(byte) } else { close() }
+        }
+        close()
+        return runs.isEmpty ? nil : runs.joined(separator: " / ")
     }
 
     static func decodeEvent(_ inner: [UInt8]) -> Packet? {

@@ -152,6 +152,7 @@ func int(_ v: Any?) -> Int? { (v as? NSNumber)?.intValue }
                 #expect(r.dataRange == nil, "\(name)")
             }
             #expect(r.asciiView == d["ascii_view"] as? String, "\(name)")
+            #expect(r.versionText == d["version_text"] as? String, "\(name)")
         case .event(let e):
             #expect(kind == "event", "\(name)")
             #expect(e.eventID == int(want["event_id"]) && e.eventName == want["event_name"] as! String, "\(name)")

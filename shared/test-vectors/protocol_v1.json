@@ -691,7 +691,25 @@
     "status_name": "OK",
     "body_hex": "34312e31372e3400010200",
     "decoded": {
-     "ascii_view": "41.17.4...."
+     "ascii_view": "41.17.4....",
+     "version_text": "41.17.4"
+    }
+   }
+  },
+  {
+   "name": "version_response_binary",
+   "hex": "aa14000324040702012900410011230400020000727e50b9",
+   "decoded": {
+    "kind": "command_response",
+    "opcode": 7,
+    "opcode_name": "REPORT_VERSION_INFO",
+    "request_seq": 2,
+    "status": 1,
+    "status_name": "OK",
+    "body_hex": "2900410011230400020000",
+    "decoded": {
+     "ascii_view": ").A..#.....",
+     "version_text": null
     }
    }
   },

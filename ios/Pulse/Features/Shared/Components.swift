@@ -542,8 +542,9 @@ struct StatusPill: View {
     }
 
     private var text: String {
-        if band.isBusy { return "Syncing…" }
+        if band.isBusy { return band.statusLine }
         if case .failed = band.stage { return "Sync failed" }
+        if case .paused(let message) = band.stage { return message }
         switch loader.state {
         case .idle: return "Starting…"
         case .recalculating: return "Recalculating…"
@@ -551,8 +552,9 @@ struct StatusPill: View {
         case .ready: break
         }
         guard let record = bands.first else { return "No band paired" }
-        guard let synced = record.lastHistorySyncAt else { return "Not synced yet" }
-        return "Synced \(synced.formatted(date: .omitted, time: .shortened))"
+        let battery = (band.info.batteryPercent ?? record.batteryPercent).map { " · Band \(Int($0.rounded()))%" } ?? ""
+        guard let synced = record.lastHistorySyncAt else { return "Not synced yet" + battery }
+        return "Synced \(synced.formatted(date: .omitted, time: .shortened))" + battery
     }
 }
 

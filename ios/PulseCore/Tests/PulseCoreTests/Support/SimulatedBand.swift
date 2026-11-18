@@ -78,10 +78,20 @@ public struct SimulatedBand: Sendable {
         case .getBatteryLevel:
             return respond(opcode, requestSeq, LE.bytes(batteryDeciPercent))
         case .getClock:
-            return respond(opcode, requestSeq, LE.bytes(clock))
+            // Reply body [u32 seconds][u32 sub-seconds] ([OS] control.dart).
+            return respond(opcode, requestSeq, LE.bytes(clock) + LE.bytes(UInt32(0)))
         case .setClock:
             if frame.body.count >= 4 { clock = LE.u32(frame.body, 0) }
             return respond(opcode, requestSeq, [])
+        case .getDataRange:
+            // 65-byte body ([OS] control.dart): rev 1, then u32 pages at body[1...]; we fill
+            // write [9], trim [13], wrap [17], capacity [21], used [25], free [29].
+            var body = [UInt8](repeating: 0, count: 65)
+            body[0] = 1
+            let fields: [(Int, UInt32)] = [(9, 5000 + UInt32(batches.count)), (13, 5000), (17, 0), (21, 100_000),
+                                           (25, UInt32(batches.reduce(0) { $0 + $1.count })), (29, 1_000_000)]
+            for (at, value) in fields { body.replaceSubrange(at..<(at + 4), with: LE.bytes(value)) }
+            return respond(opcode, requestSeq, body)
         case .toggleRealtimeHr:
             realtimeOn = frame.body.first == 1
             return respond(opcode, requestSeq, [])

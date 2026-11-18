@@ -38,3 +38,6 @@ Thumbs.db
 
 # ---- Built app files (download them from GitHub Actions instead) ----
 *.ipa
+
+# Exported sync logs: raw heart-rate data, never commit
+logs/

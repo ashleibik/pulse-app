@@ -9,8 +9,12 @@ import Foundation
 ///   HISTORY_COMPLETE ──► .finished
 ///
 /// Safety rules (each one is a test in HistorySyncTests):
-///   1. An ack is only ever produced by didPersist(token:), so nothing is acknowledged before it's saved.
-///      (After an ack the band may free that storage. Acking first and crashing = lost data.)
+///   1. An ack for a batch with records to keep is only ever produced by didPersist(token:), so nothing
+///      is acknowledged before it's saved. (After an ack the band may free that storage. Acking first
+///      and crashing = lost data.)
+///      Exception, on purpose: records older than `discardBefore` (a used band's previous owner) are
+///      dropped as they arrive. A batch left with nothing to keep is acked at once: there is nothing
+///      to save, and the ack is what lets the band free that memory.
 ///   2. didPersist with the wrong token produces nothing.
 ///   3. The record count the band announces in HISTORY_END is ADVISORY, never a reason to reject a
 ///      batch. On the WHOOP 4.0 it does not match the number of records actually sent, and the gap
@@ -38,6 +42,8 @@ public struct HistorySync: Sendable {
         /// Save these records durably, then call didPersist(token:).
         case persist([Whoop.HistoryRecord], token: [UInt8])
         case finished(batches: Int, records: Int)
+        /// A batch made only of records older than `discardBefore` was acked without saving.
+        case cleared(records: Int)
         case failed(String)
         /// Something worth a line in the sync log (no effect on the download).
         case note(String)
@@ -48,19 +54,43 @@ public struct HistorySync: Sendable {
     public private(set) var recordsSaved = 0
     public private(set) var retries = 0
     public let maxRetries: Int
+    /// Records older than this (unix seconds) are thrown away unread: on a used band they are the
+    /// previous owner's. Records with an impossible date are thrown away too. `nil` = keep everything.
+    public let discardBefore: UInt32?
+    /// Old records dropped so far (never saved, but acked so the band frees its memory).
+    public private(set) var recordsCleared = 0
+    /// Date of the newest record received (kept or not), and the newest batch token: for progress.
+    public private(set) var lastRecordTime: UInt32?
+    public private(set) var lastToken: [UInt8]?
 
     private var batch: [Whoop.HistoryRecord] = []
+    private var batchDropped = 0
+    /// Oldest and newest record date of the open batch (kept or dropped), for the sync log.
+    private var batchSpan: (first: UInt32, last: UInt32)?
     private var seq: Whoop.SeqCounter
 
-    public init(maxRetries: Int = 5, startSeq: UInt8 = 0) {
+    public init(maxRetries: Int = 5, startSeq: UInt8 = 0, discardBefore: UInt32? = nil) {
         self.maxRetries = maxRetries
         self.seq = Whoop.SeqCounter(start: startSeq)
+        self.discardBefore = discardBefore
+    }
+
+    /// True while the records arriving are older than `discardBefore` (a backlog being cleared).
+    public var isClearingOldData: Bool {
+        guard let discardBefore, let lastRecordTime else { return false }
+        return lastRecordTime < discardBefore
+    }
+
+    private func keeps(_ record: Whoop.HistoryRecord) -> Bool {
+        guard let discardBefore else { return true }
+        return Whoop.plausibleUnix(record.timestamp) && record.timestamp >= discardBefore
     }
 
     /// Begin the download. Optionally set the band's clock first (fixes garbage timestamps).
     public mutating func start(setClockTo unixTime: Double? = nil) -> [Action] {
         state = .receiving
         batch = []
+        batchDropped = 0
         var actions: [Action] = []
         if let unixTime {
             actions.append(.send(Whoop.Command.setClock(seq: seq.next(), unixTime: unixTime), description: "SET_CLOCK"))
@@ -73,7 +103,12 @@ public struct HistorySync: Sendable {
     public mutating func handle(_ packet: Whoop.Packet) -> [Action] {
         switch packet {
         case .history(let record):
-            if state == .receiving { batch.append(record) }
+            guard state == .receiving else { return [] }
+            if Whoop.plausibleUnix(record.timestamp) {
+                lastRecordTime = record.timestamp
+                batchSpan = (batchSpan?.first ?? record.timestamp, record.timestamp)
+            }
+            if keeps(record) { batch.append(record) } else { batchDropped += 1 }
             return []
 
         case .metadata(let meta):
@@ -81,6 +116,8 @@ public struct HistorySync: Sendable {
             case .historyStart:
                 state = .receiving
                 batch = []
+                batchDropped = 0
+                batchSpan = nil
                 return []
             case .historyEnd:
                 return batchEnded(meta)
@@ -102,17 +139,41 @@ public struct HistorySync: Sendable {
             return fail("History batch ended without a valid token.")
         }
         var actions: [Action] = []
+        let received = batch.count + batchDropped
         let expected = meta.expectedPackets.map { Int($0) }
         let tokenHex = Whoop.hex(token)
-        if let expected, expected != batch.count {
-            actions.append(.note("HISTORY_END announced \(expected), received \(batch.count) records, token \(tokenHex) (count is advisory on WHOOP 4.0: saving anyway)"))
+        let clock = meta.timestamp.map { " band clock \(Self.utc($0))" } ?? " band clock not set"
+        let dropped = (batchDropped > 0 ? ", \(batchDropped) old dropped" : "")
+            + (batchSpan.map { ", dated \(Self.utc($0.first)) → \(Self.utc($0.last))" } ?? "")
+        batchSpan = nil
+        if let expected, expected != received {
+            actions.append(.note("HISTORY_END announced \(expected), received \(received) records\(dropped), token \(tokenHex),\(clock) (count is advisory on WHOOP 4.0: saving anyway)"))
         } else {
-            actions.append(.note("HISTORY_END \(batch.count) records, token \(tokenHex)"))
+            actions.append(.note("HISTORY_END \(received) records\(dropped), token \(tokenHex),\(clock)"))
         }
-        state = .waitingForSave(token: token)
+        lastToken = token
+        recordsCleared += batchDropped
+        let droppedNow = batchDropped
+        batchDropped = 0
         let records = batch
         batch = []
+        if records.isEmpty && droppedNow > 0 {
+            // Only the previous owner's records: nothing to keep, so ack right away (no database trip).
+            guard let ack = Whoop.Command.historyAck(token: token, seq: seq.next()) else { return actions }
+            retries = 0
+            return actions + [.cleared(records: droppedNow), .send(ack, description: "HISTORY_ACK")]
+        }
+        state = .waitingForSave(token: token)
         return actions + [.persist(records, token: token)]
+    }
+
+    /// "2023-02-22 05:36:03Z": record dates in the sync log, independent of the phone's time zone.
+    static func utc(_ unix: UInt32) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss'Z'"
+        return f.string(from: Date(timeIntervalSince1970: Double(unix)))
     }
 
     /// Call after the batch from `.persist` is durably saved. Returns the ack to send.
@@ -134,6 +195,7 @@ public struct HistorySync: Sendable {
         retries += 1
         let lost = batch.count
         batch = []
+        batchDropped = 0
         if retries > maxRetries {
             return fail("The band stopped sending data (\(retries - 1) retries). Everything downloaded so far is saved; sync again to continue.")
         }

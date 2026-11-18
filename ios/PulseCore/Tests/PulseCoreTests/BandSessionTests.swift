@@ -17,6 +17,7 @@ struct SessionHarness {
     var logLines = 0
     var trace: [String] = []
     var progressReports = 0
+    var fractions: [Double?] = []
 
     init(band: SimulatedBand, now: Double) {
         self.band = band
@@ -32,13 +33,13 @@ struct SessionHarness {
             if queue.isEmpty {
                 // Nothing pending. If we are still waiting for the clock, the app's timer would fire now.
                 guard session.phase == .hello else { break }
-                queue += session.clockTimedOut()
+                queue += session.clockTimedOut(now: now)
                 continue
             }
             switch queue.removeFirst() {
             case .write(let bytes, let description):
                 writes.append(description)
-                if !answerClock && description == "GET_CLOCK" { continue }
+                if !answerClock && description.hasPrefix("GET_CLOCK") { continue }
                 for n in band.receive(write: bytes) {
                     queue += session.receive(characteristic: n.characteristic, bytes: n.bytes, now: now)
                 }
@@ -47,7 +48,7 @@ struct SessionHarness {
                 saved += records
                 queue += session.didPersist(token: token, recordCount: records.count)
             case .info(let info): lastInfo = info
-            case .progress: progressReports += 1
+            case .progress(let p): progressReports += 1; fractions.append(p.fraction)
             case .liveHeartRate: break
             case .finished(let records): finishedRecords = records
             case .failed(let message): failure = message
@@ -68,8 +69,12 @@ struct SessionHarness {
     #expect(h.saved.map(\.timestamp) == (0..<250).map { start + UInt32($0) })
     #expect(h.session.phase == .finished)
     #expect(h.lastInfo?.batteryPercent == 76.5)
-    #expect(h.lastInfo?.clockWasSet == false)                   // the band's clock was right: leave it alone
-    #expect(h.writes.prefix(4) == ["GET_BATTERY_LEVEL", "REPORT_VERSION_INFO", "GET_CLOCK", "SEND_HISTORICAL_DATA"])
+    #expect(h.lastInfo?.clockWasSet == true)                    // set on every connect
+    #expect(h.writes.prefix(8) == ["TOGGLE_REALTIME_HR off", "GET_BATTERY_LEVEL", "REPORT_VERSION_INFO", "GET_CLOCK",
+                                   "GET_DATA_RANGE", "SET_CLOCK", "GET_CLOCK (check)", "SEND_HISTORICAL_DATA"])
+    #expect(h.lastInfo?.bandClockSource == "GET_CLOCK")
+    #expect(h.lastInfo?.clockOffsetSeconds.map { abs($0) < 2 } == true)   // read back after setting
+    #expect(h.band.realtimeOn == false)
     #expect(h.writes.filter { $0 == "HISTORY_ACK" }.count == 3)
     #expect(h.progressReports == 3)
     #expect(h.session.badFrames == 0)
@@ -91,7 +96,8 @@ struct SessionHarness {
     var h = SessionHarness(band: SimulatedBand(samples: samples(120), batchSize: 100), now: 1_750_000_200)
     h.run(answerClock: false)
     #expect(h.finishedRecords == 120)
-    #expect(!h.writes.contains("SET_CLOCK"))                    // unknown clock: leave it alone
+    #expect(h.writes.contains("SET_CLOCK"))                     // set anyway: the phone's time is the truth
+    #expect(h.lastInfo?.bandClockSource == "HISTORY_END")       // the batches still tell us the band's time
     #expect(h.writes.filter { $0 == "SEND_HISTORICAL_DATA" }.count == 1)   // and it starts exactly once
 }
 
@@ -219,4 +225,45 @@ struct SessionHarness {
     #expect(a.first?.hasPrefix("RX EVENT") == true && a.first?.contains("len=6") == true)
     #expect(a.contains { $0.contains("WAITING 6 bytes") })
     #expect(b.contains { $0.contains("FRAME") && $0.contains("crc8=ok crc32=ok") })
+}
+
+@Test func getClockMatchesTheReferenceOnTheWire() {
+    // [OS] builds GET_CLOCK with an empty body; both pad the frame to 4 bytes, so ours is identical.
+    // (So the band's silence on GET_CLOCK is not a format problem.)
+    #expect(Whoop.Command.getClock(seq: 7) == Whoop.buildFrame(inner: [0x23, 7, Whoop.Cmd.getClock.rawValue]))
+}
+
+@Test func bandTimeVersusPhoneTimeIsReported() {
+    // The band runs 90 s fast: the first reading shows it, the read-back after SET_CLOCK shows ~0.
+    let now: Double = 1_750_000_100
+    var h = SessionHarness(band: SimulatedBand(samples: samples(10, start: 1_750_000_000), clock: 1_750_000_190), now: now)
+    h.run()
+    #expect(h.trace.contains { $0.contains("band - phone = +90.0 s") })
+    #expect(h.lastInfo?.clockOffsetSeconds == 0)
+    #expect(h.band.clock == 1_750_000_100)
+}
+
+@Test func progressComesFromTheBandsPageCounters() {
+    // 4 batches; GET_DATA_RANGE says trim 5000, write 5004; each ack token carries the trim page.
+    var h = SessionHarness(band: SimulatedBand(samples: samples(400), batchSize: 100), now: 1_750_000_500)
+    h.run()
+    let known = h.fractions.compactMap { $0 }
+    #expect(known.count == 4)
+    #expect(known == known.sorted())                                 // only goes up
+    #expect(known.allSatisfy { $0 < 1 })                             // 100% only when the band says it's done
+    #expect(h.trace.contains { $0.hasPrefix("DATA_RANGE 4 pages to sync") })
+}
+
+@Test func historyPacketsAreSummarizedUnlessVerbose() {
+    var quietRun = SessionHarness(band: SimulatedBand(samples: samples(300), batchSize: 100, mtuPayload: 20), now: 1_750_000_400)
+    quietRun.run()
+    var loud = SessionHarness(band: SimulatedBand(samples: samples(300), batchSize: 100, mtuPayload: 20), now: 1_750_000_400)
+    loud.session.verboseTrace = true
+    loud.run()
+    #expect(quietRun.finishedRecords == 300 && loud.finishedRecords == 300)
+    #expect(quietRun.trace.filter { $0.contains("… HISTORICAL_DATA: 100 frames") }.count == 3)
+    #expect(!quietRun.trace.contains { $0.contains("FRAME HISTORICAL_DATA") })
+    #expect(loud.trace.contains { $0.contains("FRAME HISTORICAL_DATA") })
+    #expect(quietRun.trace.count * 10 < loud.trace.count)             // the log is >10x smaller
+    #expect(quietRun.trace.contains { $0.contains("HISTORY_END") && $0.contains("dated ") })
 }

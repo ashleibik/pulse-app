@@ -89,7 +89,10 @@ actor MetricsRecomputer {
     ///   the demo month brings its own workouts).
     func run(profile: MetricsProfile, calendar: Calendar, now: Date,
              detectWorkouts: Bool = false) throws -> RecomputeOutput {
-        let records = try modelContext.fetch(FetchDescriptor<MinuteRecord>(sortBy: [SortDescriptor(\.start)]))
+        var descriptor = FetchDescriptor<MinuteRecord>(sortBy: [SortDescriptor(\.start)])
+        // Never compute from the previous owner's data, even if some is still stored.
+        if let cutoff = BandDataCutoff.date { descriptor.predicate = #Predicate { $0.start >= cutoff } }
+        let records = try modelContext.fetch(descriptor)
         let minutes = records.map(\.value)
         let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now)
         var strain: [UUID: Double] = [:]
@@ -120,7 +123,9 @@ actor BandImporter {
     /// Turns ~1 Hz records into minutes and stores them. When this returns, the data is on disk,
     /// and only then may the batch be acknowledged to the band.
     func save(_ records: [Whoop.HistoryRecord], source: DataSource) throws {
-        let minutes = MinuteBuilder.minutes(from: records, source: source)
+        // The sync already drops the previous owner's records; this is the second lock on the door.
+        let kept = BandDataCutoff.unix.map { cutoff in records.filter { $0.timestamp >= cutoff } } ?? records
+        let minutes = MinuteBuilder.minutes(from: kept, source: source)
         guard let first = minutes.first?.start, let last = minutes.last?.start else { return }
         let end = last.addingTimeInterval(60)
         let stored = try modelContext.fetch(FetchDescriptor<MinuteRecord>(

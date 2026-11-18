@@ -161,6 +161,7 @@ extension Whoop {
         public static func realtimeHR(on: Bool, seq: UInt8) -> [UInt8] { allowed(.toggleRealtimeHr, [on ? 1 : 0], seq) }
         public static func reportVersion(seq: UInt8) -> [UInt8] { allowed(.reportVersionInfo, [], seq) }
         public static func getBattery(seq: UInt8) -> [UInt8] { allowed(.getBatteryLevel, [], seq) }
+        /// [OS] sends an empty body; frames are padded to 4 bytes, so `00` gives the same bytes on the wire.
         public static func getClock(seq: UInt8) -> [UInt8] { allowed(.getClock, [0x00], seq) }
         public static func getHello(seq: UInt8) -> [UInt8] { allowed(.getHelloHarvard, [0x00], seq) }
         public static func getDataRange(seq: UInt8) -> [UInt8] { allowed(.getDataRange, [0x00], seq) }
