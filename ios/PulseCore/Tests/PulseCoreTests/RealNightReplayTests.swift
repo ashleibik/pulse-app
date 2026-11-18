@@ -65,7 +65,8 @@ private func close(_ date: Date, to expected: Date, minutes: Double = 15) -> Boo
 
     let summary = try #require(result.days.first { localCalendar.isDate($0.date, inSameDayAs: night.end) })
     print("RECOMPUTED \(text(night.start))-\(text(night.end)) asleep \(night.asleepMinutes) awake \(night.awakeMinutes) "
-        + "wake-ups \(night.disturbances) resting HR \(summary.restingHeartRate ?? -1) HRV \(summary.hrvRMSSD ?? -1)")
+        + "wake-ups \(night.disturbances) resting HR \(summary.restingHeartRate ?? -1) HRV \(summary.hrvRMSSD ?? -1) "
+        + "review \(night.reviewReason?.rawValue ?? "none")")
 }
 
 @Test(.enabled(if: hasBackup)) func theRealEveningAtTheComputerIsNotSleep() throws {
@@ -95,6 +96,39 @@ private func close(_ date: Date, to expected: Date, minutes: Double = 15) -> Boo
     #expect((totals[.light] ?? 0) + (totals[.restful] ?? 0) == night.asleepMinutes)
     #expect((totals[.awake] ?? 0) == night.awakeMinutes)
     #expect(night.asleepMinutes + night.awakeMinutes == Int(night.end.timeIntervalSince(night.start) / 60))
+}
+
+@Test(.enabled(if: hasBackup)) func aHoleInTheRealNightIsUnknownAndKeepsItOneSleep() throws {
+    let backup = try loadBackup()
+    let hole = clock(18, 3, 0)..<clock(18, 3, 40)
+    let holed = backup.minutes.filter { !hole.contains($0.start) }
+    let result = MetricsEngine.run(minutes: holed, calendar: localCalendar, now: backup.exportedAt).sleeps
+    #expect(result.count == 1)
+    let night = try #require(result.first)
+    #expect(night.unknownMinutes == 40)
+    #expect(close(night.start, to: clock(18, 0, 50)) && close(night.end, to: clock(18, 10, 15)))
+    print("RECOMPUTED with a 40 minute hole: \(text(night.start))-\(text(night.end)) asleep \(night.asleepMinutes) awake \(night.awakeMinutes) unknown \(night.unknownMinutes)")
+}
+
+@Test(.enabled(if: hasBackup)) func learningStartsOnTheThirdCopyOfTheRealNight() throws {
+    let backup = try loadBackup()
+    func copies(_ count: Int) -> [MinuteSample] {
+        (0..<count).flatMap { day in
+            backup.minutes.map {
+                MinuteSample(start: $0.start.addingTimeInterval(Double(day) * 86_400), heartRate: $0.heartRate,
+                             rrIntervalsMs: $0.rrIntervalsMs, activity: $0.activity, source: $0.source)
+            }
+        }
+    }
+    let now = backup.exportedAt.addingTimeInterval(5 * 86_400)
+    let nights = MetricsEngine.run(minutes: copies(5), calendar: localCalendar, now: now).sleeps
+    #expect(nights.count == 5)
+    for (day, night) in nights.enumerated() {
+        let shift = Double(day) * 86_400
+        #expect(close(night.start, to: clock(18, 0, 50).addingTimeInterval(shift)), "night \(day) started \(text(night.start))")
+        #expect(close(night.end, to: clock(18, 10, 15).addingTimeInterval(shift)), "night \(day) ended \(text(night.end))")
+    }
+    print("RECOMPUTED five copies: " + nights.map { "\(text($0.start))-\(text($0.end))" }.joined(separator: ", "))
 }
 
 @Test(.enabled(if: hasBackup)) func theOwnersEditedBedtimeStaysAndTheMorningFollowsTheBetterDetection() throws {

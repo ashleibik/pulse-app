@@ -31,8 +31,17 @@ public enum SleepModel {
 
     static let signalWeight = 0.6
     static let maxEvidence = 3.0
-    /// A minute with no band data leans awake, so a sleep doesn't run on after the band comes off.
-    static let noDataEvidence = -2.0
+    /// Being still and steady doesn't prove sleep: people sit still while awake. Without a heart rate
+    /// that also points to sleep, each of the two adds at most this much.
+    static let maxStillnessEvidence = 0.4
+    /// A sleep starts with this many minutes in a row asleep. Shorter quiet spells before a wake-up don't count.
+    static let persistentSleepMinutes = 30
+    /// A break this long after a short quiet spell means the person hadn't really fallen asleep yet.
+    static let onsetWakeMinutes = 10
+    /// A minute with no band data says nothing either way.
+    static let noDataEvidence = 0.0
+    /// A stretch with no band data longer than this is not assumed to be part of the sleep around it.
+    static let longestUnknownBridge = 180
 
     /// Chance per minute of falling asleep, and of waking up (the hidden Markov model's transitions).
     static let fallingAsleep = 1.0 / 720
@@ -46,6 +55,8 @@ public enum SleepModel {
     static let editWeight = 5.0
     /// Rounds of learning from the previous result.
     static let learningRounds = 2
+    /// Nights of data before the model adapts to the person. Until then it uses the starting values.
+    static let nightsBeforeLearning = 3.0
 
     /// Starting values, before the model has seen the person's own nights.
     static let startingHeartRateDrop = Signal(asleep: Curve(mean: 15, sd: 6), awake: Curve(mean: -5, sd: 9))
@@ -168,7 +179,8 @@ public enum SleepModel {
             func values(_ range: Range<Int>) -> [Double] {
                 range.filter { awake?[$0] ?? true }.compactMap { hr[$0] }
             }
-            var rates = values(max(0, end - 1440)..<end)
+            // The first day has no 24 hours behind it yet, so it looks at the whole of that day.
+            var rates = values(max(0, end - 1440)..<max(end, min(n, 1440)))
             if rates.count < 60 { rates = values(block..<min(n, block + 1440)) }
             if rates.count < 60 { byStep.append(nil); continue }
             byStep.append(awake == nil ? Stats.lowerPercentile(rates, 0.65) : Stats.median(rates))
@@ -242,9 +254,10 @@ public enum SleepModel {
 
     /// Labels from the last result, with the user's edits on top.
     static func labels(probability: [Double], corrections: [SleepCorrection], timeline tl: MetricsEngine.Timeline) -> [Label?] {
-        var out: [Label?] = probability.map { p in
-            if p >= 0.8 { return Label(asleep: true, weight: 1) }
-            return p <= 0.2 ? Label(asleep: false, weight: 1) : nil
+        var out: [Label?] = probability.indices.map { i in
+            guard tl.hr[i] != nil else { return nil }       // nothing was measured, so there is nothing to learn
+            if probability[i] >= 0.8 { return Label(asleep: true, weight: 1) }
+            return probability[i] <= 0.2 ? Label(asleep: false, weight: 1) : nil
         }
         func mark(_ from: Date, _ to: Date, asleep: Bool) {
             let lo = max(0, tl.index(from)), hi = min(tl.count, tl.index(to))
@@ -338,23 +351,27 @@ public enum SleepModel {
             if round > 0 {
                 let known = labels(probability: result, corrections: corrections, timeline: tl)
                 baseline = awakeHeartRate(tl.hr, awake: known.map { $0?.asleep == false }, fallback: start.awakeRate)
-                now.heartRate = learned(start.heartRate, values: drop, labels: known, minimumSD: 3)
-                now.movement = learned(start.movement, values: measured.movement, labels: known, minimumSD: 0.15)
-                now.unsteadiness = learned(start.unsteadiness, values: measured.unsteadiness, labels: known, minimumSD: 0.8)
-                now.cleanBeats = start.cleanBeats.map { learned($0, values: measured.cleanBeats, labels: known, minimumSD: 3) }
-                    ?? learnedFromScratch(values: measured.cleanBeats, labels: known, minimumSD: 3)
-                now.hrv = start.hrv.map { learned($0, values: measured.hrv, labels: known, minimumSD: 0.1) }
-                    ?? learnedFromScratch(values: measured.hrv, labels: known, minimumSD: 0.1)
                 let found = nights(in: known)
-                clock = clockEvidence(asleepCounts: adding(found, clock: measured.clock, to: start.asleepCounts),
-                                      nights: start.nights + Double(found.count))
+                if start.nights + Double(found.count) >= nightsBeforeLearning {
+                    now.heartRate = learned(start.heartRate, values: drop, labels: known, minimumSD: 3)
+                    now.movement = learned(start.movement, values: measured.movement, labels: known, minimumSD: 0.15)
+                    now.unsteadiness = learned(start.unsteadiness, values: measured.unsteadiness, labels: known, minimumSD: 0.8)
+                    now.cleanBeats = start.cleanBeats.map { learned($0, values: measured.cleanBeats, labels: known, minimumSD: 3) }
+                        ?? learnedFromScratch(values: measured.cleanBeats, labels: known, minimumSD: 3)
+                    now.hrv = start.hrv.map { learned($0, values: measured.hrv, labels: known, minimumSD: 0.1) }
+                        ?? learnedFromScratch(values: measured.hrv, labels: known, minimumSD: 0.1)
+                    clock = clockEvidence(asleepCounts: adding(found, clock: measured.clock, to: start.asleepCounts),
+                                          nights: start.nights + Double(found.count))
+                }
             }
             let evidence: [Double] = tl.hr.indices.map { i in
                 guard tl.hr[i] != nil else { return noDataEvidence }
                 var total = clock[measured.clock[i]]
-                if let x = drop[i] { total += now.heartRate.evidence(x) }
-                if let x = measured.movement[i] { total += now.movement.evidence(x) }
-                if let x = measured.unsteadiness[i] { total += now.unsteadiness.evidence(x) }
+                let heartRateEvidence = drop[i].map { now.heartRate.evidence($0) } ?? 0
+                total += heartRateEvidence
+                let stillnessLimit = heartRateEvidence > 0 ? maxEvidence : maxStillnessEvidence
+                if let x = measured.movement[i] { total += min(stillnessLimit, now.movement.evidence(x)) }
+                if let x = measured.unsteadiness[i] { total += min(stillnessLimit, now.unsteadiness.evidence(x)) }
                 if let x = measured.cleanBeats[i], let signal = now.cleanBeats { total += signal.evidence(x) }
                 if let x = measured.hrv[i], let signal = now.hrv { total += signal.evidence(x) }
                 return total
@@ -435,9 +452,10 @@ public enum SleepModel {
                                movement: Array(tl.movement[range]), rr: Array(tl.rr[range]), source: tl.source)
     }
 
-    /// P(asleep) per minute, calculating only the weeks that changed. A week taken from the cache reports 1 or 0.
+    /// P(asleep) per minute, calculating only the weeks that changed, and what the model knows at the end.
+    /// A week taken from the cache keeps the side of 0.5 each minute was on, and whether it was sure.
     static func run(timeline tl: MetricsEngine.Timeline, calendar: Calendar, corrections: [SleepCorrection],
-                    cache: inout SleepModelCache) -> [Double] {
+                    cache: inout SleepModelCache) -> (probability: [Double], learned: Learned) {
         let ranges = weeks(of: tl, calendar: calendar)
         var next = SleepModelCache()
         next.recent = cache.recent
@@ -458,7 +476,10 @@ public enum SleepModel {
 
             let id = Int64(from.timeIntervalSince1970)
             if let week = cache.weeks[id], week.key == key, week.asleep.count == range.count {
-                for (offset, asleep) in week.asleep.enumerated() { probability[range.lowerBound + offset] = asleep ? 1 : 0 }
+                for (offset, asleep) in week.asleep.enumerated() {
+                    let sure = week.sure[offset]
+                    probability[range.lowerBound + offset] = asleep ? (sure ? 1 : 0.6) : (sure ? 0 : 0.4)
+                }
                 learned = week.learned
                 next.weeks[id] = week
                 next.reusedWeeks += 1
@@ -470,30 +491,65 @@ public enum SleepModel {
             let result = calculate(part, calendar: calendar, corrections: touching, from: learned, beats: beats)
             for (offset, p) in result.probability.enumerated() { probability[range.lowerBound + offset] = p }
             learned = result.learned
-            next.weeks[id] = SleepModelCache.Week(key: key, asleep: result.probability.map { $0 >= 0.5 }, learned: learned)
+            next.weeks[id] = SleepModelCache.Week(key: key, asleep: result.probability.map { $0 >= 0.5 },
+                                                  sure: result.probability.map { $0 >= 0.8 || $0 <= 0.2 }, learned: learned)
             next.calculatedWeeks += 1
             if index == ranges.count - 1 {
                 next.recent = SleepModelCache.Recent(start: part.start, fingerprints: minutes, beats: beats)
             }
         }
         cache = next
-        return probability
+        return (probability, learned)
     }
 
     /// P(asleep) per minute of the timeline, calculated from scratch.
     static func probabilities(timeline tl: MetricsEngine.Timeline, calendar: Calendar,
                               corrections: [SleepCorrection]) -> [Double] {
         var cache = SleepModelCache()
-        return run(timeline: tl, calendar: calendar, corrections: corrections, cache: &cache)
+        return run(timeline: tl, calendar: calendar, corrections: corrections, cache: &cache).probability
+    }
+
+    // MARK: - When to ask
+
+    /// A sleep is worth asking about when this share of it has no data, or of its measured minutes is unclear.
+    static let reviewShare = 0.15
+
+    /// Why Pulse is unsure about a sleep. nil = it is sure enough not to ask.
+    static func reviewReason(_ session: SleepDetector.Session, probability: [Double], observed: [Bool],
+                             firstMinuteOfDay: Int, learned: Learned) -> SleepReviewReason? {
+        let span = session.end - session.start
+        let measured = (session.start..<session.end).filter { observed[$0] }
+        guard span > 0, !measured.isEmpty else { return nil }
+        if Double(span - measured.count) >= reviewShare * Double(span) { return .missingData }
+        let unclear = measured.filter { probability[$0] > 0.2 && probability[$0] < 0.8 }.count
+        if Double(unclear) >= reviewShare * Double(measured.count) { return .unclear }
+        let personal = learned.nights >= nightsBeforeLearning
+        let usual = measured.filter { minute in
+            let clock = (firstMinuteOfDay + minute - session.start) % 1440
+            let typical = usualSleepChance(minuteOfDay: clock)
+            guard personal else { return typical >= 0.5 }
+            return (3 * typical + learned.asleepCounts[clock]) / (3 + learned.nights) >= 0.5
+        }.count
+        return usual * 2 < measured.count ? .unusualTime : nil
     }
 
     /// The sleeps in a run of probabilities: at least 45 minutes long, and wake-ups of up to 30 minutes stay
     /// inside. Falling asleep takes 15 settled minutes, so a quiet moment at a desk doesn't start the night
     /// early. Near the end, 5 minutes are enough to count as dozing off again before getting up.
-    static func sessions(probability: [Double]) -> (sessions: [SleepDetector.Session], asleep: [Bool]) {
-        let asleep = probability.map { $0 >= 0.5 }
-        let found = SleepDetector.sessions(asleep, minSeed: 15, maxGap: 30, minSession: 45)
-        let extended = found.enumerated().map { index, session -> SleepDetector.Session in
+    /// A sleep starts and ends on minutes the band really measured, and needs 45 of them asleep.
+    static func sessions(probability: [Double], observed: [Bool]) -> (sessions: [SleepDetector.Session], asleep: [Bool]) {
+        var inSleep = probability.map { $0 >= 0.5 }
+        var gap = 0
+        while gap < observed.count {
+            guard !observed[gap] else { gap += 1; continue }
+            var gapEnd = gap
+            while gapEnd < observed.count, !observed[gapEnd] { gapEnd += 1 }
+            if gapEnd - gap > longestUnknownBridge { for i in gap..<gapEnd { inSleep[i] = false } }
+            gap = gapEnd
+        }
+        let asleep = inSleep.indices.map { inSleep[$0] && observed[$0] }
+        let found = SleepDetector.sessions(inSleep, minSeed: 15, maxGap: 30, minSession: 45)
+        let extended = found.enumerated().compactMap { index, session -> SleepDetector.Session? in
             let limit = index + 1 < found.count ? found[index + 1].start : asleep.count
             var end = session.end
             var i = end
@@ -504,7 +560,18 @@ public enum SleepModel {
                 if runEnd - i >= 5 { end = runEnd }
                 i = runEnd
             }
-            return SleepDetector.session(start: session.start, end: end, asleep: asleep)
+            var onset = session.start
+            while onset < end {
+                var runEnd = onset
+                while runEnd < end, inSleep[runEnd] { runEnd += 1 }
+                var next = runEnd
+                while next < end, !inSleep[next] { next += 1 }
+                guard runEnd - onset < persistentSleepMinutes, next - runEnd >= onsetWakeMinutes, next < end else { break }
+                onset = next
+            }
+            let measured = (onset..<end).filter { asleep[$0] }
+            guard measured.count >= 45, let first = measured.first, let last = measured.last else { return nil }
+            return SleepDetector.session(start: first, end: last + 1, asleep: asleep, observed: observed)
         }
         return (extended, asleep)
     }

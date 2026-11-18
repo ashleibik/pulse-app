@@ -66,6 +66,10 @@ struct SleepDetailView: View {
             }
             .riseIn(1)
 
+            if sleep.value.reviewReason != nil {
+                SleepReviewCard(sleep: sleep).riseIn(2)
+            }
+
             VStack(spacing: 0) {
                 LevelRow(symbol: "bed.double", title: "Hours vs. needed", value: percent(p.hoursVsNeeded),
                          level: SleepPerformance.hoursLevel(p.hoursVsNeeded))
@@ -135,6 +139,7 @@ struct SleepDetailView: View {
                 }
                 .accessibilityElement(children: .combine)
             }
+            UnknownMinutesNote(minutes: sleep.value.unknownMinutes)
             HStack {
                 Image(systemName: "sparkles").foregroundStyle(DS.Colors.sleepTint)
                 Text("RESTFUL SLEEP").textStyle(.label).foregroundStyle(DS.Colors.primary)

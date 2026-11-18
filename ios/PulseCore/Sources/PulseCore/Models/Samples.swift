@@ -23,8 +23,13 @@ public struct MinuteSample: Codable, Sendable, Hashable {
     /// 60 values: movement intensity per second, 0 (still) ... 255 (very vigorous).
     public var activity: [UInt8]
     public var source: DataSource
+    /// 60 values: how far the wrist turned each second, in tenths of a degree (`WristAngle`).
+    /// nil on minutes saved before Pulse stored this.
+    public var wristAngle: [UInt8]?
 
-    public init(start: Date, heartRate: [UInt8], rrIntervalsMs: [UInt16], activity: [UInt8], source: DataSource) {
+    public init(start: Date, heartRate: [UInt8], rrIntervalsMs: [UInt16], activity: [UInt8], source: DataSource,
+                wristAngle: [UInt8]? = nil) {
+        self.wristAngle = wristAngle
         self.start = start
         self.heartRate = heartRate
         self.rrIntervalsMs = rrIntervalsMs
@@ -50,9 +55,11 @@ public struct MinuteSample: Codable, Sendable, Hashable {
     /// 0 to 10 for minutes at a time, changing only when the wrist settled into a new position.
     public static let restingOffsetLimit = 12.0
 
-    /// How much the wrist really moved this minute: the seconds above the minute's own steady level.
-    /// A steady level above `restingOffsetLimit` can't be a resting wrist, so all of it counts.
+    /// How much the wrist really moved this minute. New minutes use how far the wrist turned. Older ones
+    /// use the seconds above the minute's own steady level, and a steady level above
+    /// `restingOffsetLimit` can't be a resting wrist, so all of it counts.
     public var movement: Double {
+        if let turned = WristAngle.movement(wristAngle) { return turned }
         guard !activity.isEmpty else { return 0 }
         let sorted = activity.sorted()
         let mid = sorted.count / 2

@@ -147,7 +147,7 @@ actor BandImporter {
     func save(_ records: [Whoop.HistoryRecord], source: DataSource) throws {
         // The sync already drops the previous owner's records; this is the second lock on the door.
         let kept = BandDataCutoff.unix.map { cutoff in records.filter { $0.timestamp >= cutoff } } ?? records
-        let minutes = MinuteBuilder.minutes(from: kept, source: source)
+        let minutes = WristAngle.adding(to: MinuteBuilder.minutes(from: kept, source: source), from: kept)
         guard let first = minutes.first?.start, let last = minutes.last?.start else { return }
         let end = last.addingTimeInterval(60)
         let stored = try modelContext.fetch(FetchDescriptor<MinuteRecord>(

@@ -154,6 +154,7 @@ public enum PulseBackup {
             out.activity[second] = incoming.activity[second]
         }
         if incoming.rrIntervalsMs.count > existing.rrIntervalsMs.count { out.rrIntervalsMs = incoming.rrIntervalsMs }
+        out.wristAngle = WristAngle.merged(existing: incoming.wristAngle, incoming: existing.wristAngle)
         return out
     }
 
@@ -303,8 +304,11 @@ public enum PulseBackup {
         let rr: String
         let a: String
         let s: DataSource
+        /// How far the wrist turned each second. Missing in backups and minutes from before Pulse stored it.
+        let w: String?
 
         init(_ minute: MinuteSample) {
+            w = minute.wristAngle.map { Data($0).base64EncodedString() }
             t = Int(minute.start.timeIntervalSince1970)
             hr = Data(minute.heartRate).base64EncodedString()
             rr = BinaryCoding.encode(minute.rrIntervalsMs).base64EncodedString()
@@ -317,8 +321,14 @@ public enum PulseBackup {
             guard let heartRate = Data(base64Encoded: hr), let beats = Data(base64Encoded: rr),
                   let activity = Data(base64Encoded: a), heartRate.count == 60, activity.count == 60,
                   t % 60 == 0 else { return nil }
+            var wristAngle: [UInt8]?
+            if let w {
+                guard let turned = Data(base64Encoded: w), turned.count == 60 else { return nil }
+                wristAngle = [UInt8](turned)
+            }
             return MinuteSample(start: Date(timeIntervalSince1970: TimeInterval(t)), heartRate: [UInt8](heartRate),
-                                rrIntervalsMs: BinaryCoding.decodeUInt16(beats), activity: [UInt8](activity), source: s)
+                                rrIntervalsMs: BinaryCoding.decodeUInt16(beats), activity: [UInt8](activity), source: s,
+                                wristAngle: wristAngle)
         }
     }
 

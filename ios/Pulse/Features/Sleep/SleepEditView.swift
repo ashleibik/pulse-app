@@ -93,16 +93,7 @@ struct SleepEditView: View {
     }
 
     private func save(start: Date?, end: Date?) {
-        let correction = SleepCorrection(detectedStart: target.start, detectedEnd: target.end, start: start, end: end,
-                                         createdAt: .now)
-        context.insert(SleepCorrectionRecord(correction))
-        try? context.save()
-        let from = min(target.start, start ?? target.start)
-        let to = max(target.end, end ?? target.end)
-        Task {
-            await loader.recompute(context: context)
-            await health.sleepChanged(from: from, to: to, context: context)
-        }
+        SleepAnswer.save(target: target, start: start, end: end, context: context, loader: loader, health: health)
         dismiss()
     }
 }

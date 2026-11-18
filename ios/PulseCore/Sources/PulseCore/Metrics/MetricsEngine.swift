@@ -31,7 +31,9 @@ public enum MetricsEngine {
     /// 3: calibrated on a real night: movement without the band's resting offset, short wake-ups stay
     ///    inside a sleep, cleaner beats for HRV, and one definition of the awake minutes of a sleep.
     /// 4: sleep is a probability per minute from several signals, learned from the person's own nights and edits.
-    public static let algorithmVersion = 4
+    /// 5: minutes with no band data are unknown instead of awake, personal learning waits for 3 nights,
+    ///    unsure sleeps ask "Is this right?", and new minutes measure motion from the wrist angle.
+    public static let algorithmVersion = 5
     /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v2.json).
     /// The confirmation stage on top of them is Swift only.
     public static let sharedFormulaVersion = 2
@@ -98,9 +100,12 @@ public enum MetricsEngine {
         for session in sessions {
             let range = session.start..<session.end
             let phases = SleepTimeline.phases(hr: Array(tl.hr[range]), movement: Array(tl.movement[range]))
-            for (offset, phase) in phases.enumerated() { asleep[session.start + offset] = phase != .awake }
+            for (offset, phase) in phases.enumerated() {
+                asleep[session.start + offset] = phase != nil && phase != .awake
+            }
         }
-        return (sessions.map { SleepDetector.session(start: $0.start, end: $0.end, asleep: asleep) }, asleep)
+        let observed = tl.hr.map { $0 != nil }
+        return (sessions.map { SleepDetector.session(start: $0.start, end: $0.end, asleep: asleep, observed: observed) }, asleep)
     }
 
     public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
@@ -119,8 +124,9 @@ public enum MetricsEngine {
         }
 
         // 1-2. Sleep: the chance of being asleep per minute, then the sleeps in it (docs/METRICS.md §4).
-        let probability = SleepModel.run(timeline: tl, calendar: calendar, corrections: corrections, cache: &sleepCache)
-        let (detected, candidates) = SleepModel.sessions(probability: probability)
+        let model = SleepModel.run(timeline: tl, calendar: calendar, corrections: corrections, cache: &sleepCache)
+        let observed = tl.hr.map { $0 != nil }
+        let (detected, candidates) = SleepModel.sessions(probability: model.probability, observed: observed)
         let finished = detected
             .filter { session in
                 SleepDetector.isFinished(session, asleep: candidates, hr: tl.hr, activity: tl.movement,
@@ -130,9 +136,14 @@ public enum MetricsEngine {
         let sleeps = found.map { s -> SleepSession in
             // Deterministic ID from the start time: re-running the engine updates, not duplicates.
             var idSource = SeededRandom(seed: UInt64(bitPattern: Int64(tl.date(s.start).timeIntervalSince1970)))
+            let answered = corrections.contains { $0.answers(start: tl.date(s.start), end: tl.date(s.end)) }
+            let parts = calendar.dateComponents([.hour, .minute], from: tl.date(s.start))
+            let reason = answered ? nil : SleepModel.reviewReason(s, probability: model.probability, observed: observed,
+                                                                  firstMinuteOfDay: (parts.hour ?? 0) * 60 + (parts.minute ?? 0),
+                                                                  learned: model.learned)
             return SleepSession(id: idSource.uuid(), start: tl.date(s.start), end: tl.date(s.end),
                                 asleepMinutes: s.asleep, awakeMinutes: s.awake, disturbances: s.disturbances,
-                                isNap: s.isNap, source: tl.source)
+                                isNap: s.isNap, source: tl.source, reviewReason: reason)
         }
 
         // 3-4. Days. If data starts late in the evening, that day is incomplete: start the next day.

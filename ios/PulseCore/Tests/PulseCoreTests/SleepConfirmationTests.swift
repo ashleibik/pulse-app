@@ -163,8 +163,55 @@ private func nightWithRestingOffset(_ from: Double, _ to: Double) -> [MinuteSamp
     let totals = SleepTimeline.totals(segments)
     #expect((totals[.light] ?? 0) + (totals[.restful] ?? 0) == sleep.asleepMinutes)
     #expect((totals[.awake] ?? 0) == sleep.awakeMinutes)
-    #expect(totals.values.reduce(0, +) == Int(sleep.end.timeIntervalSince(sleep.start) / 60))
-    #expect(segments.contains { $0.phase == .awake && $0.start <= gap.lowerBound && $0.end >= gap.upperBound })
+    #expect(totals.values.reduce(0, +) + sleep.unknownMinutes == sleep.inBedMinutes)
+    #expect(sleep.unknownMinutes == 10)
+    #expect(!segments.contains { $0.start < gap.upperBound && gap.lowerBound < $0.end })
+}
+
+// MARK: - Missing data is unknown
+
+@Test func missingMinutesAreNeitherAsleepNorAwake() throws {
+    let whole = daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33)
+    let gap = time(27)..<time(27).addingTimeInterval(40 * 60)
+    let full = try #require(sleeps(whole, now: time(33)).first)
+    let holed = try #require(sleeps(whole.filter { !gap.contains($0.start) }, now: time(33)).first)
+    #expect(sleeps(whole.filter { !gap.contains($0.start) }, now: time(33)).count == 1)
+    #expect(holed.unknownMinutes == 40)
+    #expect(holed.awakeMinutes == full.awakeMinutes)
+    #expect(holed.disturbances == full.disturbances)
+    #expect(holed.asleepMinutes == full.asleepMinutes - 40)
+    #expect(holed.start == full.start && holed.end == full.end)
+    #expect(holed.efficiency == full.efficiency || holed.efficiency > full.efficiency - 0.01)
+}
+
+@Test func aSleepEndsWhereTheBandCameOff() throws {
+    let off = stretch(29, 31) { _ in (0, 0) }
+    let sleep = try #require(sleeps(daytime(9, 23) + night(23, 29) + off, now: time(36)).first)
+    #expect(abs(sleep.end.timeIntervalSince(time(29))) <= 2 * 60)
+    #expect(sleep.unknownMinutes == 0)
+}
+
+@Test func aVeryLongGapIsNotAssumedToBeSleep() {
+    let minutes = daytime(9, 23) + night(23, 25) + night(29.5, 31.5) + daytime(31.5, 34)
+    let found = sleeps(minutes, now: time(34))
+    #expect(found.count == 2)
+    #expect(found.allSatisfy { $0.unknownMinutes == 0 })
+}
+
+@Test func noDataNeverBecomesASleep() {
+    let off = stretch(23, 31) { _ in (0, 0) }
+    #expect(sleeps(daytime(9, 23) + off + daytime(31, 34), now: time(34)).isEmpty)
+}
+
+@Test func appleHealthGetsNothingForMinutesWithNoData() throws {
+    let whole = daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33)
+    let gap = time(27)..<time(27).addingTimeInterval(40 * 60)
+    let minutes = whole.filter { !gap.contains($0.start) }
+    let sleep = try #require(sleeps(minutes, now: time(33)).first)
+    let segments = SleepTimeline.build(minutes: minutes, from: sleep.start, to: sleep.end)
+    let intervals = HealthExport.sleepIntervals(for: sleep, segments: segments).filter { $0.kind != .inBed }
+    #expect(!intervals.isEmpty)
+    #expect(!intervals.contains { $0.start < gap.upperBound && gap.lowerBound < $0.end })
 }
 
 @Test func aTimeTheUserLeftAloneFollowsBetterDetection() throws {
@@ -233,16 +280,222 @@ private func timeline(_ minutes: [MinuteSample]) throws -> MetricsEngine.Timelin
 @Test func anEditTeachesTheModelAboutThatKindOfMinute() throws {
     // Sits very still most afternoons with a low heart rate, and says each time it wasn't sleep.
     let quietAfternoon = { (from: Double) in stretch(from, from + 2) { _ in (53, 1) } }
-    var minutes = daytime(9, 14) + quietAfternoon(14) + daytime(16, 23) + night(23, 30.5)
-    minutes += daytime(30.5, 38) + quietAfternoon(38) + daytime(40, 47) + night(47, 54.5) + daytime(54.5, 57)
+    var minutes = daytime(9, 23) + night(23, 30.5) + daytime(30.5, 47) + night(47, 54.5)
+    minutes += daytime(54.5, 71) + night(71, 78.5) + daytime(78.5, 86)      // three nights, so learning has begun
+    minutes += quietAfternoon(86) + daytime(88, 95) + night(95, 102.5) + daytime(102.5, 110)
+    minutes += quietAfternoon(110) + daytime(112, 119) + night(119, 126.5) + daytime(126.5, 130)
     let tl = try timeline(minutes)
     let unedited = SleepModel.probabilities(timeline: tl, calendar: calendar, corrections: [])
-    let edit = SleepCorrection(detectedStart: time(14), detectedEnd: time(16), createdAt: time(57))
+    let edit = SleepCorrection(detectedStart: time(86), detectedEnd: time(88), createdAt: time(130))
     let edited = SleepModel.probabilities(timeline: tl, calendar: calendar, corrections: [edit])
     // Only the first afternoon was edited, and the second one becomes less likely to be sleep too.
-    let inside = tl.index(time(38))..<tl.index(time(40))
+    let inside = tl.index(time(110))..<tl.index(time(112))
     let before = Stats.mean(inside.map { unedited[$0] }), after = Stats.mean(inside.map { edited[$0] })
     #expect(after < before, "second afternoon: \(before) before the edit, \(after) after it")
+}
+
+// MARK: - Motion from the wrist angle
+
+private func record(_ second: UInt32, _ accel: [Double]?) -> Whoop.HistoryRecord {
+    Whoop.HistoryRecord(version: 24, counter: second, timestamp: 1_750_000_020 + second, subsec: 0, heartRate: 60,
+                        accelG: accel, rrMsUnverified: [], length: 88)
+}
+
+private func turned(_ degrees: Double, size: Double = 1) -> [Double] {
+    let radians = degrees * .pi / 180
+    return [0, size * sin(radians), size * cos(radians)]
+}
+
+private func builtMinute(_ records: [Whoop.HistoryRecord]) throws -> MinuteSample {
+    try #require(WristAngle.adding(to: MinuteBuilder.minutes(from: records), from: records).first)
+}
+
+@Test func theAngleBetweenTwoReadingsIgnoresTheirSize() throws {
+    #expect(abs(try #require(WristAngle.degrees(from: turned(0), to: turned(30))) - 30) < 1e-9)
+    #expect(abs(try #require(WristAngle.degrees(from: turned(0, size: 1.05), to: turned(30, size: 0.9))) - 30) < 1e-9)
+    #expect(try #require(WristAngle.degrees(from: turned(10), to: turned(10))) == 0)
+    #expect(WristAngle.degrees(from: [0, 0, 0], to: turned(10)) == nil)
+    #expect(WristAngle.degrees(from: [0, 1], to: turned(10)) == nil)
+}
+
+@Test func aStillWristWithAnOffsetHasNoMovement() throws {
+    // 1.018 g: the band's value reads 9 all minute, and the wrist doesn't move at all.
+    let minute = try builtMinute((0..<60).map { record($0, turned(20, size: 1.018)) })
+    #expect(minute.activity[30] == 9)
+    #expect(minute.movement == 0)
+}
+
+@Test func changingSizeWithoutTurningIsNotMovement() throws {
+    let minute = try builtMinute((0..<60).map { record($0, turned(20, size: $0 % 2 == 0 ? 1.0 : 1.04)) })
+    #expect(minute.averageActivity > 5)
+    #expect(minute.movement == 0)
+}
+
+@Test func turningTheWristOneDegreeASecondIsMeasured() throws {
+    let minute = try builtMinute((0..<60).map { record($0, turned(Double($0))) })
+    #expect(minute.wristAngle?[30] == 10)
+    #expect(minute.wristAngle?[0] == WristAngle.noReading)      // nothing to compare the first second with
+    #expect(abs(minute.movement - 500 * .pi / 180) < 0.01)      // the same scale as the band's activity value
+}
+
+@Test func aGapInTheReadingsIsNotCountedAsTurning() throws {
+    let records = [record(0, turned(0)), record(5, turned(90)), record(6, turned(90))]
+    let minute = try builtMinute(records)
+    #expect(minute.wristAngle?[5] == WristAngle.noReading)
+    #expect(minute.wristAngle?[6] == 0)
+}
+
+@Test func aMinuteWithFewAngleReadingsUsesTheOlderMeasure() throws {
+    var minute = minute(time(10), hr: 60, activity: 9)
+    minute.wristAngle = [UInt8](repeating: WristAngle.noReading, count: 60)
+    for second in 0..<29 { minute.wristAngle?[second] = 100 }
+    #expect(minute.movement == 0)                               // 29 seconds aren't enough
+    minute.wristAngle?[29] = 100
+    #expect(minute.movement > 80)                               // 30 are
+}
+
+@Test func secondsFromTwoBatchesAreCombined() {
+    var first = [UInt8](repeating: WristAngle.noReading, count: 60), second = first
+    first[10] = 5
+    second[10] = 7
+    second[20] = 9
+    let merged = WristAngle.merged(existing: first, incoming: second)
+    #expect(merged?[10] == 7 && merged?[20] == 9)
+    #expect(WristAngle.merged(existing: nil, incoming: second) == second)
+    #expect(WristAngle.merged(existing: first, incoming: nil) == first)
+}
+
+@Test func aNightMeasuredByWristAngleIsFound() throws {
+    func withAngle(_ minutes: [MinuteSample], _ tenths: @escaping (Int) -> UInt8) -> [MinuteSample] {
+        minutes.enumerated().map { index, minute in
+            var out = minute
+            out.wristAngle = (0..<60).map { tenths(index * 60 + $0) }
+            return out
+        }
+    }
+    let day = withAngle(daytime(9, 23)) { $0 % 4 == 0 ? 20 : 2 }
+    let sleep = withAngle(nightWithRestingOffset(23, 30.5)) { _ in 0 }
+    let morning = withAngle(daytime(30.5, 33)) { $0 % 4 == 0 ? 20 : 2 }
+    let found = try #require(sleeps(day + sleep + morning, now: time(33)).first)
+    #expect(abs(found.start.timeIntervalSince(time(23))) <= 10 * 60)
+    #expect(abs(found.end.timeIntervalSince(time(30.5))) <= 10 * 60)
+}
+
+// MARK: - Three nights before personal learning
+
+private func nightsOfData(_ count: Int) -> [MinuteSample] {
+    daytime(9, 23) + (0..<count).flatMap { day -> [MinuteSample] in
+        let d = Double(day) * 24
+        return night(23 + d, 30.5 + d) + daytime(30.5 + d, 47 + d)
+    }
+}
+
+private func learnedAfter(nights count: Int) throws -> SleepModel.Learned {
+    let tl = try timeline(nightsOfData(count))
+    return SleepModel.calculate(tl, calendar: calendar, corrections: [], from: SleepModel.Learned()).learned
+}
+
+@Test func twoNightsAreNotEnoughToLearnFrom() throws {
+    let learned = try learnedAfter(nights: 2)
+    #expect(learned.nights == 2)
+    #expect(learned.heartRate == SleepModel.startingHeartRateDrop)
+    #expect(learned.movement == SleepModel.startingMovement)
+    #expect(learned.unsteadiness == SleepModel.startingUnsteadiness)
+    #expect(learned.cleanBeats == nil && learned.hrv == nil)
+}
+
+@Test func theThirdNightStartsTheLearning() throws {
+    let learned = try learnedAfter(nights: 3)
+    #expect(learned.nights == 3)
+    #expect(learned.heartRate != SleepModel.startingHeartRateDrop)
+    #expect(learned.movement != SleepModel.startingMovement)
+}
+
+@Test func anEditInTheFirstNightsFixesThatNightButTeachesNothingYet() throws {
+    let tl = try timeline(nightsOfData(2))
+    let edit = SleepCorrection(detectedStart: time(23), detectedEnd: time(30.5), createdAt: time(50))
+    let learned = SleepModel.calculate(tl, calendar: calendar, corrections: [edit], from: SleepModel.Learned()).learned
+    #expect(learned.heartRate == SleepModel.startingHeartRateDrop)
+    #expect(sleeps(nightsOfData(2), now: time(58), corrections: [edit]).count == 1)
+}
+
+@Test func theFirstNightsUseTheUsualSleepHours() {
+    let session = SleepDetector.Session(start: 0, end: 300, asleep: 300, awake: 0, disturbances: 0, isNap: false)
+    let observed = [Bool](repeating: true, count: 300), sure = [Double](repeating: 0.95, count: 300)
+    var owl = SleepModel.Learned()
+    for minute in 600..<900 { owl.asleepCounts[minute] = 2 }      // two nights at 10:00 to 15:00
+    owl.nights = 2
+    #expect(SleepModel.reviewReason(session, probability: sure, observed: observed, firstMinuteOfDay: 600, learned: owl) == .unusualTime)
+    for minute in 600..<900 { owl.asleepCounts[minute] = 10 }
+    owl.nights = 10
+    #expect(SleepModel.reviewReason(session, probability: sure, observed: observed, firstMinuteOfDay: 600, learned: owl) == nil)
+}
+
+// MARK: - "Is this right?"
+
+@Test func aSureNightIsNotQuestioned() throws {
+    let sleep = try #require(sleeps(daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33), now: time(33)).first)
+    #expect(sleep.reviewReason == nil)
+}
+
+@Test func aNightWithMuchMissingDataIsQuestioned() throws {
+    let gap = time(25)..<time(26.5)
+    let minutes = (daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33)).filter { !gap.contains($0.start) }
+    let sleep = try #require(sleeps(minutes, now: time(33)).first)
+    #expect(sleep.reviewReason == .missingData)
+}
+
+@Test func aLongSleepAtAnUnusualTimeIsQuestioned() throws {
+    let minutes = daytime(9, 11) + night(11, 15) + daytime(15, 20)
+    let sleep = try #require(sleeps(minutes, now: time(20)).first)
+    #expect(sleep.reviewReason == .unusualTime)
+}
+
+@Test func unclearMinutesMakeASleepWorthAskingAbout() {
+    let session = SleepDetector.Session(start: 0, end: 100, asleep: 100, awake: 0, disturbances: 0, isNap: true)
+    let observed = [Bool](repeating: true, count: 100)
+    let clear = [Double](repeating: 0.95, count: 100)
+    let unclear = (0..<100).map { $0 < 20 ? 0.6 : 0.95 }
+    #expect(SleepModel.reviewReason(session, probability: clear, observed: observed, firstMinuteOfDay: 60, learned: .init()) == nil)
+    #expect(SleepModel.reviewReason(session, probability: unclear, observed: observed, firstMinuteOfDay: 60, learned: .init()) == .unclear)
+}
+
+@Test func answeringYesKeepsTheSleepAndStopsAsking() throws {
+    let gap = time(25)..<time(26.5)
+    let minutes = (daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33)).filter { !gap.contains($0.start) }
+    let asked = try #require(sleeps(minutes, now: time(33)).first)
+    let yes = SleepCorrection.confirming(start: asked.start, end: asked.end, createdAt: time(33))
+    let answered = try #require(sleeps(minutes, now: time(33), corrections: [yes]).first)
+    #expect(answered.reviewReason == nil)
+    #expect(answered.start == asked.start && answered.end == asked.end)
+}
+
+@Test func answeringNotAsleepRemovesTheSleep() throws {
+    let minutes = daytime(9, 11) + night(11, 15) + daytime(15, 20)
+    let asked = try #require(sleeps(minutes, now: time(20)).first)
+    let no = SleepCorrection(detectedStart: asked.start, detectedEnd: asked.end, createdAt: time(20))
+    #expect(sleeps(minutes, now: time(20), corrections: [no]).isEmpty)
+}
+
+@Test func answersBecomeLabelsForTheModel() throws {
+    let tl = try timeline(daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33))
+    let quiet = [Double](repeating: 0.5, count: tl.count)
+    let yes = SleepCorrection.confirming(start: time(24), end: time(26), createdAt: time(33))
+    let no = SleepCorrection(detectedStart: time(27), detectedEnd: time(28), createdAt: time(33))
+    let labels = SleepModel.labels(probability: quiet, corrections: [yes, no], timeline: tl)
+    let inYes = try #require(labels[tl.index(time(25))])
+    let inNo = try #require(labels[tl.index(time(27.5))])
+    #expect(inYes.asleep && inYes.weight == SleepModel.editWeight)
+    #expect(!inNo.asleep && inNo.weight == SleepModel.editWeight)
+    #expect(labels[tl.index(time(23.5))] == nil)        // yes says nothing about the time before the sleep
+}
+
+@Test func aBackupFromBeforeReviewsStillLoads() throws {
+    let old = #"{"id":"76AF2250-8A6B-4608-97A5-11F767512A1A","start":100,"end":4000,"asleepMinutes":60,"awakeMinutes":5,"disturbances":1,"isNap":true,"source":"history"}"#
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .secondsSince1970
+    let session = try decoder.decode(SleepSession.self, from: Data(old.utf8))
+    #expect(session.reviewReason == nil)
 }
 
 // MARK: - Only changed weeks are calculated again

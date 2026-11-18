@@ -166,6 +166,7 @@ extension MinuteRecord {
         heartRate = Data(sample.heartRate)
         rrIntervals = BinaryCoding.encode(sample.rrIntervalsMs)
         activity = Data(sample.activity)
+        wristAngle = sample.wristAngle.map { Data($0) }
         sourceRaw = sample.source.rawValue
     }
 }

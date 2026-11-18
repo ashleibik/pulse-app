@@ -84,8 +84,8 @@ public enum HealthExport {
     }
 
     /// One night as Apple Health intervals: one "in bed" interval for the whole session, plus
-    /// asleep / awake inside it. Without a timeline (raw minutes missing), the whole session counts
-    /// as asleep, because that is the only thing known.
+    /// asleep / awake inside it. Minutes with no band data get neither. Without a timeline (raw minutes
+    /// missing), the whole session counts as asleep, because that is the only thing known.
     /// - Parameter writeStages: the user's setting. Off: light and restful are both plain "asleep".
     public static func sleepIntervals(for session: SleepSession, segments: [SleepSegment],
                                       writeStages: Bool = false) -> [SleepInterval] {

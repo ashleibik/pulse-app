@@ -10,6 +10,8 @@ public struct SleepModelCache: Sendable, Equatable {
     struct Week: Sendable, Equatable {
         var key: UInt64
         var asleep: [Bool]
+        /// Minutes the model was sure about: P(asleep) of at least 0.8 or at most 0.2.
+        var sure: [Bool]
         var learned: SleepModel.Learned
     }
 
@@ -30,7 +32,7 @@ public struct SleepModelCache: Sendable, Equatable {
 
     // MARK: - File format
 
-    private static let magic: UInt32 = 0x314D_5350       // "PSM1"
+    private static let magic: UInt32 = 0x324D_5350       // "PSM2"
 
     /// The cache as bytes for a file.
     public func encoded() -> Data {
@@ -42,6 +44,7 @@ public struct SleepModelCache: Sendable, Equatable {
             w.u64(UInt64(bitPattern: start))
             w.u64(week.key)
             w.bits(week.asleep)
+            w.bits(week.sure)
             w.learned(week.learned)
         }
         w.u32(recent == nil ? 0 : 1)
@@ -70,7 +73,9 @@ public struct SleepModelCache: Sendable, Equatable {
             let start = Int64(bitPattern: try r.u64())
             let key = try r.u64()
             let asleep = try r.bits()
-            cache.weeks[start] = Week(key: key, asleep: asleep, learned: try r.learned())
+            let sure = try r.bits()
+            guard sure.count == asleep.count else { throw Reader.Failure.damaged }
+            cache.weeks[start] = Week(key: key, asleep: asleep, sure: sure, learned: try r.learned())
         }
         if try r.u32() == 1 {
             let start = Date(timeIntervalSince1970: try r.double())

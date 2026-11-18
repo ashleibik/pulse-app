@@ -87,6 +87,15 @@ A sleep appears once you are clearly up again; until then the night stays empty.
 the Sleep page have a pencil button that opens "Edit sleep" (fix the times, or "I wasn't asleep").
 Settings > Your data offers to undo those edits. Settings > Band has a "Motion check" sheet.
 
+Minutes with no band data are unknown: the night's chart leaves them empty, they count as neither
+asleep nor awake, and one `caption` under the phases says how long they were.
+
+When Pulse is unsure about a sleep, the Sleep tab and the Sleep page show an "Is this right?" card
+(`monoCard`) under the night's summary: `heading` title, one `body` sentence with the reason, and
+three pills stacked full width: "Yes" (primary), "Fix times" and "Not asleep" (secondary). "Fix times"
+opens "Edit sleep", and "Not asleep" asks once before removing the sleep. An answered card does not
+come back, and the answer teaches Pulse about similar nights.
+
 ## 4c. Home Screen widget
 
 Last night at a glance: recovery ring (zone colour + the word), sleep score and sleep time. Small

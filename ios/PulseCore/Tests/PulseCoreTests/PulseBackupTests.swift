@@ -150,6 +150,26 @@ private func readAll(_ data: Data, size: Int = 4096) throws -> (PulseBackup.Cont
     #expect(merged.rrIntervalsMs == [1000, 1000, 1000])
 }
 
+@Test func wristAnglesSurviveABackupAndThisIPhoneWins() throws {
+    var here = minute(0, bpm: 60, seconds: 0..<60, rr: [1000])
+    var angles = [UInt8](repeating: WristAngle.noReading, count: 60)
+    angles[5] = 12
+    here.wristAngle = angles
+    var file = here
+    angles[5] = 99
+    angles[6] = 33
+    file.wristAngle = angles
+    let merged = PulseBackup.merged(existing: here, incoming: file)
+    #expect(merged.wristAngle?[5] == 12 && merged.wristAngle?[6] == 33)
+
+    let row = PulseBackup.MinuteRow(here)
+    #expect(row.sample?.wristAngle == here.wristAngle)
+    let older = PulseBackup.MinuteRow(minute(0, bpm: 60, seconds: 0..<60, rr: [1000]))
+    #expect(older.w == nil && older.sample?.wristAngle == nil)
+    let encoded = try PulseBackup.makeEncoder().encode(older)
+    #expect(!String(decoding: encoded, as: UTF8.self).contains("\"w\""))        // older backups look the same
+}
+
 @Test func importingTheSameFileTwiceChangesNothing() {
     let here = minute(0, bpm: 60, seconds: 0..<30, rr: [1000])
     let file = minute(0, bpm: 90, seconds: 20..<60, rr: [800, 810, 820])

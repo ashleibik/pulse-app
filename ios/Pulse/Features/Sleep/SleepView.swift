@@ -92,6 +92,9 @@ struct SleepView: View {
         let need = summary?.sleepNeedMinutes ?? 480
         return VStack(alignment: .leading, spacing: DS.Space.xxl) {
             hero(night, need: need).riseIn(0)
+            if night.value.reviewReason != nil {
+                SleepReviewCard(sleep: night).riseIn(1)
+            }
             timeline.riseIn(1)
             heart.riseIn(2)
             HStack(alignment: .top, spacing: DS.Space.m) {
@@ -207,6 +210,10 @@ struct SleepView: View {
                     .textStyle(.caption)
                     .foregroundStyle(selectedSegment == nil ? DS.Colors.secondary : DS.Colors.primary)
 
+                if !sleeps.isEmpty {
+                    UnknownMinutesNote(minutes: sleeps[min(nightIndex, sleeps.count - 1)].value.unknownMinutes)
+                }
+
                 HStack(alignment: .top, spacing: DS.Space.s) {
                     ForEach(SleepPhase.allCases.reversed(), id: \.self) { phase in
                         Button {
@@ -319,10 +326,7 @@ struct SleepView: View {
         heartRate.map(\.value).min().map { "Lowest \(Int($0.rounded())) bpm" }
     }
 
-    private func efficiency(_ night: SleepRecord) -> Double {
-        let inBed = night.end.timeIntervalSince(night.start) / 60
-        return inBed > 0 ? Double(night.asleepMinutes) / inBed : 0
-    }
+    private func efficiency(_ night: SleepRecord) -> Double { night.value.efficiency }
 
     private func timelineSummary(_ totals: [SleepPhase: Int]) -> String {
         let parts = SleepPhase.allCases.reversed().map { "\($0.title) \(PulseFormat.duration(minutes: totals[$0] ?? 0))" }

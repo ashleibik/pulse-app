@@ -19,8 +19,11 @@ final class MinuteRecord {
     var rrIntervals: Data     // UInt16 little-endian, ms
     var activity: Data        // 60 bytes
     var sourceRaw: String
+    /// 60 bytes: how far the wrist turned each second. nil on minutes saved before Pulse stored this.
+    var wristAngle: Data?
 
     init(_ sample: MinuteSample) {
+        wristAngle = sample.wristAngle.map { Data($0) }
         start = sample.start
         heartRate = Data(sample.heartRate)
         rrIntervals = BinaryCoding.encode(sample.rrIntervalsMs)
@@ -44,13 +47,15 @@ final class MinuteRecord {
         if !sample.rrIntervalsMs.isEmpty {
             rrIntervals = BinaryCoding.encode(BinaryCoding.decodeUInt16(rrIntervals) + sample.rrIntervalsMs)
         }
+        wristAngle = WristAngle.merged(existing: wristAngle.map { [UInt8]($0) }, incoming: sample.wristAngle).map { Data($0) }
         sourceRaw = sample.source.rawValue
     }
 
     var value: MinuteSample {
         MinuteSample(start: start, heartRate: [UInt8](heartRate),
                      rrIntervalsMs: BinaryCoding.decodeUInt16(rrIntervals),
-                     activity: [UInt8](activity), source: DataSource(rawValue: sourceRaw) ?? .history)
+                     activity: [UInt8](activity), source: DataSource(rawValue: sourceRaw) ?? .history,
+                     wristAngle: wristAngle.map { [UInt8]($0) })
     }
 }
 
@@ -66,6 +71,8 @@ final class SleepRecord {
     var disturbances: Int
     var isNap: Bool
     var sourceRaw: String
+    /// Why Pulse asks "Is this right?" about this sleep. nil = nothing to ask.
+    var reviewReasonRaw: String?
 
     init(_ s: SleepSession) {
         id = s.id
@@ -76,11 +83,13 @@ final class SleepRecord {
         disturbances = s.disturbances
         isNap = s.isNap
         sourceRaw = s.source.rawValue
+        reviewReasonRaw = s.reviewReason?.rawValue
     }
 
     var value: SleepSession {
         SleepSession(id: id, start: start, end: end, asleepMinutes: asleepMinutes, awakeMinutes: awakeMinutes,
-                     disturbances: disturbances, isNap: isNap, source: DataSource(rawValue: sourceRaw) ?? .history)
+                     disturbances: disturbances, isNap: isNap, source: DataSource(rawValue: sourceRaw) ?? .history,
+                     reviewReason: reviewReasonRaw.flatMap(SleepReviewReason.init(rawValue:)))
     }
 }
 

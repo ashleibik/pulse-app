@@ -35,23 +35,37 @@ public enum SleepTimeline {
     /// count as awake, so the night's headline numbers and its phases always add up to the same total.
     ///
     /// Per minute:
-    ///   awake   = not worn or no data, OR moving, OR heart rate >= the night's median + 10
+    ///   nil     = no band data: unknown, neither asleep nor awake
+    ///   awake   = moving, OR heart rate >= the night's median + 10
     ///   restful = very still AND heart rate at or below the night's median
     ///   light   = everything else
     /// Then non-awake runs shorter than 3 minutes are absorbed by their neighbour, so the chart
     /// shows the shape of the night instead of noise.
-    public static func phases(hr: [Double?], movement: [Double?]) -> [SleepPhase] {
+    public static func phases(hr: [Double?], movement: [Double?]) -> [SleepPhase?] {
         let rates = hr.compactMap { $0 }
-        guard !rates.isEmpty else { return hr.map { _ in .awake } }
+        guard !rates.isEmpty else { return hr.map { _ in nil } }
         let median = Stats.median(rates)
-        return smooth(hr.indices.map { i in
-            guard let rate = hr[i], let moved = movement[i] else { return .awake }
-            if moved >= awakeMovement || rate >= median + 10 { return .awake }
-            return (moved < restfulMovement && rate <= median) ? .restful : .light
-        })
+        var out = [SleepPhase?](repeating: nil, count: hr.count)
+        var i = 0
+        while i < hr.count {
+            guard hr[i] != nil, movement[i] != nil else { i += 1; continue }
+            var end = i
+            var run: [SleepPhase] = []
+            while end < hr.count, let rate = hr[end], let moved = movement[end] {
+                if moved >= awakeMovement || rate >= median + 10 {
+                    run.append(.awake)
+                } else {
+                    run.append((moved < restfulMovement && rate <= median) ? .restful : .light)
+                }
+                end += 1
+            }
+            for (offset, phase) in smooth(run).enumerated() { out[i + offset] = phase }
+            i = end
+        }
+        return out
     }
 
-    /// The night as segments that cover every minute from `start` to `end`.
+    /// The night as segments. Minutes with no band data belong to no segment.
     public static func build(minutes: [MinuteSample], from start: Date, to end: Date) -> [SleepSegment] {
         let count = Int((end.timeIntervalSince(start) / 60).rounded(.up))
         guard count > 0 else { return [] }
@@ -68,9 +82,11 @@ public enum SleepTimeline {
         var segments: [SleepSegment] = []
         var runStart = 0
         for i in 1...count where i == count || phases[i] != phases[runStart] {
-            segments.append(SleepSegment(start: start.addingTimeInterval(Double(runStart) * 60),
-                                         end: min(end, start.addingTimeInterval(Double(i) * 60)),
-                                         phase: phases[runStart]))
+            if let phase = phases[runStart] {
+                segments.append(SleepSegment(start: start.addingTimeInterval(Double(runStart) * 60),
+                                             end: min(end, start.addingTimeInterval(Double(i) * 60)),
+                                             phase: phase))
+            }
             runStart = i
         }
         return segments

@@ -92,6 +92,12 @@ minutes at a time, changing only when the wrist settled into a new position, so 
 moving. Sitting awake at a computer mostly reads 3 to 11, the same range. With `s` = the median of the minute's 60 values:
 `A = mean(max(0, value − s))`, or the plain mean when `s > 12` (too high to be a wrist lying still).
 
+**Newer minutes use the wrist angle.** Each second Pulse stores the angle between that second's gravity reading and the one
+before it (at most 2 seconds earlier), in tenths of a degree. With at least 30 such seconds in a minute,
+`A = mean angle in degrees × 500 × π/180`, which is the scale the older formula uses. Sustained changes in arm angle are the
+published way to find rest from a wrist accelerometer (van Hees et al. 2015, 2018). *Our choice:* the angle in all three
+dimensions rather than the z-axis only. Minutes saved earlier keep the older formula, because the raw readings were not stored.
+
 **Left out, on purpose:**
 
 - **Breathing.** Breathing was faster and shallower in every sleep stage than awake in Douglas et al. 1982, so a slower rate
@@ -116,14 +122,19 @@ unconfirmed. Because HRV has no starting values, it only counts as far as it rea
 
 1. **Evidence.** Each signal has one bell curve for asleep and one for awake. Its evidence for a minute is
    `0.6 × (ln density asleep − ln density awake)`, limited to ±3. Evidence is added up across signals (naive Bayes; Hand & Yu
-   2001). The 0.6 allows for signals that overlap. A minute with no band data counts −2.
+   2001). The 0.6 allows for signals that overlap. Unless the heart rate also points to sleep, being still and having a steady heart
+   rate can each add at most +0.4 toward sleep, because wearables are good at finding sleep but poor at spotting quiet
+   wakefulness (Schyvens et al. 2025). A minute with no band data adds no evidence either way.
 2. **Time of day.** `0.25 × logit(chance of being asleep at this minute of the day)`, limited to ±0.8. The chance is
    `(3 × typical + nights asleep at this minute) / (3 + nights)`, averaged over ±15 minutes.
 3. **Smoothing.** A two-state hidden Markov model, run forward and backward over all minutes (Rabiner 1989), gives
    P(asleep) per minute. Each minute, the chance of falling asleep is 1/720 and of waking up is 1/240.
 4. **Learning.** The model runs three times per week of data. After each run, minutes with P ≥ 0.8 are labelled asleep and P ≤ 0.2 awake,
    and the curves, the awake heart rate and the sleep hours are updated from those labels. Starting values count as
-   300 minutes of data. A learned-only signal needs 120 labelled minutes of each kind.
+   300 minutes of data. A learned-only signal needs 120 labelled minutes of each kind. **Nothing is learned until there are 3
+   nights of data.** Until then the model uses the starting values and the typical sleep hours, and the learned-only signals are
+   off. One direct trial of personalising wrist-based sleep staging improved results with more personal nights (van der Aar
+   et al. 2025). The 3 is *our choice*.
 5. **The owner's edits teach it.** "I wasn't asleep" labels those minutes awake. An edited sleep labels its minutes asleep,
    and the hour on the other side of a time the owner moved as awake. Each edited minute counts as 5.
 
@@ -136,14 +147,22 @@ latest week only. An edit recalculates its own week and, if that changes what wa
 
 6. A minute is **asleep** when P ≥ 0.5.
 7. **Sessions:** runs of ≥ 15 asleep minutes are merged when they are ≤ 30 minutes apart, or ≤ 120 minutes apart with at
-   least 25% asleep between them. Up to 30 minutes after the end, a further 5 asleep minutes extend the sleep. A sleep lasts at
-   least 45 minutes, and a span under 180 minutes is a **nap**.
+   least 25% asleep between them. A quiet spell under 30 minutes that is followed by 10+ minutes awake doesn't start the sleep.
+   Up to 30 minutes after the end, a further 5 asleep minutes extend the sleep. A sleep lasts at least 45 minutes, and a span
+   under 180 minutes is a **nap**.
 8. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
 9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (`A > 2.5`, or HR 10+ bpm
    above the sleep's), or the band was off the wrist for an hour, or 6 hours have passed without newer data.
-10. **Minutes inside a sleep:** awake = no data, `A ≥ 6`, or HR 10+ bpm above the sleep's median. Restful = `A < 1` and HR at
-    or below the median. Light = the rest. Asleep time, awake time, wake-ups and the phases all come from this one rule,
-    so light + restful = asleep and asleep + awake = the length of the sleep.
+10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. Restful =
+    `A < 1` and HR at or below the median. Light = the rest. Asleep time, awake time, wake-ups and the phases all come from
+    this one rule, so light + restful = asleep and asleep + awake + unknown = the length of the sleep. Efficiency is asleep ÷
+    (asleep + awake).
+11. **Missing data.** A sleep starts and ends on measured minutes and needs 45 of them asleep. A gap of up to 3 hours with
+    sleep on both sides stays inside the sleep as unknown. A longer gap splits it.
+12. **Asking the owner.** A sleep shows "Is this right?" when at least 15% of it has no data, when at least 15% of its measured
+    minutes have a P(asleep) between 0.2 and 0.8, or when most of it falls outside the hours the owner usually sleeps. "Yes" labels
+    the sleep's minutes asleep, "Fix times" labels them by the new times, and "Not asleep" labels them awake. These labels are
+    the edits of step 5. *Our choice:* all three limits.
 
 The user's edits ("I wasn't asleep", new start / end) are applied last and survive every recalculation. A time the user
 left unchanged follows the detection, so better detection can still correct it.
@@ -166,8 +185,14 @@ estimated:** HR + motion can't do it accurately enough to be honest.
 - Kräuchi K, Cajochen C, Werth E, Wirz-Justice A. Warm feet promote the rapid onset of sleep. *Nature* 1999; 401:36–37
 - Rabiner LR. A tutorial on hidden Markov models and selected applications in speech recognition. *Proc IEEE* 1989; 77(2):257–286
 - Schäfer A, Kratky KW. Estimation of breathing rate from respiratory sinus arrhythmia. *Ann Biomed Eng* 2008; 36:476–485
+- Schyvens AM, et al. A performance validation of six commercial wrist-worn wearable sleep-tracking devices.
+  *Sleep Adv* 2025; 6(2):zpaf021
 - Stein PK, Pu Y. Heart rate variability, sleep and sleep disorders. *Sleep Med Rev* 2012; 16(1):47–66
 - Trinder J, et al. Autonomic activity during human sleep as a function of time and sleep stage. *J Sleep Res* 2001; 10(4):253–264
+- van Hees VT, et al. A novel, open access method to assess sleep duration using a wrist-worn accelerometer. *PLoS ONE* 2015
+- van Hees VT, et al. Estimating sleep parameters using an accelerometer without sleep diary. *Sci Rep* 2018
+- van der Aar J, et al. Learning individual autonomic representations of sleep stages to improve photoplethysmography based
+  sleep monitoring. *Physiol Meas* 2025
 - Walch O, Huang Y, Forger D, Goldstein C. Sleep stage prediction with raw acceleration and photoplethysmography heart rate
   data derived from a consumer wearable device. *Sleep* 2019. doi:10.1093/sleep/zsz180
 

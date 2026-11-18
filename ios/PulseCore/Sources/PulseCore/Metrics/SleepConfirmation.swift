@@ -28,6 +28,18 @@ public struct SleepCorrection: Codable, Sendable, Equatable, Identifiable {
         let shorter = min(detectedEnd.timeIntervalSince(detectedStart), otherEnd.timeIntervalSince(otherStart))
         return overlap > 0 && shorter > 0 && overlap >= shorter / 2
     }
+
+    /// The answer "yes, this was sleep": the detected times, unchanged.
+    public static func confirming(start: Date, end: Date, createdAt: Date) -> SleepCorrection {
+        SleepCorrection(detectedStart: start, detectedEnd: end, start: start, end: end, createdAt: createdAt)
+    }
+
+    /// True when the user has already answered for a sleep at these times.
+    public func answers(start otherStart: Date, end otherEnd: Date) -> Bool {
+        if applies(toStart: otherStart, end: otherEnd) { return true }
+        guard let start, let end else { return false }
+        return SleepCorrection(detectedStart: start, detectedEnd: end, createdAt: createdAt).applies(toStart: otherStart, end: otherEnd)
+    }
 }
 
 /// When a sleep found by `SleepModel` may be shown. Spec: docs/METRICS.md §4.
@@ -55,17 +67,21 @@ extension SleepDetector {
     }
 
     /// Counts the minutes of a span with the same rules as `sessions`.
-    static func session(start: Int, end: Int, asleep: [Bool], napLimit: Int = 180) -> Session {
-        var awake = 0, disturbances = 0
+    /// - Parameter observed: false = no band data for that minute. It counts as neither asleep nor awake.
+    static func session(start: Int, end: Int, asleep: [Bool], observed: [Bool]? = nil, napLimit: Int = 180) -> Session {
+        var sleeping = 0, awake = 0, disturbances = 0
         var previousAsleep = true
         for k in start..<end {
-            if !asleep[k] {
+            if asleep[k] {
+                sleeping += 1
+                previousAsleep = true
+            } else if observed?[k] ?? true {
                 awake += 1
                 if previousAsleep { disturbances += 1 }
+                previousAsleep = false
             }
-            previousAsleep = asleep[k]
         }
-        return Session(start: start, end: end, asleep: end - start - awake, awake: awake,
+        return Session(start: start, end: end, asleep: sleeping, awake: awake,
                        disturbances: disturbances, isNap: end - start < napLimit)
     }
 }
