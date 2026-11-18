@@ -62,11 +62,17 @@ protocol BandLink: AnyObject {
 ///   keep devices whose name contains "WHOOP" or that advertise a service starting with 6108.
 /// - Which service UUID it uses (…0000 or …0001). We accept any service starting with 6108.
 /// - Whether iOS shows a pairing prompt (bonding). If the band requires it, iOS asks by itself.
-/// Not done yet: reconnecting in the background (state restoration).
+///
+/// Staying connected (like WHOOP's own app): `connect(to:)` asks CoreBluetooth for a connection
+/// that never times out, so the band connects whenever it comes in range, also with Pulse in the
+/// background (UIBackgroundModes: bluetooth-central). State restoration (the restore identifier)
+/// lets iOS relaunch Pulse in the background for the band after it was ended to free memory; the
+/// connection is handed back in `willRestoreState`. Nothing survives a force-quit (swipe away).
 final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
     var onEvent: ((BandLinkEvent) -> Void)?
     /// Every CoreBluetooth callback and every state change of this class happens on this queue.
     let queue = DispatchQueue(label: "dev.pulse.ble", qos: .userInitiated)
+    static let restoreID = "dev.pulse.app.central"
 
     private var central: CBCentralManager?
     private var seen: [UUID: CBPeripheral] = [:]
@@ -76,12 +82,15 @@ final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBP
     private var wantsScan = false
     private var wantsConnection: UUID?
     private var disconnectingOnPurpose = false
+    /// Handed back by iOS after a background relaunch; set up once Bluetooth is on.
+    private var restored: CBPeripheral?
 
     /// Creating the manager is what makes iOS show the Bluetooth permission prompt, so it is
-    /// created only when the user actually starts pairing or syncing.
+    /// created only once a band is paired, or when the user starts pairing.
     private func manager() -> CBCentralManager {
         if let central { return central }
-        let created = CBCentralManager(delegate: self, queue: queue)
+        let created = CBCentralManager(delegate: self, queue: queue,
+                                       options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreID])
         central = created
         return created
     }
@@ -131,6 +140,11 @@ final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBP
 
     private func connectNow(_ central: CBCentralManager) {
         guard let id = wantsConnection else { return }
+        // Already connected or connecting to it (e.g. restored by iOS): don't ask twice.
+        if let current, current.identifier == id, current.state == .connected || current.state == .connecting {
+            wantsConnection = nil
+            return
+        }
         // A band we paired before can be found again by its identifier, without scanning.
         guard let peripheral = seen[id] ?? central.retrievePeripherals(withIdentifiers: [id]).first else {
             onEvent?(.disconnected("Your band was not found. Bring it close and try again."))
@@ -145,13 +159,39 @@ final class BluetoothBandLink: NSObject, BandLink, CBCentralManagerDelegate, CBP
 
     // MARK: CBCentralManagerDelegate
 
+    /// iOS relaunched Pulse in the background and hands back the band it was connected to.
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard let peripheral = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral])?.first else { return }
+        peripheral.delegate = self
+        seen[peripheral.identifier] = peripheral
+        current = peripheral
+        restored = peripheral
+        onEvent?(.note("Restored by iOS: \(peripheral.identifier) (\(peripheral.state == .connected ? "connected" : "not connected"))"))
+    }
+
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
             onEvent?(.availability(.ready))
+            if let restored {
+                self.restored = nil
+                switch restored.state {
+                case .connected:
+                    // Still connected: find the characteristics again, then carry on as after a connect.
+                    commandCharacteristic = nil
+                    notifyPending = 0
+                    restored.discoverServices(nil)
+                case .connecting:
+                    break       // didConnect follows
+                default:
+                    central.connect(restored, options: nil)
+                }
+            }
             if wantsScan { scan(central) }
             connectNow(central)
         case .poweredOff:
+            current = nil
+            commandCharacteristic = nil
             onEvent?(.availability(.poweredOff))
         case .unauthorized:
             onEvent?(.availability(.notAllowed))

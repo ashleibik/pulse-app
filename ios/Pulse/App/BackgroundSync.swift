@@ -4,30 +4,52 @@ import SwiftData
 import WidgetKit
 import PulseCore
 
-/// Syncing while Pulse is closed.
+/// Pulling band data while Pulse is not on screen.
 ///
-/// iOS wakes the app now and then ("background app refresh", roughly hourly at best; iOS decides,
-/// based on how often you use the app and the battery). Each time, Pulse connects to the band,
-/// downloads what's new, recalculates, then updates the widget and tonight's reminder.
+/// The main path is the kept connection (BandManager): with the band connected, iOS wakes Pulse
+/// for the band's own messages and a running pull simply continues in the background. On top:
+/// - "Background app refresh" (`taskID`): short wake-ups now and then (iOS decides when).
+/// - A nightly processing task (`nightlyID`): iOS runs it when the phone is idle, usually at night
+///   on the charger, with more time. It pulls the night so far and recalculates, so sleep and HRV
+///   are mostly ready before you open the app in the morning.
 ///
-/// Limits (Apple's, not ours):
-/// - iOS gives about 30 seconds. A long backlog is downloaded in parts over several wake-ups;
-///   that is safe because every batch is acknowledged to the band only after it is saved.
-/// - Nothing runs after the app is force-quit (swiped away), or with Background App Refresh off.
+/// Limits (Apple's, not ours): iOS decides if and when these run; nothing runs after the app is
+/// force-quit (swiped away) or with Background App Refresh off. A pull cut short is safe: every
+/// batch is acknowledged to the band only after it is saved.
 @MainActor
 enum BackgroundSync {
     /// Must match BGTaskSchedulerPermittedIdentifiers in project.yml.
     static let taskID = "dev.pulse.app.sync"
+    static let nightlyID = "dev.pulse.app.nightly"
 
-    /// Ask iOS for the next wake-up. Called whenever the app goes to the background.
+    /// Ask iOS for the next wake-ups. Called whenever the app goes to the background.
     static func schedule() {
-        let request = BGAppRefreshTaskRequest(identifier: taskID)
-        request.earliestBeginDate = Date.now.addingTimeInterval(BandManager.syncInterval)
-        try? BGTaskScheduler.shared.submit(request)
+        let refresh = BGAppRefreshTaskRequest(identifier: taskID)
+        refresh.earliestBeginDate = Date.now.addingTimeInterval(BandManager.backgroundInterval)
+        try? BGTaskScheduler.shared.submit(refresh)
+
+        let nightly = BGProcessingTaskRequest(identifier: nightlyID)
+        nightly.requiresNetworkConnectivity = false
+        nightly.requiresExternalPower = false
+        nightly.earliestBeginDate = Date.now.addingTimeInterval(60 * 60)
+        try? BGTaskScheduler.shared.submit(nightly)
     }
 
-    static func run(container: ModelContainer) async {
-        schedule()      // book the next one first, whatever happens below
+    /// The nightly task is registered by hand (SwiftUI's `.backgroundTask` only knows app refresh).
+    /// Must run before the app finishes launching (PulseApp.init).
+    static func registerNightly(container: ModelContainer) {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: nightlyID, using: .main) { task in
+            let work = Task { @MainActor in
+                await run(container: container, seconds: 120)
+                task.setTaskCompleted(success: true)
+            }
+            task.expirationHandler = { work.cancel() }
+        }
+    }
+
+    /// Connect if needed, pull what's new, wait for it (at most `seconds`), refresh the widget.
+    static func run(container: ModelContainer, seconds: TimeInterval = 25) async {
+        schedule()      // book the next ones first, whatever happens below
         let context = container.mainContext
         let band = BandManager.shared
         // When iOS launched the app just for this, no screen exists yet to react to new data.
@@ -38,13 +60,18 @@ enum BackgroundSync {
                 WidgetBridge.publish(context: context)
             }
         }
-        band.syncIfDue(context: context)    // at most every 20 minutes (BandManager.syncInterval)
-        let deadline = Date.now.addingTimeInterval(25)
-        while band.isBusy && Date.now < deadline {
+        band.launch(context: context)
+        let deadline = Date.now.addingTimeInterval(seconds)
+        var asked = false
+        while Date.now < deadline && !Task.isCancelled {
+            if band.isConnected && !asked {
+                band.pullIfDue(olderThan: 60)
+                asked = true
+            }
+            if asked && band.stage != .syncing { break }
             try? await Task.sleep(for: .milliseconds(500))
         }
-        // Out of time: stop cleanly. Everything acknowledged is saved; the rest comes next time.
-        if band.isBusy { band.cancel() }
+        // Out of time: nothing to stop. With the band connected the pull goes on as iOS allows.
         WidgetBridge.publish(context: context)
     }
 }

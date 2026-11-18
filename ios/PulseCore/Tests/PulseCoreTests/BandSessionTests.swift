@@ -25,8 +25,9 @@ struct SessionHarness {
     }
 
     /// Runs until nothing is left to do. `answerClock: false` simulates a band that ignores GET_CLOCK.
-    mutating func run(answerClock: Bool = true, maxSteps: Int = 200_000) {
-        var queue = session.start()
+    /// `effects`: start from these instead of a fresh hello (e.g. `pullAgain()` on a kept connection).
+    mutating func run(answerClock: Bool = true, maxSteps: Int = 200_000, effects: [BandSession.Effect]? = nil) {
+        var queue = effects ?? session.start()
         var steps = 0
         while steps < maxSteps {
             steps += 1
@@ -78,6 +79,41 @@ struct SessionHarness {
     #expect(h.writes.filter { $0 == "HISTORY_ACK" }.count == 3)
     #expect(h.progressReports == 3)
     #expect(h.session.badFrames == 0)
+}
+
+@Test func aKeptConnectionPullsOnlyWhatIsNewWithoutSayingHelloAgain() {
+    let start: UInt32 = 1_750_000_000
+    var h = SessionHarness(band: SimulatedBand(samples: samples(150, start: start), batchSize: 100, mtuPayload: 20,
+                                               clock: start + 150), now: Double(start) + 151)
+    h.run()
+    #expect(h.finishedRecords == 150)
+
+    // Five minutes later, still connected: the band recorded 60 more seconds.
+    h.band.record(samples(60, start: start + 150))
+    h.writes = []
+    h.finishedRecords = nil
+    let pull = h.session.pullAgain()
+    h.run(effects: pull)
+    #expect(h.failure == nil)
+    #expect(h.finishedRecords == 60)
+    #expect(h.writes.prefix(3) == ["GET_BATTERY_LEVEL", "GET_DATA_RANGE", "SEND_HISTORICAL_DATA"])
+    #expect(!h.writes.contains("SET_CLOCK") && !h.writes.contains("REPORT_VERSION_INFO"))
+    #expect(h.saved.map(\.timestamp) == (0..<210).map { start + UInt32($0) })
+    #expect(h.session.phase == .finished)
+
+    // Nothing new: a pull is three commands and ends straight away.
+    h.finishedRecords = nil
+    let empty = h.session.pullAgain()
+    h.run(effects: empty)
+    #expect(h.finishedRecords == 0)
+    #expect(h.saved.count == 210)
+}
+
+@Test func pullAgainWaitsUntilTheLastDownloadIsDone() {
+    var session = BandSession()
+    #expect(session.pullAgain().isEmpty)        // idle: nothing to repeat
+    _ = session.start()
+    #expect(session.pullAgain().isEmpty)        // still saying hello
 }
 
 @Test func sessionFixesAWrongClockBeforeDownloading() {

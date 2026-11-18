@@ -2,162 +2,120 @@ import SwiftUI
 import SwiftData
 import PulseCore
 
-/// "Why is my recovery what it is?": the factors, today's strain target, and the last 14 days.
-/// Mono design (ios/design/DESIGN.md): helped / hurt is shown by the direction of a bar and a
-/// signed number, never by green / red.
+/// The Recovery page (DESIGN.md §4b): big ring and score, then the four things behind it, each as
+/// today vs your last 30 days (▲ / ▼), then one paragraph in plain words.
 struct RecoveryDetailView: View {
-    /// The day it was opened with.
-    let day: DaySummaryRecord
-    /// A different day picked in the 14-day chart.
-    @State private var selected: DaySummaryRecord?
-    @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
-
-    /// The day on screen.
-    private var shown: DaySummaryRecord { selected ?? day }
-    private var isToday: Bool { Calendar.current.isDateInToday(shown.date) }
-
-    private var breakdown: RecoveryBreakdown? {
-        RecoveryExplainer.breakdown(for: shown.value, history: days.map(\.value))
-    }
+    let day: DaySummaryRecord?
+    let sleeps: [SleepRecord]
+    let days: [DaySummaryRecord]
+    @Environment(\.modelContext) private var context
+    @State private var explaining = false
+    @State private var respiratory: (today: Double?, average: Double?) = (nil, nil)
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DS.Space.xxl) {
-                hero.riseIn(0)
-                factors.riseIn(1)
-                target.riseIn(2)
-                history.riseIn(3)
-                method.riseIn(4)
-            }
-            .padding(.horizontal, DS.Space.side)
-            .padding(.top, DS.Space.m)
-            .padding(.bottom, DS.Space.xxl)
-        }
-        // Only the screenshot job sets this (to capture the lower half of the screen).
-        .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
-        .monoBackground()
-        .navigationTitle(isToday ? "Recovery" : shown.date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-        .sensoryFeedback(.selection, trigger: shown.date)
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    // MARK: - Sections
-
-    private var hero: some View {
-        VStack(spacing: DS.Space.l) {
-            RecoveryDial(score: shown.recoveryScore, diameter: 184, lineWidth: 10)
-            VStack(spacing: DS.Space.xs) {
-                Text((shown.zone?.word ?? "Learning").uppercased())
-                    .textStyle(.display)
-                    .foregroundStyle(DS.Colors.zone(shown.zone))
-                    .accessibilityHidden(true)      // the ring already reads this word
-                Text(RecoveryExplainer.oneLine(breakdown))
-                    .textStyle(.body)
-                    .foregroundStyle(DS.Colors.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var factors: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionTitle(title: "What moved it")
-                .padding(.bottom, DS.Space.s)
-            if let breakdown {
-                ForEach(Array(breakdown.factors.enumerated()), id: \.element.id) { index, factor in
-                    if index > 0 { Hairline() }
-                    factorRow(factor)
-                }
-                Text("Points compared with a night exactly at your normal, which scores 50%.")
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, DS.Space.s)
+            if let day {
+                content(day)
+                    .padding(.horizontal, DS.Space.side)
+                    .padding(.top, DS.Space.l)
+                    .padding(.bottom, DS.Space.xxl)
             } else {
-                // No baseline yet: the stored explanation says how many nights are still needed.
-                Text(shown.explanation)
-                    .textStyle(.body)
-                    .foregroundStyle(DS.Colors.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                EmptyState(symbol: "moon.zzz", title: "No recovery yet",
+                           text: "Wear your band to sleep. Recovery compares each night with your own normal.")
+                    .padding(DS.Space.side)
             }
         }
+        .monoBackground()
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { explaining = true } label: { Image(systemName: "info.circle") }
+                    .accessibilityLabel("What recovery means")
+            }
+        }
+        .sheet(isPresented: $explaining) {
+            MetricExplainerView(kind: .recovery, today: day, history: Array(days.prefix(14)))
+                .presentationDetents([.medium, .large])
+        }
+        .task(id: day?.date) { loadRespiratory() }
     }
 
-    private func factorRow(_ factor: RecoveryFactor) -> some View {
-        VStack(alignment: .leading, spacing: DS.Space.s) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(factor.title)
-                    .textStyle(.body)
-                    .foregroundStyle(DS.Colors.primary)
-                Spacer(minLength: DS.Space.s)
-                Text(pointsText(factor.points))
-                    .textStyle(.bodyStrong)
-                    .monospacedDigit()
-                    .foregroundStyle(DS.Colors.primary)
-            }
-            ContributionBar(points: factor.points)
-            Text(factor.detail)
+    private var title: String {
+        guard let day else { return "Recovery" }
+        return Calendar.current.isDateInToday(day.date) ? "TODAY" : day.date.formatted(.dateTime.weekday(.wide).month().day()).uppercased()
+    }
+
+    private func content(_ day: DaySummaryRecord) -> some View {
+        let earlier = NightVitals.previous30(days, before: day.date)
+        let hrvAverage = mean(earlier.compactMap(\.hrvRMSSD))
+        let rhrAverage = mean(earlier.compactMap(\.restingHeartRate))
+        let performance = NightVitals.performance(for: day, sleeps: sleeps)
+        let performanceAverage = mean(earlier.compactMap { NightVitals.performance(for: $0, sleeps: sleeps)?.score })
+        return VStack(alignment: .leading, spacing: DS.Space.l) {
+            BigScoreRing(fraction: day.recoveryScore.map { $0 / 100 },
+                         text: day.recoveryScore.map { "\(Int($0.rounded()))%" } ?? "--",
+                         caption: day.recoveryScore == nil ? "RECOVERY\nLEARNING YOUR NORMAL" : "RECOVERY",
+                         color: DS.Colors.zone(day.zone))
+                .riseIn(1)
+
+            VStack(spacing: 0) {
+                CompareRow(symbol: "waveform.path.ecg", title: "Heart rate variability", value: day.hrvRMSSD,
+                           average: hrvAverage, format: { "\(Int($0.rounded()))" }, higherIsBetter: true)
+                Hairline()
+                CompareRow(symbol: "heart", title: "Resting heart rate", value: day.restingHeartRate,
+                           average: rhrAverage, format: { "\(Int($0.rounded()))" }, higherIsBetter: false)
+                Hairline()
+                CompareRow(symbol: "lungs", title: "Respiratory rate", value: respiratory.today,
+                           average: respiratory.average, format: { String(format: "%.1f", $0) }, higherIsBetter: nil)
+                Hairline()
+                CompareRow(symbol: "moon", title: "Sleep performance", value: performance?.score,
+                           average: performanceAverage, format: { "\(Int($0.rounded()))%" }, higherIsBetter: true)
+                HStack(spacing: 6) {
+                    Text("▲▼").foregroundStyle(DS.Colors.accent)
+                    Text("Today").foregroundStyle(DS.Colors.primary)
+                    Text("vs. last 30 days").foregroundStyle(DS.Colors.secondary)
+                    Spacer()
+                }
                 .textStyle(.caption)
-                .foregroundStyle(DS.Colors.secondary)
-        }
-        .padding(.vertical, DS.Space.m)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(factor.title)
-        .accessibilityValue("\(factor.detail). \(pointsText(factor.points)) points.")
-    }
-
-    private var target: some View {
-        let range = StrainGuidance.targetRange(recovery: shown.recoveryScore)
-        return VStack(alignment: .leading, spacing: DS.Space.m) {
-            SectionTitle(title: isToday ? "Strain target" : "Strain that day",
-                         trailing: "\(Int(range.lowerBound))–\(Int(range.upperBound)) of 21")
-            StrainMeter(strain: shown.strain, target: range)
-            Text(isToday ? StrainGuidance.advice(strain: shown.strain, recovery: shown.recoveryScore)
-                 : "Strain was \(PulseFormat.strain(shown.strain)). The target that day was \(Int(range.lowerBound))–\(Int(range.upperBound)).")
-                .textStyle(.body)
-                .foregroundStyle(DS.Colors.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    /// The one card on this screen.
-    private var history: some View {
-        let recent = Array(days.prefix(14).reversed())      // oldest first
-        let scores = recent.compactMap(\.recoveryScore)
-        let average: Double? = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
-        let bars = DayBarsChart.Bar.from(recent, highlight: shown.date) { $0.recoveryScore }
-        let summary = "Recovery over the last \(recent.count) days. "
-            + (average.map { "Average \(PulseFormat.percent($0))." } ?? "No scores yet.")
-        return VStack(alignment: .leading, spacing: DS.Space.m) {
-            SectionTitle(title: "Last 14 days",
-                         trailing: average.map { "Avg \(PulseFormat.percent($0))" })
-            DayBarsChart(bars: bars, domain: 0...100, height: 120, summary: summary) { id in
-                selected = recent.first { DayBarsChart.Bar.id(for: $0.date) == id }
-            }
-        }
-        .monoCard()
-    }
-
-    private var method: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s) {
-            SectionTitle(title: "How it's calculated")
-            Text(MetricKind.recovery.method)
-                .textStyle(.body)
-                .foregroundStyle(DS.Colors.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Pulse is for general wellness, not medical advice.")
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.secondary)
+                .padding(DS.Space.s)
+                .background(RoundedRectangle(cornerRadius: 10).fill(DS.Colors.background))
                 .padding(.top, DS.Space.s)
+            }
+            .monoCard(padding: DS.Space.m)
+            .riseIn(2)
+
+            Text(paragraph(day, rhrHistory: earlier.compactMap(\.restingHeartRate)))
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .monoCard(padding: DS.Space.m)
+                .riseIn(3)
         }
     }
 
-    /// "+3", "-18" or "±0". A real minus sign (−) lines up better than a hyphen.
-    private func pointsText(_ points: Double) -> String {
-        let rounded = Int(points.rounded())
-        if rounded == 0 { return "±0" }
-        return rounded > 0 ? "+\(rounded)" : "−\(-rounded)"
+    /// The day's explanation, plus where resting HR sits in its usual range (when there is one).
+    private func paragraph(_ day: DaySummaryRecord, rhrHistory: [Double]) -> String {
+        var text = day.explanation
+        if let rhr = day.restingHeartRate, rhrHistory.count >= 3 {
+            let mean = Stats.mean(rhrHistory)
+            let spread = max(2, 1.5 * Stats.sampleSD(rhrHistory))
+            let low = Int((mean - spread).rounded()), high = Int((mean + spread).rounded())
+            let inside = HealthMonitor.withinRange(rhr, history: rhrHistory, minSpread: 2) == true
+            text += " Your resting heart rate (\(Int(rhr.rounded())) bpm) is \(inside ? "within" : "outside") its usual range of \(low) to \(high) bpm."
+        }
+        return text
+    }
+
+    private func mean(_ values: [Double]) -> Double? { values.isEmpty ? nil : Stats.mean(values) }
+
+    private func loadRespiratory() {
+        guard let day else { return }
+        let tonight = NightVitals.mainSleep(endingOn: day.date, in: sleeps)
+        let from = Calendar.current.date(byAdding: .day, value: -30, to: day.date) ?? day.date
+        let earlier = sleeps.filter { !$0.isNap && $0.end < (tonight?.start ?? day.date) && $0.end >= from }
+        let values = earlier.compactMap { NightVitals.respiratoryRate($0, context: context) }
+        respiratory = (tonight.flatMap { NightVitals.respiratoryRate($0, context: context) },
+                       values.isEmpty ? nil : Stats.mean(values))
     }
 }

@@ -32,6 +32,8 @@ animation. (The helpers `monoCard`, `monoBackground`, `monoSheet` kept their old
 | `warn` | `#FFD23F` | "Steady", wake-ups, elevated stress |
 | `alert` | `#FF5C5C` | "Rest", things that lowered a score, high stress |
 | `onAccent` | `#03130D` | Text on an accent fill |
+| `sleepTint` | `#8AB4E8` | The Sleep ring and sleep data |
+| `strainTint` | `#3D9BFF` | The Strain ring and strain data |
 
 Recovery uses green / yellow / red **plus** the word Ready / Steady / Rest. Good / bad changes
 are written out ("▲ 3 better"). There is no light theme.
@@ -60,9 +62,21 @@ All styles follow Dynamic Type.
 - Buttons: pills, height 52. Primary = `accent` fill with a glow, dark text. Secondary = quiet fill.
 - Tab screens and sheets pin a slim header (`ScreenHeader`); pushed screens keep the system bar.
   The title never truncates: the status pill next to it gives way first.
-- Toasts (`Toast`): a small `surface` capsule with a `border` edge and one `caption` line, near the
-  bottom; it leaves by itself after 3 s. For quiet outcomes ("Already up to date") that don't
-  deserve a sheet. VoiceOver announces it.
+- Syncing is invisible (no sheets, popups or toasts). The status pill (`StatusPill`) is the only
+  sync UI: band battery when all is well, a small spinner only while a big chunk is pulled, and a
+  `warn` outline + one word only when something needs you (Bluetooth off, band not found, battery
+  low). Pull to refresh on Today is the manual way; "Sync now" and the log live in Settings > Band.
+
+## 4b. Today (home)
+
+Top to bottom: header (settings · "‹ TODAY ›" day switcher · band battery) → three rings
+(Sleep %, Recovery %, Strain) → two monitor cards (Health: "within range n/n metrics";
+Stress: level + value + time) → "MY DAY" with a + button → daily outlook row (opens Coach) →
+today's activities card (sleep and workouts as rows with their times; Add / Start activity) →
+live heart rate. The rings use `sleepTint`, the recovery zone colour, and `strainTint`.
+Tapping a ring opens its page: a big ring + score, a card of rows (each with a three-step
+Poor / Sufficient / Optimal indicator, or today vs your 30-day average with ▲▼), then one
+plain-language paragraph.
 - Minimum tap target 44 pt.
 
 ## 5. The glow

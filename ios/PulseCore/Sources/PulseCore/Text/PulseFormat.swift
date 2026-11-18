@@ -10,6 +10,12 @@ public enum PulseFormat {
         return m == 0 ? "\(h)h" : "\(h)h \(m)m"
     }
 
+    /// 546 -> "9:06" (a duration written like a clock, for tiles).
+    public static func clock(minutes: Int) -> String {
+        let m = max(0, minutes)
+        return "\(m / 60):" + String(format: "%02d", m % 60)
+    }
+
     /// 12.04 -> "12.0"
     public static func strain(_ value: Double) -> String {
         String(format: "%.1f", value)

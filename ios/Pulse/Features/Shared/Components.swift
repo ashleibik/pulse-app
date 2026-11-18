@@ -520,86 +520,73 @@ extension String {
 
 // MARK: - Status pill
 
-/// Says where the numbers come from, in words. Outline only, so it stays quiet.
+/// The only sync UI in normal use (like WHOOP's app): the band battery when all is well, a small
+/// spinner only while a big chunk is being pulled (e.g. the night), and a short warning only when
+/// something needs you (Bluetooth off, band not found for a long time, band battery low).
 struct StatusPill: View {
-    @Environment(DataLoader.self) fileprivate var loader
-    @Environment(BandManager.self) fileprivate var band
-    @Query fileprivate var bands: [BandRecord]
+    @Environment(DataLoader.self) private var loader
+    @Environment(BandManager.self) private var band
+    @Query private var bands: [BandRecord]
 
     var body: some View {
-        HStack(spacing: 6) {
-            if loader.isBusy || band.isBusy {
-                ProgressView().controlSize(.mini)
-            }
-            Text(text)
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        // Re-checked every minute: "band not found" depends on how long it has been away.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            content(now: context.date)
         }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 28)
-        .overlay(Capsule().stroke(DS.Colors.border, lineWidth: 1))
-        // Not fixed width: on a narrow header the pill shortens, the screen title never does.
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .combine)
     }
-}
 
-// MARK: - Toast
-
-/// A one-line message near the bottom that leaves by itself (DESIGN.md §4).
-/// Use `.toast($message)` on a screen; setting the message shows it for 3 seconds.
-struct Toast: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
+    @ViewBuilder
+    private func content(now: Date) -> some View {
+        let record = bands.first
+        if let warning = band.attention(record: record, now: now)?.text ?? (loader.state.isFailed ? "Data error" : nil) {
+            HStack(spacing: 6) {
+                Image(systemName: band.attention(record: record, now: now)?.symbol ?? "exclamationmark.triangle")
+                    .foregroundStyle(DS.Colors.warn)
+                Text(warning)
+                    .foregroundStyle(DS.Colors.primary)
+                    .lineLimit(1)
+            }
             .textStyle(.caption)
-            .foregroundStyle(DS.Colors.primary)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, DS.Space.l)
-            .padding(.vertical, DS.Space.s)
-            .frame(minHeight: 44)
-            .background(Capsule().fill(DS.Colors.surface))
-            .overlay(Capsule().stroke(DS.Colors.border, lineWidth: 1))
-            .padding(.horizontal, DS.Space.side)
-            .padding(.bottom, DS.Space.l)
-    }
-}
-
-extension View {
-    func toast(_ message: Binding<String?>) -> some View {
-        overlay(alignment: .bottom) {
-            if let text = message.wrappedValue {
-                Toast(text: text)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .task(id: text) {
-                        AccessibilityNotification.Announcement(text).post()
-                        try? await Task.sleep(for: .seconds(3))
-                        withAnimation(DS.Motion.spring) { message.wrappedValue = nil }
-                    }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 28)
+            .overlay(Capsule().stroke(DS.Colors.warn.opacity(0.6), lineWidth: 1))
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Band: \(warning)")
+        } else if band.showsSyncSpinner {
+            ProgressView()
+                .controlSize(.small)
+                .frame(minWidth: 28, minHeight: 28)
+                .accessibilityLabel("Syncing with your band")
+        } else if let record, let battery = record.batteryPercent {
+            HStack(spacing: 4) {
+                Text("\(Int(battery.rounded()))%")
+                    .foregroundStyle(DS.Colors.secondary)
+                Image(systemName: record.isCharging ? "battery.100percent.bolt" : Self.batterySymbol(battery))
+                    .foregroundStyle(band.isConnected ? DS.Colors.accent : DS.Colors.tertiary)
             }
+            .textStyle(.caption)
+            .frame(minHeight: 28)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Band battery \(Int(battery.rounded())) percent\(record.isCharging ? ", charging" : "")\(band.isConnected ? ", connected" : "")")
         }
-        .animation(DS.Motion.spring, value: message.wrappedValue)
+    }
+
+    private static func batterySymbol(_ percent: Double) -> String {
+        switch percent {
+        case 88...: "battery.100percent"
+        case 63..<88: "battery.75percent"
+        case 38..<63: "battery.50percent"
+        case 13..<38: "battery.25percent"
+        default: "battery.0percent"
+        }
     }
 }
 
-extension StatusPill {
-    fileprivate var text: String {
-        if band.isBusy { return band.statusLine }
-        if case .failed = band.stage { return "Sync failed" }
-        if case .paused(let message) = band.stage { return message }
-        switch loader.state {
-        case .idle: return "Starting…"
-        case .recalculating: return "Recalculating…"
-        case .failed: return "Data error"
-        case .ready: break
-        }
-        guard let record = bands.first else { return "No band paired" }
-        let battery = (band.info.batteryPercent ?? record.batteryPercent).map { " · Band \(Int($0.rounded()))%" } ?? ""
-        guard let synced = record.lastHistorySyncAt else { return "Not synced yet" + battery }
-        return "Synced \(synced.formatted(date: .omitted, time: .shortened))" + battery
+private extension DataLoader.State {
+    var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
     }
 }
 

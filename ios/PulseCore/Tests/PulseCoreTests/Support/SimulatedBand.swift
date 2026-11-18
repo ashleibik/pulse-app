@@ -43,7 +43,7 @@ public struct SimulatedBand: Sendable {
     public private(set) var realtimeOn = false
     public private(set) var commandsReceived: [String] = []
 
-    private let batches: [[Sample]]
+    private var batches: [[Sample]]
     private var currentBatch = 0
     private var outgoingCount = 0
     private var seq = Whoop.SeqCounter()
@@ -59,6 +59,15 @@ public struct SimulatedBand: Sendable {
         self.batches = batches
         self.mtuPayload = mtuPayload
         self.clock = clock
+    }
+
+    /// The band keeps recording while connected: these samples come with the next history request.
+    public mutating func record(_ more: [Sample], batchSize: Int = 200) {
+        var i = 0
+        while i < more.count {
+            batches.append(Array(more[i..<min(i + batchSize, more.count)]))
+            i += batchSize
+        }
     }
 
     /// Token for a batch: u32 "trim page" + u32 "wrap count" (structure per [OS]).

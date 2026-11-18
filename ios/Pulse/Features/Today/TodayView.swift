@@ -2,13 +2,15 @@ import SwiftUI
 import SwiftData
 import PulseCore
 
-/// Home screen. Goal: answer "How ready am I today?" in 2 seconds.
+/// Home screen (DESIGN.md §4b). Layout modelled on the WHOOP app's home, in Pulse's own Glow look:
 ///
-/// Built in the Mono design (ios/design/DESIGN.md): black, white and grays only. Recovery is
-/// shown by how full the ring is plus one word, never by color.
+///   header (settings · ‹ TODAY › · band battery)
+///   three rings: Sleep % · Recovery % · Strain
+///   Health monitor · Stress monitor
+///   MY DAY (+): daily outlook, journal, today's activities (sleep, workouts), add / start activity
+///   live heart rate
 ///
-/// Top to bottom: verdict (recovery) -> what to do with it (strain) -> supporting numbers ->
-/// the week -> today's activity. Every block opens its details on tap.
+/// Syncing is invisible: cached data shows at once, new data slides in, pull down to refresh.
 struct TodayView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @Query(sort: \WorkoutRecord.start, order: .reverse) private var workouts: [WorkoutRecord]
@@ -18,370 +20,314 @@ struct TodayView: View {
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var bands: [BandRecord]
 
+    @State private var selectedDay = Calendar.current.startOfDay(for: .now)
     @State private var showSettings = LaunchOptions.route == "settings"
     @State private var showRecovery = LaunchOptions.route == "recovery"
-    /// A day tapped in the week chart.
-    @State private var openedDay: DaySummaryRecord?
+    @State private var showSleep = false
     /// Only opened from here by the screenshot job. Normally pairing starts in Settings.
     @State private var showPairing = LaunchOptions.route == "pairing"
     @State private var showCoach = LaunchOptions.route == "coach"
     @State private var showStress = false
     @State private var showJournal = false
-    /// Today's stress picture (worked out from today's raw minutes).
-    @State private var stress: StressMonitor.Day?
+    @State private var showAdd = false
+    @State private var showLiveWorkout = false
+    @State private var openedWorkout: WorkoutRecord?
     @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
-    /// Goes up by one on every tap that opens something. Drives the light haptic.
-    @State private var taps = 0
-    /// Today's numbers so far (before the first recovery exists).
+    /// Today's stress picture and numbers so far (from today's raw minutes).
+    @State private var stress: StressMonitor.Day?
     @State private var soFar: TodaySoFar?
+    /// Respiratory rate of the selected night and the 30 nights before (for the health monitor).
+    @State private var respiratory: (today: Double?, history: [Double]) = (nil, [])
     /// The live heart-rate card is streaming (only while this screen is open).
     @State private var liveOn = false
-    @Environment(\.scenePhase) private var scenePhase
-    /// "Sync now" from this screen: runs quietly, ends in a toast (the sheet only opens on a problem).
-    @State private var manualSync = false
-    @State private var syncedBefore: Date?
-    @State private var coolingDown = false
-    @State private var toastText: String?
+    /// Goes up by one on every tap that opens something. Drives the light haptic.
+    @State private var taps = 0
+
+    private var calendar: Calendar { .current }
+    private var isToday: Bool { calendar.isDateInToday(selectedDay) }
+    private var summary: DaySummaryRecord? { days.first { calendar.isDate($0.date, inSameDayAs: selectedDay) } }
+    private var mainSleep: SleepRecord? { NightVitals.mainSleep(endingOn: selectedDay, in: sleepRecords) }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                if let today = days.first {
-                    content(today)
-                        .padding(.horizontal, DS.Space.side)
-                        .padding(.top, DS.Space.l)
-                        .padding(.bottom, DS.Space.xxl)
-                } else {
-                    loadingState
+                Group {
+                    if bands.isEmpty && days.isEmpty {
+                        pairState
+                    } else {
+                        home
+                    }
                 }
+                .padding(.horizontal, DS.Space.side)
+                .padding(.top, DS.Space.m)
+                .padding(.bottom, DS.Space.xxl)
+                // New data slides in quietly when a pull saved something.
+                .animation(DS.Motion.spring, value: loader.revision)
             }
-            // The header stays pinned at the top (it replaces the navigation bar). Its solid
-            // background also covers the status bar, so scrolled content never runs under the clock.
-            .safeAreaInset(edge: .top, spacing: 0) {
-                header
-            }
-            // Only the screenshot job sets this (to capture the lower half of the screen).
+            // The manual way, like most apps. Returns when the pull is done (or the band is away).
+            .refreshable { await band.refresh(context: context) }
+            .safeAreaInset(edge: .top, spacing: 0) { header }
             .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
             .monoBackground()
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showRecovery) {
-                if let today = days.first {
-                    RecoveryDetailView(day: today)
-                }
+                RecoveryDetailView(day: summary ?? days.first, sleeps: sleepRecords, days: days)
             }
-            .navigationDestination(item: $openedDay) { day in
-                RecoveryDetailView(day: day)
+            .navigationDestination(isPresented: $showSleep) {
+                SleepDetailView(day: selectedDay)
             }
-            .sheet(isPresented: $showSettings) {
-                SettingsView()
+            .navigationDestination(item: $openedWorkout) { workout in
+                WorkoutDetailView(workout: workout)
             }
-            .sheet(isPresented: $showPairing) {
-                PairingView()
-            }
-            .sheet(isPresented: $showCoach) {
-                CoachView()
-            }
-            .sheet(isPresented: $showStress) {
-                StressView(day: stress).presentationDetents([.medium, .large])
-            }
-            .sheet(isPresented: $showJournal) {
-                JournalView()
-            }
-            .task(id: "\(loader.revision)-\(loader.rawDataReady)") { loadToday() }
-            .toast($toastText)
-            .onChange(of: band.stage) { _, stage in manualSyncChanged(stage) }
-            .onChange(of: scenePhase) { _, phase in if phase != .active { setLive(false) } }
-            .onDisappear { setLive(false) }
+            .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $showPairing) { PairingView() }
+            .sheet(isPresented: $showCoach) { CoachView() }
+            .sheet(isPresented: $showStress) { StressView(day: stress).presentationDetents([.medium, .large]) }
+            .sheet(isPresented: $showJournal) { JournalView() }
+            .sheet(isPresented: $showAdd) { AddWorkoutView() }
+            .fullScreenCover(isPresented: $showLiveWorkout) { LiveWorkoutView() }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
             }
+            .task(id: "\(loader.revision)-\(loader.rawDataReady)-\(selectedDay.timeIntervalSince1970)") { load() }
+            .onChange(of: scenePhase) { _, phase in if phase != .active { setLive(false) } }
+            .onDisappear { setLive(false) }
             .sensoryFeedback(.impact(weight: .light), trigger: taps)
         }
     }
 
-    // MARK: - Sections
+    // MARK: - Header
 
-    private func content(_ today: DaySummaryRecord) -> some View {
-        VStack(alignment: .leading, spacing: DS.Space.xxl) {
-            hero(today).riseIn(1)
-            strain(today).riseIn(2)
-            stats(today).riseIn(3)
-            liveCard.riseIn(3)
-            extras.riseIn(3)
-            week.riseIn(4)
-            activity.riseIn(5)
-        }
-    }
-
-    /// Screen name on the left (never truncated), data source + settings on the right.
+    /// Settings on the left, the day switcher in the middle, the band (battery / status) on the right.
     private var header: some View {
-        ScreenHeader(title: "Today") {
-            StatusPill()
-            IconButton(systemName: "bubble.left", label: "Coach") {
-                open { showCoach = true }
+        ZStack {
+            DayPager(day: $selectedDay, earliest: days.last?.date ?? .now)
+            HStack {
+                IconButton(systemName: "gearshape", label: "Settings") { open { showSettings = true } }
+                Spacer()
+                StatusPill()
             }
-            IconButton(systemName: "gearshape", label: "Settings") {
-                open { showSettings = true }
-            }
+        }
+        .frame(minHeight: 44)
+        .padding(.horizontal, DS.Space.side)
+        .padding(.top, DS.Space.s)
+        .padding(.bottom, DS.Space.s)
+        .background(DS.Colors.background)
+    }
+
+    // MARK: - Home
+
+    private var home: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xl) {
+            rings.riseIn(1)
+            monitors.riseIn(2)
+            myDay.riseIn(3)
+            if days.isEmpty { firstNightCard.riseIn(4) }
+            liveCard.riseIn(4)
         }
     }
 
-    /// The verdict: ring + number, one word, one line, one button.
-    private func hero(_ today: DaySummaryRecord) -> some View {
-        VStack(spacing: 0) {
-            RecoveryDial(score: today.recoveryScore)
-
-            Text((today.zone?.word ?? "Learning").uppercased())
-                .textStyle(.display)
-                .foregroundStyle(DS.Colors.zone(today.zone))
-                .padding(.top, DS.Space.l)
-                .accessibilityHidden(true)      // the ring already reads this word to VoiceOver
-
-            Text(reason(today))
-                .textStyle(.body)
-                .foregroundStyle(DS.Colors.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, DS.Space.xs)
-
-            Button {
-                open { showRecovery = true }
-            } label: {
-                Label("See why", systemImage: "arrow.right")
-                    .labelStyle(TrailingIconLabelStyle())
+    /// Sleep % · Recovery % · Strain. Each opens its page.
+    private var rings: some View {
+        let performance = summary.flatMap { NightVitals.performance(for: $0, sleeps: sleepRecords) }
+        let recovery = summary?.recoveryScore
+        let strain = summary?.strain ?? (isToday ? soFar?.strain : nil)
+        return HStack(alignment: .top, spacing: DS.Space.s) {
+            Button { open { showSleep = true } } label: {
+                ScoreRing(fraction: performance.map { $0.score / 100 }, text: performance.map { "\(Int($0.score.rounded()))%" } ?? "--",
+                          label: "SLEEP", color: DS.Colors.sleepTint)
             }
-            .buttonStyle(.primaryPill)
-            .padding(.top, DS.Space.l)
-            .accessibilityHint("Shows what moved your recovery score")
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func strain(_ today: DaySummaryRecord) -> some View {
-        let target = StrainGuidance.targetRange(recovery: today.recoveryScore)
-        return Button {
-            open { explaining = .strain }
-        } label: {
-            VStack(alignment: .leading, spacing: DS.Space.m) {
-                VStack(alignment: .leading, spacing: DS.Space.xs) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "flame")
-                        Text("Strain")
-                    }
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
-
-                    HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
-                        CountUpText(value: today.strain) { PulseFormat.strain($0) }
-                            .textStyle(.title)
-                            .foregroundStyle(DS.Colors.primary)
-                        Text("of 21")
-                            .textStyle(.caption)
-                            .foregroundStyle(DS.Colors.secondary)
-                    }
-                }
-                StrainMeter(strain: today.strain, target: target)
-                Text(StrainGuidance.advice(strain: today.strain, recovery: today.recoveryScore))
-                    .textStyle(.body)
-                    .foregroundStyle(DS.Colors.secondary)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity)
+            Button { open { showRecovery = true } } label: {
+                ScoreRing(fraction: recovery.map { $0 / 100 }, text: recovery.map { "\(Int($0.rounded()))%" } ?? "--",
+                          label: "RECOVERY", color: DS.Colors.zone(summary?.zone))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            Button { open { explaining = .strain } } label: {
+                ScoreRing(fraction: strain.map { $0 / 21 }, text: strain.map(PulseFormat.strain) ?? "--",
+                          label: "STRAIN", color: DS.Colors.strainTint)
+            }
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.pressable)
-        .accessibilityHint("Shows what strain means")
     }
 
-    /// Four numbers, no boxes: a hairline and white space keep them apart.
-    private func stats(_ today: DaySummaryRecord) -> some View {
-        VStack(spacing: DS.Space.l) {
-            HStack(alignment: .top, spacing: DS.Space.m) {
-                stat(.sleep) {
-                    StatBlock(symbol: "moon", label: "Sleep",
-                              number: today.sleepMinutes.map { Double($0) },
-                              format: { PulseFormat.duration(minutes: Int($0.rounded())) },
-                              caption: sleepCaption(today))
-                }
-                stat(.sleep) {
-                    StatBlock(symbol: "bed.double", label: "Need tonight",
-                              number: Double(tonightsNeed(today)),
-                              format: { PulseFormat.duration(minutes: Int($0.rounded())) },
-                              caption: bedtimeCaption(today))
-                }
+    /// Health: are tonight's vitals within your usual range? Stress: right now.
+    private var monitors: some View {
+        let health = healthStatus
+        let level = stress?.current
+        let score = stress?.hours.last(where: { $0.score != nil })
+        return HStack(alignment: .top, spacing: DS.Space.s) {
+            Button { open { showRecovery = true } } label: {
+                MonitorCard(title: "HEALTH MONITOR", badge: health.symbol, badgeIsSymbol: true,
+                            state: health.state, stateColor: health.color, detail: health.detail)
             }
-            Hairline()
-            HStack(alignment: .top, spacing: DS.Space.m) {
-                stat(.hrv) {
-                    StatBlock(symbol: "waveform.path.ecg", label: "HRV",
-                              number: today.hrvRMSSD,
-                              format: { "\(Int($0.rounded()))" }, unit: "ms",
-                              caption: baselineCaption(today.hrvRMSSD, today.baselineHRV))
-                }
-                stat(.restingHeartRate) {
-                    StatBlock(symbol: "heart", label: "Resting HR",
-                              number: today.restingHeartRate,
-                              format: { "\(Int($0.rounded()))" }, unit: "bpm",
-                              caption: baselineCaption(today.restingHeartRate, today.baselineRestingHeartRate))
-                }
+            Button { open { showStress = true } } label: {
+                MonitorCard(title: "STRESS MONITOR", badge: score?.score.map { String(format: "%.1f", $0) } ?? "--",
+                            badgeIsSymbol: false,
+                            state: isToday ? (level?.title ?? "No reading") : "Today only",
+                            stateColor: level == .high ? DS.Colors.alert : level == .medium ? DS.Colors.warn : DS.Colors.accent,
+                            detail: score.map { $0.start.formatted(date: .omitted, time: .shortened) } ?? "while still")
             }
         }
+        .buttonStyle(.pressable)
     }
 
-    /// The one card on this screen: recovery for the last 7 days.
-    private var week: some View {
-        let recent = Array(days.prefix(7).reversed())       // oldest first
-        let scores = recent.compactMap(\.recoveryScore)
-        let average: Double? = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
-        let bars = DayBarsChart.Bar.from(recent) { $0.recoveryScore }
-        let summary = "Recovery, last \(recent.count) days. "
-            + (average.map { "Average \(PulseFormat.percent($0))." } ?? "No scores yet.")
-        return VStack(alignment: .leading, spacing: DS.Space.m) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("LAST 7 DAYS")
-                    .textStyle(.label)
+    private var healthStatus: (state: String, detail: String, symbol: String, color: Color) {
+        guard let summary else { return ("No night yet", "Wear it to sleep", "moon.zzz", DS.Colors.secondary) }
+        let earlier = NightVitals.previous30(days, before: summary.date)
+        var checks: [Bool] = []
+        if let hrv = summary.hrvRMSSD,
+           let ok = HealthMonitor.withinRange(hrv, history: earlier.compactMap(\.hrvRMSSD), minSpread: 5) { checks.append(ok) }
+        if let rhr = summary.restingHeartRate,
+           let ok = HealthMonitor.withinRange(rhr, history: earlier.compactMap(\.restingHeartRate), minSpread: 2) { checks.append(ok) }
+        if let rate = respiratory.today,
+           let ok = HealthMonitor.withinRange(rate, history: respiratory.history, minSpread: 1) { checks.append(ok) }
+        guard !checks.isEmpty else {
+            return ("Learning", "\(min(earlier.count, 3)) of 3 nights", "hourglass", DS.Colors.secondary)
+        }
+        let inRange = checks.filter { $0 }.count
+        return inRange == checks.count
+            ? ("Within range", "\(inRange)/\(checks.count) metrics", "checkmark", DS.Colors.accent)
+            : ("Out of range", "\(inRange)/\(checks.count) metrics", "exclamationmark", DS.Colors.warn)
+    }
+
+    // MARK: - My Day
+
+    private var myDay: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            HStack {
+                Text("My Day")
+                    .textStyle(.heading)
                     .foregroundStyle(DS.Colors.primary)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
-                if let average {
-                    Text("Avg \(PulseFormat.percent(average))")
-                        .textStyle(.caption)
-                        .foregroundStyle(DS.Colors.secondary)
+                Button { open { showAdd = true } } label: {
+                    Image(systemName: "plus")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(DS.Colors.onAccent)
+                        .frame(width: 44, height: 44)
+                        .background(Circle().fill(DS.Colors.primary))
                 }
+                .accessibilityLabel("Add activity")
             }
-            DayBarsChart(bars: bars, domain: 0...100, summary: summary) { id in
-                if let day = recent.first(where: { DayBarsChart.Bar.id(for: $0.date) == id }) {
-                    open { openedDay = day }
-                }
-            }
-            Text("Tap a day to see it.")
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.secondary)
+            outlookRow(symbol: "sun.max", title: "Your daily outlook") { showCoach = true }
+            outlookRow(symbol: "square.and.pencil", title: journalTitle) { showJournal = true }
+            activities
+            if days.isEmpty, isToday { todaySoFar }
         }
-        .monoCard()
     }
 
-    private var activity: some View {
-        let todays = workouts.filter { Calendar.current.isDateInToday($0.start) }
-        return VStack(alignment: .leading, spacing: 0) {
-            Text("ACTIVITY")
+    private var journalTitle: String {
+        guard let record = journal.first(where: { calendar.isDateInToday($0.day) }) else { return "Journal: log today" }
+        return record.habits.isEmpty ? "Journal: logged" : "Journal: \(record.habits.count) logged"
+    }
+
+    private func outlookRow(symbol: String, title: String, action: @escaping () -> Void) -> some View {
+        Button { open(action) } label: {
+            HStack(spacing: DS.Space.s) {
+                Image(systemName: symbol).foregroundStyle(DS.Colors.accent)
+                Text(title).textStyle(.bodyStrong).foregroundStyle(DS.Colors.primary)
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(DS.Colors.tertiary)
+            }
+            .padding(.horizontal, DS.Space.m)
+            .frame(minHeight: 52)
+            .background(RoundedRectangle(cornerRadius: 14).fill(DS.Colors.surface))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.Colors.border, lineWidth: 1))
+        }
+        .buttonStyle(.pressable)
+    }
+
+    /// Sleep and workouts of the day, each with its times. Add / start below.
+    private var activities: some View {
+        let dayWorkouts = workouts.filter { calendar.isDate($0.start, inSameDayAs: selectedDay) }
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            Text(isToday ? "TODAY'S ACTIVITIES" : "ACTIVITIES")
                 .textStyle(.label)
                 .foregroundStyle(DS.Colors.primary)
-                .accessibilityAddTraits(.isHeader)
-                .padding(.bottom, DS.Space.s)
-            if todays.isEmpty {
-                Text("No workouts yet today.")
+                .padding(.bottom, DS.Space.xs)
+            if let sleep = mainSleep {
+                Button { open { showSleep = true } } label: {
+                    activityRow(symbol: "moon.fill", value: PulseFormat.clock(minutes: sleep.asleepMinutes),
+                                title: "SLEEP", start: sleep.start, end: sleep.end, tint: DS.Colors.sleepTint)
+                }
+                .buttonStyle(.pressable)
+            }
+            ForEach(dayWorkouts) { workout in
+                Button { open { openedWorkout = workout } } label: {
+                    activityRow(symbol: workout.kind.symbolName.outlineSymbol, value: PulseFormat.strain(workout.strain),
+                                title: workout.kind.displayName.uppercased(), start: workout.start, end: workout.end,
+                                tint: DS.Colors.strainTint)
+                }
+                .buttonStyle(.pressable)
+            }
+            if mainSleep == nil && dayWorkouts.isEmpty {
+                Text(isToday ? "Nothing yet today. Sleep and workouts show up here by themselves." : "Nothing recorded.")
                     .textStyle(.body)
                     .foregroundStyle(DS.Colors.secondary)
-            } else {
-                ForEach(Array(todays.enumerated()), id: \.element.id) { index, workout in
-                    if index > 0 { Hairline() }
-                    ActivityRow(workout: workout)
+                    .padding(.vertical, DS.Space.s)
+            }
+            if isToday {
+                HStack(spacing: DS.Space.s) {
+                    Button { open { showAdd = true } } label: {
+                        Label("Add activity", systemImage: "plus").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.secondaryPill)
+                    Button { open { showLiveWorkout = true } } label: {
+                        Label("Start activity", systemImage: "stopwatch").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.secondaryPill)
                 }
+                .padding(.top, DS.Space.s)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .monoCard(padding: DS.Space.m)
     }
 
-    /// Before the first night: no recovery yet, so show what there IS (live HR, today so far).
-    @ViewBuilder
-    private var loadingState: some View {
-        if bands.isEmpty {
-            VStack(alignment: .leading, spacing: DS.Space.l) {
-                EmptyState(symbol: "waveform.path.ecg", title: "Pair your band",
-                           text: "Pulse reads your band directly over Bluetooth. Pair it, wear it tonight, and your first night shows up in the morning.")
-                Button("Pair your band") { showPairing = true }
-                    .buttonStyle(.primaryPill)
+    private func activityRow(symbol: String, value: String, title: String, start: Date, end: Date, tint: Color) -> some View {
+        HStack(spacing: DS.Space.m) {
+            HStack(spacing: DS.Space.s) {
+                Image(systemName: symbol)
+                Text(value).textStyle(.title)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, DS.Space.side)
-            .padding(.top, DS.Space.xxl)
-        } else {
-            VStack(alignment: .leading, spacing: DS.Space.xxl) {
-                liveCard.riseIn(1)
-                todaySoFar.riseIn(2)
-                firstNightCard.riseIn(3)
-                Button("Sync now") { startManualSync() }
-                    .buttonStyle(.secondaryPill)
-                    .disabled(band.isBusy || coolingDown)
-                    .accessibilityHint(coolingDown ? "Just synced. Available again in a few seconds." : "")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, DS.Space.side)
-            .padding(.top, DS.Space.l)
-            .padding(.bottom, DS.Space.xxl)
-        }
-    }
-
-    /// The band's heart rate right now. Streams only while you ask and this screen is open
-    /// (the stream costs band battery).
-    private var liveCard: some View {
-        VStack(alignment: .leading, spacing: DS.Space.m) {
-            HStack(spacing: 6) {
-                Image(systemName: "heart")
-                Text("LIVE HEART RATE")
-            }
-            .textStyle(.label)
-            .foregroundStyle(DS.Colors.primary)
-            .accessibilityAddTraits(.isHeader)
-            HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
-                Text(liveOn ? (band.liveHeartRate.map(String.init) ?? "--") : "--")
-                    .textStyle(.title)
-                    .foregroundStyle(liveOn && band.liveHeartRate != nil ? DS.Colors.accent : DS.Colors.primary)
-                    .contentTransition(.numericText())
-                    .animation(DS.Motion.spring, value: band.liveHeartRate)
-                Text("bpm")
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
-                Spacer()
-                Button(liveOn ? "Stop" : "Show live") { setLive(!liveOn) }
-                    .buttonStyle(.secondaryPill)
-                    .fixedSize()
-            }
-            Text(liveOn ? (band.liveHeartRate == nil ? "Connecting to your band…" : "Live from your band. Stops when you leave this screen.")
-                        : "Streams while this screen is open. Uses a little band battery.")
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .monoCard()
-        .accessibilityElement(children: .contain)
-    }
-
-    /// Today's numbers from what the band has synced so far.
-    private var todaySoFar: some View {
-        VStack(alignment: .leading, spacing: DS.Space.l) {
-            Text("TODAY SO FAR")
+            .foregroundStyle(DS.Colors.background)
+            .frame(width: 112, height: 52)
+            .background(RoundedRectangle(cornerRadius: 10).fill(tint))
+            Text(title)
                 .textStyle(.label)
                 .foregroundStyle(DS.Colors.primary)
-                .accessibilityAddTraits(.isHeader)
-            HStack(alignment: .top, spacing: DS.Space.m) {
-                stat(.restingHeartRate) {
-                    StatBlock(symbol: "heart", label: "Resting HR", number: soFar?.restingHeartRate,
-                              format: { "\(Int($0.rounded()))" }, unit: "bpm", caption: "lowest so far")
-                }
-                StatBlock(symbol: "waveform.path.ecg", label: "Average HR", number: soFar?.averageHeartRate,
-                          format: { "\(Int($0.rounded()))" }, unit: "bpm", caption: "today")
+                .lineLimit(1)
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(start.formatted(date: .omitted, time: .shortened))
+                Text(end.formatted(date: .omitted, time: .shortened))
             }
-            Hairline()
-            HStack(alignment: .top, spacing: DS.Space.m) {
-                stat(.strain) {
-                    StatBlock(symbol: "flame", label: "Strain", number: soFar?.strain,
-                              format: { PulseFormat.strain($0) }, caption: "so far, of 21")
-                }
-                StatBlock(symbol: "clock", label: "Data", number: soFar.map { Double($0.wornMinutes) },
-                          format: { PulseFormat.duration(minutes: Int($0.rounded())) },
-                          caption: "collected today")
-            }
-            if soFar == nil {
-                Text("Nothing from today yet. Wear the band and sync.")
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
-            }
+            .textStyle(.caption)
+            .foregroundStyle(DS.Colors.secondary)
+            Capsule().fill(tint).frame(width: 3, height: 36)
         }
+        .padding(DS.Space.s)
+        .background(RoundedRectangle(cornerRadius: 14).fill(DS.Colors.background.opacity(0.6)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title.capitalized), \(value), \(start.formatted(date: .omitted, time: .shortened)) to \(end.formatted(date: .omitted, time: .shortened))")
+    }
+
+    /// Before the first night: today's numbers from what the band has synced so far.
+    private var todaySoFar: some View {
+        HStack(alignment: .top, spacing: DS.Space.m) {
+            StatBlock(symbol: "heart", label: "Resting HR", number: soFar?.restingHeartRate,
+                      format: { "\(Int($0.rounded()))" }, unit: "bpm", caption: "lowest so far", valueStyle: .heading)
+            StatBlock(symbol: "waveform.path.ecg", label: "Average HR", number: soFar?.averageHeartRate,
+                      format: { "\(Int($0.rounded()))" }, unit: "bpm", caption: "today", valueStyle: .heading)
+            StatBlock(symbol: "clock", label: "Data", number: soFar.map { Double($0.wornMinutes) },
+                      format: { PulseFormat.duration(minutes: Int($0.rounded())) }, caption: "collected", valueStyle: .heading)
+        }
+        .padding(.top, DS.Space.s)
     }
 
     /// What happens next. Recovery compares a night with YOUR normal, so the score needs a few nights.
@@ -389,7 +335,7 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
             HStack(spacing: 6) {
                 Image(systemName: "moon.zzz")
-                Text("FIRST NIGHT TONIGHT")
+                Text("FIRST NIGHT")
             }
             .textStyle(.label)
             .foregroundStyle(DS.Colors.primary)
@@ -403,94 +349,55 @@ struct TodayView: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: - Helpers
-
-    /// Stress right now, and the habit journal. Both open a sheet.
-    private var extras: some View {
-        let todayRecord = journal.first { Calendar.current.isDateInToday($0.day) }
-        let journalText = todayRecord.map { $0.habits.isEmpty ? "Logged" : "\($0.habits.count) logged" } ?? "Log today"
-        let stressText = stress?.current?.title ?? "--"
-        return HStack(alignment: .top, spacing: DS.Space.m) {
-            Button {
-                open { showStress = true }
-            } label: {
-                // The "number" is unused here: these two tiles show a word.
-                StatBlock(symbol: "waveform.path", label: "Stress", number: 0, format: { _ in stressText },
-                          caption: "now, while still")
+    /// The band's heart rate right now. Streams only while you ask and this screen is open.
+    private var liveCard: some View {
+        HStack(alignment: .center, spacing: DS.Space.m) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                HStack(spacing: 6) {
+                    Image(systemName: "heart")
+                    Text("LIVE HEART RATE")
+                }
+                .textStyle(.label)
+                .foregroundStyle(DS.Colors.primary)
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                    Text(liveOn ? (band.liveHeartRate.map(String.init) ?? "--") : "--")
+                        .textStyle(.title)
+                        .foregroundStyle(liveOn && band.liveHeartRate != nil ? DS.Colors.accent : DS.Colors.primary)
+                        .contentTransition(.numericText())
+                        .animation(DS.Motion.spring, value: band.liveHeartRate)
+                    Text("bpm").textStyle(.caption).foregroundStyle(DS.Colors.secondary)
+                }
+                Text(liveOn ? (band.liveHeartRate == nil ? "Connecting…" : "Stops when you leave this screen.")
+                            : "Uses a little band battery.")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
             }
-            .buttonStyle(.pressable)
-            Button {
-                open { showJournal = true }
-            } label: {
-                StatBlock(symbol: "square.and.pencil", label: "Journal", number: 0, format: { _ in journalText },
-                          caption: "habits vs recovery")
-            }
-            .buttonStyle(.pressable)
+            Spacer()
+            Button(liveOn ? "Stop" : "Show live") { setLive(!liveOn) }
+                .buttonStyle(.secondaryPill)
+                .fixedSize()
         }
+        .monoCard(padding: DS.Space.m)
     }
 
-    // MARK: - Live heart rate and "Sync now"
+    /// No band and no data yet.
+    private var pairState: some View {
+        VStack(alignment: .leading, spacing: DS.Space.l) {
+            EmptyState(symbol: "waveform.path.ecg", title: "Pair your band",
+                       text: "Pulse reads your band directly over Bluetooth. Pair it, wear it tonight, and your first night shows up in the morning.")
+            Button("Pair your band") { showPairing = true }
+                .buttonStyle(.primaryPill)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, DS.Space.xl)
+    }
+
+    // MARK: - Helpers
 
     private func setLive(_ on: Bool) {
         guard on != liveOn else { return }
         liveOn = on
         if on { band.startLive(context: context) } else { band.stopLive() }
-    }
-
-    private func startManualSync() {
-        taps += 1
-        syncedBefore = bands.first?.lastHistorySyncAt
-        manualSync = true
-        band.syncNow(context: context)
-    }
-
-    /// A manual sync ended: a toast for "nothing new" / "saved", the sheet only for a problem.
-    /// Then the button rests for 30 seconds.
-    private func manualSyncChanged(_ stage: BandManager.Stage) {
-        guard manualSync else { return }
-        switch stage {
-        case .upToDate:
-            manualSync = false
-            if band.recordsSaved == 0 {
-                let last = syncedBefore.map { " Last synced \($0.formatted(.relative(presentation: .named, unitsStyle: .wide)))." } ?? ""
-                toastText = "Already up to date." + last
-            } else {
-                toastText = "Synced \(PulseFormat.duration(minutes: max(1, band.recordsSaved / 60))) of new data."
-            }
-            coolDown()
-        case .failed, .paused, .unavailable:
-            manualSync = false
-            showPairing = true
-            coolDown()
-        default:
-            break
-        }
-    }
-
-    private func coolDown() {
-        coolingDown = true
-        Task {
-            try? await Task.sleep(for: .seconds(30))
-            coolingDown = false
-        }
-    }
-
-    private func loadToday() {
-        let start = Calendar.current.startOfDay(for: .now)
-        let minutes = PulseStore.minutes(from: start, to: .now, in: context)
-        soFar = TodaySoFar.compute(minutes: minutes, profile: profiles.first?.metricsProfile ?? MetricsProfile())
-        stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value),
-                                   restingHR: days.first?.restingHeartRate ?? 60,
-                                   maxHR: profiles.first?.estimatedMaxHeartRate() ?? 190,
-                                   now: .now, calendar: .current)
-    }
-
-    /// "in bed by 10:45 PM", from your usual wake-up time and tonight's need.
-    private func bedtimeCaption(_ today: DaySummaryRecord) -> String {
-        guard let bedtime = Bedtime.recommended(sleeps: sleepRecords.map(\.value),
-                                                needMinutes: Double(tonightsNeed(today)),
-                                                now: .now, calendar: .current) else { return "to recover fully" }
-        return "in bed by \(bedtime.formatted(date: .omitted, time: .shortened))"
     }
 
     /// Every tap that opens something goes through here, so it also gives a light haptic.
@@ -499,36 +406,20 @@ struct TodayView: View {
         action()
     }
 
-    private func stat<Content: View>(_ kind: MetricKind, @ViewBuilder _ content: () -> Content) -> some View {
-        Button { open { explaining = kind } } label: { content() }
-            .buttonStyle(.pressable)
-            .accessibilityHint("Shows what this means")
-    }
-
-    /// One line: the single biggest reason behind today's score (tested in PulseCore).
-    private func reason(_ today: DaySummaryRecord) -> String {
-        let history = days.prefix(20).map(\.value)
-        return RecoveryExplainer.oneLine(RecoveryExplainer.breakdown(for: today.value, history: history))
-    }
-
-    /// Tonight's need = tomorrow's formula applied to today (yesterday-strain and debt rules).
-    private func tonightsNeed(_ today: DaySummaryRecord) -> Int {
-        let goal = Double(profiles.first?.sleepGoalMinutes ?? 480)
-        return Int(Recovery.sleepNeed(goal: goal, previousStrain: today.strain,
-                                      previousNeed: Double(today.sleepNeedMinutes),
-                                      previousAsleep: today.sleepMinutes.map { Double($0) }).rounded())
-    }
-
-    private func sleepCaption(_ day: DaySummaryRecord) -> String {
-        guard let slept = day.sleepMinutes, day.sleepNeedMinutes > 0 else { return "no data" }
-        return "\(Int((Double(slept) / Double(day.sleepNeedMinutes) * 100).rounded()))% of need"
-    }
-
-    private func baselineCaption(_ value: Double?, _ baseline: Double?) -> String {
-        guard let value, let baseline else { return "building baseline" }
-        let diff = Int((value - baseline).rounded())
-        if diff == 0 { return "at your normal" }
-        return diff > 0 ? "▲ \(diff) vs normal" : "▼ \(-diff) vs normal"
+    private func load() {
+        let start = calendar.startOfDay(for: .now)
+        let minutes = PulseStore.minutes(from: start, to: .now, in: context)
+        let profile = profiles.first?.metricsProfile ?? MetricsProfile()
+        soFar = TodaySoFar.compute(minutes: minutes, profile: profile)
+        stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value),
+                                   restingHR: days.first?.restingHeartRate ?? 60, maxHR: profile.maxHeartRate,
+                                   now: .now, calendar: calendar)
+        // Respiratory rate needs the beat-to-beat data of each night: the selected one and up to 30 before.
+        let tonight = mainSleep
+        let from = calendar.date(byAdding: .day, value: -30, to: selectedDay) ?? selectedDay
+        let earlier = sleepRecords.filter { !$0.isNap && $0.end < (tonight?.start ?? selectedDay) && $0.end >= from }
+        respiratory = (tonight.flatMap { NightVitals.respiratoryRate($0, context: context) },
+                       earlier.compactMap { NightVitals.respiratoryRate($0, context: context) })
     }
 }
 
@@ -542,20 +433,10 @@ struct TrailingIconLabelStyle: LabelStyle {
     }
 }
 
-#Preview("Light") {
+#Preview {
     TodayView()
         .modelContainer(PulseStore.previewContainer)
         .environment(DataLoader())
         .environment(BandManager())
         .environment(CloudManager())
-        .preferredColorScheme(.light)
-}
-
-#Preview("Dark") {
-    TodayView()
-        .modelContainer(PulseStore.previewContainer)
-        .environment(DataLoader())
-        .environment(BandManager())
-        .environment(CloudManager())
-        .preferredColorScheme(.dark)
 }

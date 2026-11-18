@@ -33,10 +33,10 @@ targets:
       # Merged with the keys generated from INFOPLIST_KEY_* below.
       path: Pulse/Info.plist
       properties:
-        # bluetooth-central: a sync that is running keeps going in the background.
-        # fetch + the task ID: iOS wakes the app now and then to sync (App/BackgroundSync.swift).
-        UIBackgroundModes: [bluetooth-central, fetch]
-        BGTaskSchedulerPermittedIdentifiers: [dev.pulse.app.sync]
+        # bluetooth-central: the band connection is kept in the background (and restored by iOS).
+        # fetch + processing + the task IDs: iOS wakes the app to pull band data (App/BackgroundSync.swift).
+        UIBackgroundModes: [bluetooth-central, fetch, processing]
+        BGTaskSchedulerPermittedIdentifiers: [dev.pulse.app.sync, dev.pulse.app.nightly]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.pulse.app

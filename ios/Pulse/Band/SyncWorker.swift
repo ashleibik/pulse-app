@@ -55,6 +55,21 @@ final class SyncWorker: @unchecked Sendable {
         }
     }
 
+    /// Still connected after a finished download: ask the band for what it recorded since.
+    /// `done` (called on the Bluetooth queue) gets false if the session can't pull right now.
+    func pullAgain(done: @escaping @Sendable (Bool) -> Void) {
+        queue.async { [self] in
+            guard var current = session else { return done(false) }
+            let effects = current.pullAgain()
+            session = current
+            guard !effects.isEmpty else { return done(false) }
+            lastActivity = Date()
+            trace.add("PULL: asking the band for new records (connection kept)", at: Date().timeIntervalSince1970)
+            run(effects)
+            done(true)
+        }
+    }
+
     /// The band did not answer GET_CLOCK in time.
     func clockTimedOut(after seconds: Int) {
         queue.async { [self] in

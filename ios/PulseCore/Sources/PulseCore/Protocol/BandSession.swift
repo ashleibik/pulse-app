@@ -212,6 +212,19 @@ public struct BandSession: Sendable {
         return effects
     }
 
+    /// The connection is kept open (like WHOOP's own app): after a finished download, ask for what
+    /// the band recorded since. The clock was set when this connection started; battery and data
+    /// range are read again so the screens stay fresh. Does nothing unless the last download finished.
+    public mutating func pullAgain() -> [Effect] {
+        guard phase == .finished else { return [] }
+        phase = .syncing
+        sync = HistorySync(maxRetries: sync.maxRetries, startSeq: 32, discardBefore: sync.discardBefore)
+        range = nil
+        var effects = write(Whoop.Command.getBattery(seq: seq.next()), "GET_BATTERY_LEVEL")
+        effects += write(Whoop.Command.getDataRange(seq: seq.next()), "GET_DATA_RANGE")
+        return effects + map(sync.start(setClockTo: nil))
+    }
+
     /// The app's watchdog saw no data for a while during the download.
     public mutating func stalled() -> [Effect] {
         guard phase == .syncing else { return [] }

@@ -176,8 +176,13 @@ struct SettingsView: View {
     @ViewBuilder
     private var bandSection: some View {
         if let record = bands.first {
-            SettingsSection("Band", footer: "Pulse talks to the band directly over Bluetooth and never to WHOOP's servers.") {
+            SettingsSection("Band", footer: "Pulse stays connected and pulls new data by itself every few minutes. \"Sync now\" and the sync log are for troubleshooting. Pulse talks to the band directly over Bluetooth and never to WHOOP's servers.") {
                 ValueRow(label: "Name", value: record.name)
+                Hairline()
+                ValueRow(label: "Connection", value: band.statusLine, emphasized: band.isConnected)
+                Hairline()
+                ValueRow(label: "Firmware", value: record.firmwareVersion ?? "Unknown",
+                         emphasized: record.firmwareVersion != nil)
                 Hairline()
                 ValueRow(label: "Battery", value: record.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "Unknown",
                          emphasized: record.batteryPercent != nil)
@@ -194,10 +199,10 @@ struct SettingsView: View {
                         showPairing = true
                     }
                     .buttonStyle(.secondaryPill)
-                    .disabled(band.isBusy)
+                    .disabled(band.stage == .syncing)
                     Button("Forget") { confirmForget = true }
                         .buttonStyle(.secondaryPill)
-                        .disabled(band.isBusy)
+                        .disabled(band.stage == .syncing)
                 }
                 .padding(.top, DS.Space.m)
                 // Every packet of the last sync, exportable as a text file (for debugging).

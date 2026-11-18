@@ -40,23 +40,23 @@ struct RootView: View {
         .fullScreenCover(isPresented: Binding(get: { !hasSeenWelcome }, set: { hasSeenWelcome = !$0 })) {
             WelcomeView { hasSeenWelcome = true }
         }
-        // Every time the app opens (or comes back from the background): sync if it's due.
+        // Every time the app opens (or comes back): cached data is already on screen; pull what's
+        // new right away. It slides in when it's saved. No sheet, no popup.
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
-                band.syncIfDue(context: context)
+                band.appBecameActive(context: context)
                 Notifier.refresh(context: context)      // tonight's bedtime reminder
                 WidgetBridge.publish(context: context)
             } else if phase == .background {
-                BackgroundSync.schedule()               // next sync while the app is closed
+                BackgroundSync.schedule()               // wake-ups while the app is closed
             }
         }
-        // While the app is open: check once a minute whether a sync is due (every 20 minutes).
-        // Each sync is a short burst that disconnects when done.
+        // While the app is open: pull every few minutes over the kept connection.
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
-                if !Task.isCancelled { band.syncIfDue(context: context) }
+                if !Task.isCancelled { band.pullIfDue() }
             }
         }
         // Demo month generated, band synced, recalculated: the widget follows.
