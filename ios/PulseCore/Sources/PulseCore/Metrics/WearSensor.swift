@@ -21,42 +21,65 @@ public enum WearSensor {
         case commandError
     }
 
+    /// A status line, and when the band wrote it.
+    public struct Reading: Sendable, Equatable {
+        public var event: Event
+        /// The band's clock. nil when its clock isn't set.
+        public var time: Date?
+    }
+
     /// Finds the status lines in the band's raw Bluetooth notifications, without touching the sync.
+    ///
+    /// The band cuts its text into packets of 50 characters, often in the middle of a word, so the
+    /// packets are joined again in order. Layout of a CONSOLE_LOGS frame, seen on the owner's band:
+    ///
+    ///     AA, length (2), header check, 0x32, sequence, 2, 0, unix time (4), 2 bytes, text size (2), 1,
+    ///     text, 0, checksum (4)
     public struct Scanner: Sendable {
-        /// Text that reached the end of a notification and may continue in the next one.
-        private var pending: [UInt8] = []
-        private static let longestLine = 240
+        private var line: [UInt8] = []
+        private var lastSequence: UInt8?
+        private static let consoleType: UInt8 = 0x32
+        private static let textOffset = 17
+        private static let longestLine = 400
 
         public init() {}
 
-        public mutating func scan(_ bytes: [UInt8]) -> [Event] {
-            var events: [Event] = []
-            var index = 0
-            while index < bytes.count {
-                guard Self.isText(bytes[index]) else {
-                    if !pending.isEmpty { events += Self.events(in: pending); pending = [] }
-                    index += 1
-                    continue
+        public mutating func scan(_ bytes: [UInt8]) -> [Reading] {
+            var readings: [Reading] = []
+            var offset = 0
+            while offset + 5 <= bytes.count, bytes[offset] == 0xAA {
+                let total = Int(bytes[offset + 1]) | Int(bytes[offset + 2]) << 8 + 4
+                guard total > 4, offset + total <= bytes.count else { break }
+                if bytes[offset + 4] == Self.consoleType, total > Self.textOffset + 5 {
+                    readings += read(Array(bytes[offset..<(offset + total)]))
                 }
-                var end = index
-                while end < bytes.count, Self.isText(bytes[end]) { end += 1 }
-                let run = pending + bytes[index..<end]
-                pending = []
-                if end == bytes.count {
-                    pending = Array(run.suffix(Self.longestLine))
-                } else {
-                    events += Self.events(in: run)
-                }
-                index = end
+                offset += total
             }
-            return events
+            return readings
         }
 
-        private static func isText(_ byte: UInt8) -> Bool { (32..<127).contains(byte) }
+        private mutating func read(_ frame: [UInt8]) -> [Reading] {
+            let sequence = frame[5]
+            if sequence == lastSequence { return [] }                       // the same packet again
+            if let last = lastSequence, sequence != last &+ 1 { line = [] } // a packet was lost: this line is broken
+            lastSequence = sequence
 
-        private static func events(in run: [UInt8]) -> [Event] {
-            guard run.count >= 8 else { return [] }
-            return WearSensor.events(in: String(decoding: run, as: UTF8.self))
+            let size = Int(frame[14]) | Int(frame[15]) << 8
+            let end = min(Self.textOffset + max(0, size - 2), frame.count - 5)
+            guard end > Self.textOffset else { return [] }
+            let stamp = UInt32(frame[8]) | UInt32(frame[9]) << 8 | UInt32(frame[10]) << 16 | UInt32(frame[11]) << 24
+            let time = Whoop.plausibleUnix(stamp) ? Date(timeIntervalSince1970: Double(stamp)) : nil
+
+            var readings: [Reading] = []
+            for byte in frame[Self.textOffset..<end] {
+                if byte == 0x0A {
+                    readings += WearSensor.events(in: String(decoding: line, as: UTF8.self)).map { Reading(event: $0, time: time) }
+                    line = []
+                } else if line.count < Self.longestLine {
+                    line.append(byte)
+                }
+            }
+            return readings
         }
     }
 
@@ -125,11 +148,13 @@ public enum WearSensor {
 
     /// Adds an observation, skipping repeats so the file stays small.
     public static func adding(_ new: Observation, to list: [Observation]) -> [Observation] {
-        let sameKind = list.last { ($0.isLoose != nil) == (new.isLoose != nil) }
+        // The band can send older lines after a reconnect, so readings are kept in time order.
+        let sameKind = list.last { ($0.isLoose != nil) == (new.isLoose != nil) && $0.time <= new.time }
         if let sameKind, sameKind.isLoose == new.isLoose, sameKind.errorCode == new.errorCode,
            new.time.timeIntervalSince(sameKind.time) < repeatSeconds { return list }
-        let oldest = new.time.addingTimeInterval(-keepSeconds)
-        return Array((list.filter { $0.time >= oldest } + [new]).suffix(mostKept))
+        let all = (list + [new]).sorted { $0.time < $1.time }
+        let oldest = all[all.count - 1].time.addingTimeInterval(-keepSeconds)
+        return Array(all.filter { $0.time >= oldest }.suffix(mostKept))
     }
 
     public struct Status: Sendable, Equatable {
@@ -137,6 +162,8 @@ public enum WearSensor {
         public var isLoose: Bool?
         public var hasError: Bool
         public var errorCode: Int?
+        /// The newest tightness reading, however old. For showing what the band last said.
+        public var lastReading: Observation?
 
         /// "OK", "Loose", "Error", "Loose / error", or "--".
         public var label: String {
@@ -152,9 +179,11 @@ public enum WearSensor {
     }
 
     public static func status(_ list: [Observation], now: Date) -> Status {
-        let fresh = list.filter { now.timeIntervalSince($0.time) <= freshSeconds && $0.time <= now }
+        // A minute of slack: the band's clock can run slightly ahead of the phone's.
+        let fresh = list.filter { now.timeIntervalSince($0.time) <= freshSeconds && $0.time <= now.addingTimeInterval(60) }
         let error = fresh.last { $0.hasError }
-        return Status(isLoose: fresh.last { $0.isLoose != nil }?.isLoose, hasError: error != nil, errorCode: error?.errorCode)
+        return Status(isLoose: fresh.last { $0.isLoose != nil }?.isLoose, hasError: error != nil, errorCode: error?.errorCode,
+                      lastReading: list.last { $0.isLoose != nil })
     }
 
     // MARK: - Data quality

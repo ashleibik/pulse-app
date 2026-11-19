@@ -114,26 +114,31 @@ public enum StressLevel: Int, Sendable, CaseIterable, Comparable {
     public var title: String {
         switch self {
         case .calm: "Calm"
-        case .medium: "Elevated"
+        case .medium: "Moderate"
         case .high: "High"
         }
+    }
+
+    /// NOOP's bands on the 0 to 3 scale.
+    public init(score: Double) {
+        self = score < NoopDaytimeStress.moderateFloor ? .calm : score < NoopDaytimeStress.highFloor ? .medium : .high
     }
 
     public static func < (a: StressLevel, b: StressLevel) -> Bool { a.rawValue < b.rawValue }
 }
 
-/// A simple daytime stress signal: how far your heart rate sits above resting **while you are
-/// still**. Moving raises the heart rate for normal reasons, so moving minutes are ignored, and
-/// so is sleep.
+/// Daytime stress, hour by hour: each waking hour against the calmest hours of the same day
+/// (`NoopDaytimeStress`). Spec: docs/METRICS.md §14.
 ///
 /// Honest limits: caffeine, heat, a big meal or illness look the same as mental stress. It is a
 /// hint, not a measurement of how you feel.
 public enum StressMonitor {
-    /// A minute counts as "still" below this activity value (sitting is about 12 in METRICS.md terms,
-    /// so this is "barely moving").
+    /// A minute counts as "still" below this activity value. Only for the sleep stress of `SleepPerformance`.
     public static let stillActivity = 8.0
+    /// With fewer scored hours than this, the day has little to compare against.
+    public static let settledHours = NoopDaytimeStress.quartileHours
 
-    /// `nil` = can't tell (moving, or the band was off).
+    /// One minute of a night, for the sleep stress of `SleepPerformance`. `nil` = can't tell (moving, or the band was off).
     public static func level(for minute: MinuteSample, restingHR: Double, maxHR: Double) -> StressLevel? {
         guard let hr = minute.averageHeartRate, minute.averageActivity < stillActivity else { return nil }
         let reserve = (hr - restingHR) / max(1, maxHR - restingHR)
@@ -143,46 +148,80 @@ public enum StressMonitor {
 
     public struct Hour: Identifiable, Sendable, Equatable {
         public let start: Date
-        /// 0 (calm) ... 2 (high), averaged over the classified minutes. `nil` = no still minutes.
+        /// 0 (calm) to 3 (high). `nil` = not scored.
         public let score: Double?
+        /// true = left out because you were moving, or still recovering from it.
+        public let isMoving: Bool
+        /// The awake time measured in this hour.
+        public let minutes: Int
         public var id: Date { start }
+        public var level: StressLevel? { score.map { StressLevel(score: $0) } }
     }
 
     public struct Day: Sendable, Equatable {
-        /// The level over the last half hour. `nil` = not enough still minutes to say.
-        public let current: StressLevel?
+        /// The newest hour scored in the last two clock hours. `nil` = nothing recent to say.
+        public let current: Hour?
+        /// true = the newest hour with data was left out because you were moving.
+        public let isMovingNow: Bool
         public let calmMinutes: Int
         public let mediumMinutes: Int
         public let highMinutes: Int
+        /// Scores are withheld until `settledHours`, so `hours` holds none before then.
         public let hours: [Hour]
+        public let scoredHours: Int
+        /// true = too few hours to compare yet. With two hours, one always reads calm and the other high.
+        public var isEarlyRead: Bool { scoredHours < settledHours }
     }
 
     /// - Parameters:
     ///   - minutes: today's raw minutes.
     ///   - sleeps: sleep sessions (their minutes are skipped).
-    public static func day(minutes: [MinuteSample], sleeps: [SleepSession], restingHR: Double, maxHR: Double,
-                           now: Date, calendar: Calendar) -> Day {
+    ///   - workouts: recorded workouts (their minutes count as moving).
+    public static func day(minutes: [MinuteSample], sleeps: [SleepSession], workouts: [Workout], now: Date,
+                           calendar: Calendar) -> Day {
+        guard let first = minutes.map(\.start).min(), let last = minutes.map(\.start).max() else {
+            return Day(current: nil, isMovingNow: false, calmMinutes: 0, mediumMinutes: 0, highMinutes: 0, hours: [], scoredHours: 0)
+        }
+        let sleeping = sleeps.filter { $0.end > first && $0.start <= last }
+        let training = workouts.filter { $0.isSuggestion != true && $0.end > first && $0.start <= last }
+
+        var byHour: [Date: [MinuteSample]] = [:]
+        for minute in minutes where minute.isWorn && minute.source != .simulated {
+            if sleeping.contains(where: { $0.start <= minute.start && minute.start < $0.end }) { continue }
+            if let hour = calendar.dateInterval(of: .hour, for: minute.start)?.start { byHour[hour, default: []].append(minute) }
+        }
+
+        var seconds: [Date: Int] = [:]
+        let inputs = byHour.keys.sorted().map { start -> NoopDaytimeStress.HourInput in
+            let inHour = (byHour[start] ?? []).sorted { $0.start < $1.start }
+            let beats = inHour.flatMap(\.heartRate).filter { $0 > 0 }
+            seconds[start] = beats.count
+            let moving = inHour.filter { minute in
+                minute.movement >= WorkoutDetector.walkMovement
+                    || training.contains { $0.start <= minute.start && minute.start < $0.end }
+            }
+            // Each minute is cleaned alone, and the nil between minutes stops a pair forming across them.
+            let clean = inHour.flatMap { HRV.cleanBeats($0.rrIntervalsMs.map(Double.init)) + [nil] }
+            let enough = beats.count >= NoopDaytimeStress.minHourHeartRateSeconds
+            return NoopDaytimeStress.HourInput(start: start, hourOfDay: calendar.component(.hour, from: start),
+                                               meanHeartRate: enough ? Double(beats.reduce(0) { $0 + Int($1) }) / Double(beats.count) : nil,
+                                               rmssd: HRV.rmssd(clean), movingShare: Double(moving.count) / Double(inHour.count))
+        }
+
+        let hours = NoopDaytimeStress.score(inputs).map {
+            Hour(start: $0.start, score: $0.level, isMoving: $0.isMasked, minutes: Int((Double(seconds[$0.start] ?? 0) / 60).rounded()))
+        }
+        let scored = hours.filter { $0.score != nil }.count
+        let newest = hours.last { now.timeIntervalSince($0.start) < 2 * 3600 && ($0.score != nil || $0.isMoving) }
+        guard scored >= settledHours else {
+            let withheld = hours.map { Hour(start: $0.start, score: nil, isMoving: $0.isMoving, minutes: $0.minutes) }
+            return Day(current: nil, isMovingNow: newest?.isMoving == true, calmMinutes: 0, mediumMinutes: 0, highMinutes: 0,
+                       hours: withheld, scoredHours: scored)
+        }
         var counts = [0, 0, 0]
-        var byHour: [Date: [Int]] = [:]
-        var recent: [StressLevel] = []
-        for minute in minutes.sorted(by: { $0.start < $1.start }) {
-            if sleeps.contains(where: { $0.start <= minute.start && minute.start < $0.end }) { continue }
-            guard let level = level(for: minute, restingHR: restingHR, maxHR: maxHR) else { continue }
-            counts[level.rawValue] += 1
-            let parts = calendar.dateComponents([.year, .month, .day, .hour], from: minute.start)
-            if let hour = calendar.date(from: parts) { byHour[hour, default: []].append(level.rawValue) }
-            if now.timeIntervalSince(minute.start) <= 30 * 60 { recent.append(level) }
-        }
-        var current: StressLevel?
-        if recent.count >= 5 {
-            let average = Double(recent.reduce(0) { $0 + $1.rawValue }) / Double(recent.count)
-            current = StressLevel(rawValue: Int(average.rounded()))
-        }
-        let hours = byHour.keys.sorted().map { hour -> Hour in
-            let values = byHour[hour] ?? []
-            return Hour(start: hour, score: values.isEmpty ? nil : Double(values.reduce(0, +)) / Double(values.count))
-        }
-        return Day(current: current, calmMinutes: counts[0], mediumMinutes: counts[1], highMinutes: counts[2], hours: hours)
+        for hour in hours { if let level = hour.level { counts[level.rawValue] += hour.minutes } }
+        return Day(current: newest?.score == nil ? nil : newest, isMovingNow: newest?.isMoving == true,
+                   calmMinutes: counts[0], mediumMinutes: counts[1], highMinutes: counts[2], hours: hours, scoredHours: scored)
     }
 }
 

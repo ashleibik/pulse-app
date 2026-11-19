@@ -29,7 +29,7 @@ animation. (The helpers `monoCard`, `monoBackground`, `monoSheet` kept their old
 | `tertiary` | `#59626B` | Chevrons, target ranges. Not for text |
 | `muted` | `#2A323A` | Past data in charts |
 | `accent` | `#1DE9A6` | The glow: today's data, the ring, primary buttons, "Ready" |
-| `warn` | `#FFD23F` | "Steady", wake-ups, elevated stress |
+| `warn` | `#FFD23F` | "Steady", wake-ups, moderate stress |
 | `alert` | `#FF5C5C` | "Rest", things that lowered a score, high stress |
 | `onAccent` | `#03130D` | Text on an accent fill |
 | `sleepTint` | `#8AB4E8` | The Sleep ring and sleep data |
@@ -73,7 +73,7 @@ All styles follow Dynamic Type.
 Top to bottom: header (settings · "‹ TODAY ›" day switcher · band battery) → three rings
 (Sleep %, Recovery %, Strain) → two monitor cards (Health: "within range n/n metrics";
 Stress: level + value + time) → calories card (`title` number, labelled "Estimated", resting +
-active underneath; asks for the missing profile details instead of guessing) → "MY DAY" with a + button → daily outlook row (opens Coach) →
+active underneath, then one `caption` with the time measured when the band covered under 90% of the day; asks for the missing profile details instead of guessing) → "MY DAY" with a + button → daily outlook row (opens Coach) →
 today's activities card (sleep and workouts as rows with their times; Add / Start activity) →
 live heart rate. The rings use `sleepTint`, the recovery zone colour, and `strainTint`.
 Tapping a ring opens its page: a big ring + score, a card of rows (each with a three-step
@@ -100,7 +100,7 @@ come back, and the answer teaches Pulse about similar nights.
 
 When the band reports a loose strap, Today and the live workout screen show one `caption` line with a `warn` icon:
 "Strap seems loose, tighten for accurate heart rate". Settings > Band has a "Wear sensor" row: OK, Loose, Error or
-Loose / error (`--` when the band hasn't reported lately), with a `caption` under it when the sensor reports errors. A workout or
+Loose / error. After 30 minutes without a reading it shows the last one with its time ("Loose at 7:44 PM"), and `--` before the first. A `caption` sits under it when the sensor reports errors. A workout or
 night spent mostly loose shows a `caption` saying its heart rate is less certain.
 
 ## 4b-4. Workouts
@@ -109,6 +109,14 @@ Types are Run, Cycle, Strength, Walk, HIIT and Other. The Activity tab's + adds 
 A likely walk appears above the workout list as a "Was this a walk?" card (`monoCard`) with its time and two pills side by
 side: "Yes" (primary) and "No" (secondary). Until answered it is not counted as a workout. Finishing a workout
 under a minute long asks "Too short. Discard?" with Discard and Keep going.
+
+## 4b-5. Stress
+
+The sheet opens with "RIGHT NOW": the level in `display` (Calm `accent`, Moderate `warn`, High `alert`) and one line saying which hour it
+reads. An hour spent moving shows "Moving", and with no recent reading it shows "Can't tell yet" with what Pulse needs. Under that: "Today"
+with the time in each level, "Hour by hour" bars on the 0 to 3 scale, and "How it works". With fewer than 4 scored hours it shows "Too early
+to tell" with the count so far, and leaves out the levels and bars. The Today card shows the same level and score, and says "Moving",
+"Too early" or "No reading" when there is no level.
 
 ## 4c. Home Screen widget
 

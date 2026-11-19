@@ -163,8 +163,9 @@ struct TodayView: View {
     /// Health: are tonight's vitals within your usual range? Stress: right now.
     private var monitors: some View {
         let health = healthStatus
-        let level = stress?.current
+        let level = stress?.current?.level
         let score = stress?.hours.last(where: { $0.score != nil })
+        let noLevel = stress?.isMovingNow == true ? "Moving" : (stress?.scoredHours ?? 0) > 0 ? "Too early" : "No reading"
         return HStack(alignment: .top, spacing: DS.Space.s) {
             Button { open { showRecovery = true } } label: {
                 MonitorCard(title: "HEALTH MONITOR", badge: health.symbol, badgeIsSymbol: true,
@@ -173,9 +174,9 @@ struct TodayView: View {
             Button { open { showStress = true } } label: {
                 MonitorCard(title: "STRESS MONITOR", badge: score?.score.map { String(format: "%.1f", $0) } ?? "--",
                             badgeIsSymbol: false,
-                            state: isToday ? (level?.title ?? "No reading") : "Today only",
-                            stateColor: level == .high ? DS.Colors.alert : level == .medium ? DS.Colors.warn : DS.Colors.accent,
-                            detail: score.map { $0.start.formatted(date: .omitted, time: .shortened) } ?? "while still")
+                            state: isToday ? (level?.title ?? noLevel) : "Today only",
+                            stateColor: level == .high ? DS.Colors.alert : level == .medium ? DS.Colors.warn : level == .calm ? DS.Colors.accent : DS.Colors.secondary,
+                            detail: score.map { $0.start.formatted(date: .omitted, time: .shortened) } ?? "6 AM to 10 PM")
             }
         }
         .buttonStyle(.pressable)
@@ -232,6 +233,11 @@ struct TodayView: View {
                 Text(calories.map { "\($0.resting.formatted()) resting + \($0.active.formatted()) active" } ?? "No band data for this day")
                     .textStyle(.caption)
                     .foregroundStyle(DS.Colors.secondary)
+                if let calories, calories.isPartial {
+                    Text("Counts the \(PulseFormat.duration(minutes: calories.measuredMinutes)) your band measured")
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -461,8 +467,7 @@ struct TodayView: View {
                                    restingHeartRate: days.first { calendar.isDate($0.date, inSameDayAs: selectedDay) }
                                        .flatMap { $0.restingHeartRate ?? $0.baselineRestingHeartRate })
         }
-        stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value),
-                                   restingHR: days.first?.restingHeartRate ?? 60, maxHR: profile.maxHeartRate,
+        stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value), workouts: workouts.map(\.value),
                                    now: .now, calendar: calendar)
         // Respiratory rate needs the beat-to-beat data of each night: the selected one and up to 30 before.
         let tonight = mainSleep

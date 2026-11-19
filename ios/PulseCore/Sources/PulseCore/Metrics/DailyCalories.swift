@@ -1,10 +1,7 @@
 import Foundation
 
-/// Estimated calories burned in a day. Spec: docs/METRICS.md §9. Shown in the app only.
-///
-/// Every minute costs at least your resting rate (Mifflin-St Jeor). Only a minute at or above 40% of your
-/// heart-rate reserve counts as active (`OpenStrapCalories`). Keytel was built from exercise data, so
-/// it is not used for everyday heart rates.
+/// Estimated calories burned in a day, by NOOP's whole-day method (`NoopCalories`). Spec: docs/METRICS.md §9.
+/// Shown in the app only.
 public enum DailyCalories {
     public struct Body: Sendable, Equatable {
         public var weightKg: Double
@@ -22,36 +19,18 @@ public enum DailyCalories {
 
     public struct Estimate: Sendable, Equatable {
         public let total: Int
-        /// What the body burns at rest over the time counted.
+        /// What the body burns at rest over the time the band measured.
         public let resting: Int
         /// What activity added on top.
         public let active: Int
+        /// How much of the day the band measured.
+        public let measuredMinutes: Int
+        /// true = the band measured under 90% of the day so far, so the total leaves some of it out.
+        public let isPartial: Bool
     }
 
-    /// Resting calories per day. Both formulas differ by sex, so nil when it isn't set.
-    /// Mifflin MD et al., Am J Clin Nutr 1990;51:241-247.
-    public static func restingPerDay(_ body: Body) -> Double? {
-        let base = 10 * body.weightKg + 6.25 * body.heightCm - 5 * body.age
-        switch body.sex {
-        case .male: return base + 5
-        case .female: return base - 161
-        case .unspecified: return nil
-        }
-    }
-
-    /// Calories per minute at a heart rate. Keytel LR et al., J Sports Sci 2005;23:289-297.
-    public static func keytelPerMinute(heartRate: Double, body: Body) -> Double? {
-        let kilojoules: Double
-        switch body.sex {
-        case .male:
-            kilojoules = -55.0969 + 0.6309 * heartRate + 0.1988 * body.weightKg + 0.2017 * body.age
-        case .female:
-            kilojoules = -20.4022 + 0.4472 * heartRate - 0.1263 * body.weightKg + 0.074 * body.age
-        case .unspecified:
-            return nil
-        }
-        return kilojoules / 4.184
-    }
+    /// Below this share of the day so far, the card says how much was measured.
+    public static let fullCoverage = 0.90
 
     /// - Parameters:
     ///   - minutes: raw minutes, in any order. Minutes outside the day are ignored.
@@ -62,17 +41,16 @@ public enum DailyCalories {
     ///   without data there is no estimate to show.
     public static func estimate(minutes: [MinuteSample], body: Body, dayStart: Date, end: Date, maxHeartRate: Double,
                                 restingHeartRate: Double?) -> Estimate? {
-        guard let perDay = restingPerDay(body), end > dayStart else { return nil }
+        guard body.sex != .unspecified, end > dayStart, let restingHeartRate else { return nil }
         let inDay = minutes.filter { $0.start >= dayStart && $0.start < end && $0.source != .simulated && $0.isWorn }
-        guard !inDay.isEmpty else { return nil }
-        let restingPerMinute = perDay / 1440
-        let resting = restingPerMinute * end.timeIntervalSince(dayStart) / 60
-        guard let restingHeartRate,
-              let active = OpenStrapCalories.dailyActive(minuteHeartRates: inDay.map(\.averageHeartRate), body: body, basalPerMinute: restingPerMinute,
-                                                         maxHeartRate: maxHeartRate, restingHeartRate: restingHeartRate) else { return nil }
-        let restingWhole = Int(resting.rounded())
-        let activeWhole = Int(active.rounded())
-        return Estimate(total: restingWhole + activeWhole, resting: restingWhole, active: activeWhole)
+        guard !inDay.isEmpty,
+              let energy = NoopCalories.dayEnergy(minutes: inDay, body: body, maxHeartRate: maxHeartRate,
+                                                  restingHeartRate: restingHeartRate) else { return nil }
+        let resting = Int(energy.restingKcal.rounded())
+        let active = Int(energy.activeKcal.rounded())
+        return Estimate(total: resting + active, resting: resting, active: active,
+                        measuredMinutes: Int((energy.observedSeconds / 60).rounded()),
+                        isPartial: energy.observedSeconds < fullCoverage * end.timeIntervalSince(dayStart))
     }
 }
 

@@ -127,11 +127,11 @@ final class SyncWorker: @unchecked Sendable {
     // MARK: - Internals (on `queue`)
 
     private func noteWearSensor(in bytes: [UInt8]) {
-        let events = wearScanner.scan(bytes)
-        guard !events.isEmpty else { return }
+        let readings = wearScanner.scan(bytes)
+        guard !readings.isEmpty else { return }
         let now = Date()
-        for event in events { trace.add("WEAR SENSOR \(event)", at: now.timeIntervalSince1970) }
-        Task { @MainActor in WearSensorStore.shared.record(events, at: now) }
+        for reading in readings { trace.add("WEAR SENSOR \(reading.event)", at: now.timeIntervalSince1970) }
+        Task { @MainActor in WearSensorStore.shared.record(readings, receivedAt: now) }
     }
 
     private func run(_ effects: [BandSession.Effect]) {

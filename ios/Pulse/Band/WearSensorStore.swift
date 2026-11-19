@@ -19,12 +19,19 @@ final class WearSensorStore {
 
     var status: WearSensor.Status { WearSensor.status(observations, now: .now) }
 
+    /// What the Settings row shows: the current state, or the last reading with its time.
+    var rowText: String {
+        let current = status
+        guard current.label == "--", let last = current.lastReading, let loose = last.isLoose else { return current.label }
+        return "\(loose ? "Loose" : "OK") at \(last.time.formatted(date: .omitted, time: .shortened))"
+    }
+
     func quality(from start: Date, to end: Date) -> WearSensor.Quality {
         WearSensor.quality(from: start, to: end, observations: observations)
     }
 
-    func record(_ events: [WearSensor.Event], at time: Date) {
-        let updated = events.reduce(observations) { WearSensor.adding(WearSensor.Observation($1, at: time), to: $0) }
+    func record(_ readings: [WearSensor.Reading], receivedAt now: Date) {
+        let updated = readings.reduce(observations) { WearSensor.adding(WearSensor.Observation($1.event, at: $1.time ?? now), to: $0) }
         guard updated != observations else { return }
         observations = updated
         save()

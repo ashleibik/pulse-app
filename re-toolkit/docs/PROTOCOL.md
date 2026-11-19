@@ -85,7 +85,7 @@ parameter sets are brute-forcing artifacts.
 | 0x2F | HISTORICAL_DATA (1 Hz record) | DATA | 🟢 |
 | 0x30 | EVENT | EVENTS | 🟢 |
 | 0x31 | METADATA (history markers) | DATA | 🟢 |
-| 0x32 | CONSOLE_LOGS | Readable firmware status lines, for example `TIGHTNESS V1: ... loose flag = 1` (seen on the owner's band; layout around the text unknown) | 🟡 |
+| 0x32 | CONSOLE_LOGS | Readable firmware status lines, for example `TIGHTNESS V1: ... loose flag = 1`. Seen on the owner's band: inner `[4:8]` unix time, `[10:12]` size, `[12]` = 1, then 50 text bytes that continue in the next packet (lines are cut mid-word), then 0 | 🟡 |
 | 0x33 / 0x34 | REALTIME_IMU / HISTORICAL_IMU | DATA | 🟡 |
 
 ## 4. Commands (`inner[2]` when type = 0x23)

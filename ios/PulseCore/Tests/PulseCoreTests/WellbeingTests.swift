@@ -81,27 +81,13 @@ private func minute(_ index: Int, hr: UInt8, activity: UInt8, source: DataSource
                  rrIntervalsMs: [], activity: [UInt8](repeating: activity, count: 60), source: source)
 }
 
-@Test func stressOnlyCountsStillMinutesAwake() {
+@Test func sleepStressStillReadsEachStillMinute() {
     // Resting 60, max 190: 10% of reserve = 73 bpm, 20% = 86 bpm.
     #expect(StressMonitor.level(for: minute(0, hr: 65, activity: 2), restingHR: 60, maxHR: 190) == .calm)
     #expect(StressMonitor.level(for: minute(0, hr: 80, activity: 2), restingHR: 60, maxHR: 190) == .medium)
     #expect(StressMonitor.level(for: minute(0, hr: 100, activity: 2), restingHR: 60, maxHR: 190) == .high)
     #expect(StressMonitor.level(for: minute(0, hr: 130, activity: 80), restingHR: 60, maxHR: 190) == nil)   // moving
     #expect(StressMonitor.level(for: minute(0, hr: 0, activity: 0), restingHR: 60, maxHR: 190) == nil)      // band off
-
-    // 60 min asleep (skipped), 30 calm, 20 walking (skipped), 20 high and still.
-    var minutes: [MinuteSample] = []
-    for i in 0..<60 { minutes.append(minute(i, hr: 55, activity: 1)) }
-    for i in 60..<90 { minutes.append(minute(i, hr: 66, activity: 3)) }
-    for i in 90..<110 { minutes.append(minute(i, hr: 110, activity: 70)) }
-    for i in 110..<130 { minutes.append(minute(i, hr: 105, activity: 4)) }
-    let asleep = SleepSession(start: base, end: base.addingTimeInterval(3600), asleepMinutes: 60, awakeMinutes: 0,
-                              disturbances: 0, source: .history)
-    let day = StressMonitor.day(minutes: minutes, sleeps: [asleep], restingHR: 60, maxHR: 190,
-                                now: base.addingTimeInterval(130 * 60), calendar: utcCalendar)
-    #expect(day.calmMinutes == 30 && day.mediumMinutes == 0 && day.highMinutes == 20)
-    #expect(day.current == .high)
-    #expect(day.hours.count == 2)          // hour 1 (calm) and hour 2 (high); the sleeping hour has nothing
 }
 
 @Test func journalComparesTheMorningAfter() {

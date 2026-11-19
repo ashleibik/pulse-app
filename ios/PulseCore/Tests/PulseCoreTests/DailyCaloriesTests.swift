@@ -16,56 +16,99 @@ private func minute(_ index: Int, bpm: UInt8, source: DataSource = .history) -> 
 
 private func estimate(_ minutes: [MinuteSample], body: DailyCalories.Body = man, hours: Double = 24) -> DailyCalories.Estimate? {
     DailyCalories.estimate(minutes: minutes, body: body, dayStart: dayStart, end: dayStart.addingTimeInterval(hours * 3600),
-                           maxHeartRate: 190, restingHeartRate: 60)       // active from 112 bpm
+                           maxHeartRate: 190, restingHeartRate: 60)       // active from 125 bpm
 }
 
-@Test func mifflinStJeorMatchesWorkedExamples() throws {
-    #expect(try #require(DailyCalories.restingPerDay(man)) == 1780)         // 800 + 1125 - 150 + 5
-    #expect(try #require(DailyCalories.restingPerDay(woman)) == 1320.25)    // 600 + 1031.25 - 150 - 161
-    #expect(DailyCalories.restingPerDay(unknown) == nil)
+private let manPerDay = 1853.632                                            // 88.362 + 1071.76 + 863.82 - 170.31
+private let manAt140 = 12.4786                                              // kcal a minute, worked by hand below
+
+@Test func harrisBenedictMatchesWorkedExamples() {
+    #expect(abs(NoopCalories.restingRate(body: man) * 86_400 - manPerDay) < 0.001)
+    #expect(abs(NoopCalories.restingRate(body: woman) * 86_400 - 1383.683) < 0.001)   // 447.593 + 554.82 + 511.17 - 129.9
 }
 
-@Test func keytelMatchesWorkedExamples() throws {
-    let male = try #require(DailyCalories.keytelPerMinute(heartRate: 140, body: man))
-    #expect(abs(male - 13.189) < 0.001)
-    let female = try #require(DailyCalories.keytelPerMinute(heartRate: 140, body: woman))
-    #expect(abs(female - 8.807) < 0.001)
-    #expect(DailyCalories.keytelPerMinute(heartRate: 140, body: unknown) == nil)
+@Test func fitnessComesFromTheTwoHeartRates() {
+    #expect(abs(NoopCalories.vo2max(maxHeartRate: 190, restingHeartRate: 60) - 48.45) < 0.001)
+}
+
+@Test func keytelWithFitnessMatchesWorkedExamples() {
+    // Male: 0.634 x 140 + 0.404 x 48.45 + 0.394 x 80 + 0.271 x 30 - 95.7735 = 52.2103 kJ a minute.
+    let male = NoopCalories.activeRate(heartRate: 140, maxHeartRate: 190, vo2max: 48.45, body: man) * 60
+    #expect(abs(male - manAt140) < 0.001)
+    // Female: 0.450 x 140 + 0.380 x 48.45 + 0.103 x 60 + 0.274 x 30 - 59.3954 = 36.4156 kJ a minute.
+    let female = NoopCalories.activeRate(heartRate: 140, maxHeartRate: 190, vo2max: 48.45, body: woman) * 60
+    #expect(abs(female - 8.7035) < 0.001)
+}
+
+@Test func aHeartRateAboveMaxCountsAsMax() {
+    let atMax = NoopCalories.activeRate(heartRate: 190, maxHeartRate: 190, vo2max: 48.45, body: man)
+    #expect(NoopCalories.activeRate(heartRate: 230, maxHeartRate: 190, vo2max: 48.45, body: man) == atMax)
 }
 
 @Test func aQuietDayIsJustTheRestingRate() throws {
     let day = try #require(estimate((0..<1440).map { minute($0, bpm: 60) }))
-    #expect(day.resting == 1780 && day.active == 0 && day.total == 1780)
+    #expect(day.resting == 1854 && day.active == 0 && day.total == 1854)
+    #expect(day.measuredMinutes == 1440 && !day.isPartial)
 }
 
 @Test func hardMinutesAddWhatTheyCostAboveRest() throws {
     let day = try #require(estimate((0..<60).map { minute($0, bpm: 140) }))
-    let extra = 60 * (13.189 - 1780.0 / 1440)
+    let extra = 60 * (manAt140 - manPerDay / 1440)
     #expect(abs(Double(day.active) - extra) < 1)
     #expect(day.total == day.resting + day.active)
 }
 
+@Test func theActiveGateIsHalfOfHeartRateReserve() throws {
+    #expect(try #require(estimate((0..<60).map { minute($0, bpm: 124) })).active == 0)
+    #expect(try #require(estimate((0..<60).map { minute($0, bpm: 125) })).active > 0)
+}
+
 @Test func lowHeartRatesNeverAddCaloriesAndNeverSubtract() throws {
-    #expect(try #require(estimate([minute(0, bpm: 111)])).active == 0)
-    // Keytel goes negative for a heavy body at a low heart rate: it must not subtract from the day.
-    let heavy = DailyCalories.Body(weightKg: 200, heightCm: 170, age: 20, sex: .female)
-    #expect(try #require(DailyCalories.keytelPerMinute(heartRate: 90, body: heavy)) < 0)
-    #expect(try #require(estimate([minute(0, bpm: 112)], body: DailyCalories.Body(weightKg: 400, heightCm: 170, age: 20, sex: .female))).active == 0)
+    // With very low heart-rate anchors the formula gives less than the resting rate: it must not subtract from the day.
+    let heavy = DailyCalories.Body(weightKg: 300, heightCm: 170, age: 20, sex: .female)
+    let energy = try #require(NoopCalories.dayEnergy(minutes: (0..<60).map { minute($0, bpm: 36) }, body: heavy,
+                                                     maxHeartRate: 40, restingHeartRate: 30))
+    #expect(energy.activeKcal == 0 && energy.restingKcal > 0)
 }
 
 @Test func anOrdinaryDayWithARaisedHeartRateAddsNoActiveCalories() throws {
-    // Hours of everyday activity at 95 bpm used to count as exercise.
-    #expect(try #require(estimate((0..<600).map { minute($0, bpm: 95) })).active == 0)
+    // Hours of everyday activity at 110 bpm used to count as exercise.
+    #expect(try #require(estimate((0..<600).map { minute($0, bpm: 110) })).active == 0)
 }
 
 @Test func noRestingHeartRateMeansNoEstimate() {
     #expect(DailyCalories.estimate(minutes: [minute(0, bpm: 60)], body: man, dayStart: dayStart, end: dayStart.addingTimeInterval(3600),
                                    maxHeartRate: 190, restingHeartRate: nil) == nil)
+    #expect(DailyCalories.estimate(minutes: [minute(0, bpm: 60)], body: man, dayStart: dayStart, end: dayStart.addingTimeInterval(3600),
+                                   maxHeartRate: 190, restingHeartRate: 200) == nil)
 }
 
-@Test func aDayStillGoingCountsOnlyTheTimeSoFar() throws {
-    let morning = try #require(estimate([minute(0, bpm: 60)], hours: 6))
-    #expect(morning.resting == 445)                                         // a quarter of 1780
+@Test func onlyTimeTheBandMeasuredCounts() throws {
+    let morning = try #require(estimate((0..<60).map { minute($0, bpm: 60) }, hours: 6))
+    #expect(morning.resting == Int((manPerDay / 24).rounded()))
+    #expect(morning.measuredMinutes == 60 && morning.isPartial)
+}
+
+@Test func hoursOffTheWristAddAtMostAMinute() throws {
+    let split = try #require(estimate((0..<60).map { minute($0, bpm: 60) } + (240..<300).map { minute($0, bpm: 60) }))
+    // Two hours of readings, plus the 60 seconds carried across the three-hour gap.
+    #expect(split.measuredMinutes == 121)
+}
+
+@Test func aGapNeverCountsAsExercise() throws {
+    let steady = try #require(estimate((0..<30).map { minute($0, bpm: 140) }))
+    let gapped = try #require(estimate((0..<15).map { minute($0, bpm: 140) } + (200..<215).map { minute($0, bpm: 140) }))
+    #expect(abs(steady.active - gapped.active) <= 1)
+}
+
+@Test func aSparseStreamCarriesItsOwnSpacing() throws {
+    var dense = MinuteSample(start: dayStart, heartRate: [UInt8](repeating: 140, count: 60), rrIntervalsMs: [],
+                             activity: [UInt8](repeating: 0, count: 60), source: .history)
+    let full = try #require(NoopCalories.dayEnergy(minutes: [dense], body: man, maxHeartRate: 190, restingHeartRate: 60))
+    dense.heartRate = (0..<60).map { $0 % 10 == 0 ? 140 : 0 }
+    let sparse = try #require(NoopCalories.dayEnergy(minutes: [dense], body: man, maxHeartRate: 190, restingHeartRate: 60))
+    #expect(abs(sparse.activeKcal - full.activeKcal) < 0.001)
+    #expect(sparse.observedSeconds == 60)
 }
 
 @Test func minutesOutsideTheDayAndSimulatedMinutesDoNotCount() throws {

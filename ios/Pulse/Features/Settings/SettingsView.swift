@@ -156,7 +156,7 @@ struct SettingsView: View {
                 ValueRow(label: "Battery", value: record.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "Unknown",
                          emphasized: record.batteryPercent != nil)
                 Hairline()
-                ValueRow(label: "Wear sensor", value: WearSensorStore.shared.status.label,
+                ValueRow(label: "Wear sensor", value: WearSensorStore.shared.rowText,
                          emphasized: WearSensorStore.shared.status.label == "OK")
                 if WearSensorStore.shared.status.hasError {
                     Text("The band reports an error from its wear sensor, so its loose-strap reading may not be reliable. Heart rate comes from a separate optical sensor.")

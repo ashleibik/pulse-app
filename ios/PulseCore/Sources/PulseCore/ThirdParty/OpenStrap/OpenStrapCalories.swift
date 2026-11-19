@@ -1,5 +1,5 @@
 // Ported to Swift from OpenStrap analytics, lib/src/onehz/workout/calories.dart
-// (activeHRRFraction, activeGateHr, activeKcalPerS, restingKcalPerS, dailyEnergy, estimateBoutCalories).
+// (activeHRRFraction, activeGateHr, activeKcalPerS, restingKcalPerS, estimateBoutCalories).
 // Source: https://github.com/OpenStrap/analytics at commit e59d63ccc39713a6deb2facfd1c8288a5203398a
 // License: MIT, Copyright (c) 2026 OpenStrap. See docs/THIRD_PARTY.md for the full notice.
 //
@@ -50,18 +50,6 @@ public enum OpenStrapCalories {
     static func restingRate(body: DailyCalories.Body) -> Double {
         let c = coefficients(body.sex)
         return max(0, c.restAlpha + c.restWeight * body.weightKg + c.restHeight * body.heightCm / 100 - c.restAge * body.age) / 86_400
-    }
-
-    /// Active calories for a stretch of the day: what minutes at or above the gate burn beyond the basal rate.
-    /// nil when the gate can't be defined.
-    public static func dailyActive(minuteHeartRates: [Double?], body: DailyCalories.Body, basalPerMinute: Double,
-                                   maxHeartRate: Double, restingHeartRate: Double) -> Double? {
-        guard let gate = activeGate(maxHeartRate: maxHeartRate, restingHeartRate: restingHeartRate) else { return nil }
-        var active = 0.0
-        for case let rate? in minuteHeartRates where rate >= gate {
-            active += max(0, activeRate(heartRate: rate, maxHeartRate: maxHeartRate, body: body) * 60 - basalPerMinute)
-        }
-        return active
     }
 
     /// Active calories of a workout, from every second the band measured. nil when the gate can't be defined.

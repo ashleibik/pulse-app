@@ -257,19 +257,28 @@ and one SD better than normal scores about 84%.
 
 ## 9. Estimated daily calories
 
-Needs weight, height, birth year and sex. Without them, or without band data for the day, nothing is shown.
+NOOP's whole-day method (`WorkoutDetector.swift`, `Calories.estimateDayEnergy`), second by second. Needs weight, height, birth year, sex
+and a resting heart rate. Without them, or without band data for the day, nothing is shown.
 
-- **Resting (Mifflin–St Jeor):** `10 × kg + 6.25 × cm − 5 × age`, then `+ 5` (male) or `− 161` (female), per day.
-  Every minute of the day so far costs one 1440th of it.
-- **Active (Keytel):** for a worn minute with an average heart rate at or above **resting HR + 40% of heart-rate reserve**,
-  in kcal/min:
-  male `(−55.0969 + 0.6309 × HR + 0.1988 × kg + 0.2017 × age) / 4.184`,
-  female `(−20.4022 + 0.4472 × HR − 0.1263 × kg + 0.074 × age) / 4.184`.
-  Only what it adds above the resting rate counts, and it never subtracts.
+- **Resting (revised Harris-Benedict), per day:** male `88.362 + 13.397 × kg + 4.799 × cm − 5.677 × age`,
+  female `447.593 + 9.247 × kg + 3.098 × cm − 4.330 × age`. Only time the band measured counts. A gap adds at most 60 seconds, so
+  hours off the wrist add nothing.
+- **Fitness (Uth):** `VO2max = 15.3 × max HR / resting HR`.
+- **Active (Keytel, fitness-adjusted):** for a second at or above **resting HR + 50% of heart-rate reserve**, in kJ/min:
+  male `−95.7735 + 0.634 × HR + 0.404 × VO2max + 0.394 × kg + 0.271 × age`,
+  female `−59.3954 + 0.450 × HR + 0.380 × VO2max + 0.103 × kg + 0.274 × age`. Divide by 4.184 for kcal. HR is capped at max HR. Only
+  what it adds above the resting rate counts, and it never subtracts. A reading carries active energy for the band's usual sample
+  spacing only, never across a gap.
 
-*Sources:* Mifflin et al., *Am J Clin Nutr* 1990; 51:241–247. Keytel et al., *J Sports Sci* 2005; 23:289–297.
-The 40% gate is OpenStrap's (`calories.dart`): it is where moderate exercise starts, and Keytel was derived from exercise and
-overstates everyday heart rates. It is an estimate and has not been compared with a calorimeter.
+The card says how much of the day was measured when the band covered less than 90% of it.
+
+*Sources:* Roza & Shizgal, *Am J Clin Nutr* 1984; 40:168–182. Uth et al., *Eur J Appl Physiol* 2004; 91:111–115. Keytel et al.,
+*J Sports Sci* 2005; 23:289–297. The 50% gate is NOOP's: Keytel was fitted on exercise, and a lower gate over-counts ordinary daytime
+heart rates by 1000+ kcal.
+
+**How accurate this is:** it is an estimate from heart rate. WHOOP's own formula is private, so Pulse can't match it exactly. In a
+study of seven wrist devices against lab measurement, none had an energy error below 20% (Shcherbina et al., *J Pers Med* 2017; 7(2):3).
+Pulse's number has not been compared with a calorimeter or with the owner's Apple Watch.
 
 ## 10. Workouts and heart-rate zones
 
@@ -277,7 +286,8 @@ Sources and licenses for the ported parts are in `docs/THIRD_PARTY.md`.
 
 - **Zones:** `resting HR + share × (max HR − resting HR)` with shares 50/60/70/80/90% (Karvonen, OpenStrap `hr_zones.dart`), counted
   second by second so short peaks aren't averaged away. Resting HR is the median of recent nights. With none, zones are a share of max HR.
-- **Workout calories:** active calories only: seconds at or above the 40% gate of §9, minus the resting rate (OpenStrap `calories.dart`).
+- **Workout calories:** active calories only: seconds at or above resting HR + 40% of heart-rate reserve, minus the resting rate
+  (OpenStrap `calories.dart`). This is separate from the whole-day method in §9, and is waiting for a comparison with the owner's Watch.
 - **Cardio:** HR at or above `max(resting + 40, resting + 45% of reserve)` for 12+ minutes, with dips up to 90 s bridged (OpenStrap
   `auto_detect.dart`).
 - **Strength:** 20+ minutes of raised HR (average 20% or peak 30% of reserve, pauses up to 5 minutes), average movement of at least 8,
@@ -306,11 +316,40 @@ estimates cardiac calm. It does not measure deep sleep, and OpenStrap's own four
 
 The band writes readable status lines (CONSOLE_LOGS). Pulse reads three of them: `TIGHTNESS V1: ... loose count = N, loose flag = 0 or 1`,
 `IQS7223B: Error reported, error code 0x..` and `CAPSENSE: Error reported while processing command`. WHOOP doesn't document them, so what
-they mean is read from their wording.
+they mean is read from their wording. The band splits this text into 50-character packets, so Pulse joins them in order and drops a line
+if a packet is missing.
+
+The owner's band also logged `Capsense triggered an off wrist event, but Sigproc controls wear detection`: the capacitive sensor doesn't
+decide on its own whether the band is worn.
 
 - A reading counts for 30 minutes. Settings > Band shows OK, Loose, Error or Loose / error.
 - A workout or night is marked less certain when at least 25% of the time with tightness readings was loose. With readings for under
   25% of it, Pulse doesn't judge. The numbers themselves aren't changed. *Our choice:* all of these limits.
+
+## 14. Daytime stress
+
+NOOP's default day-relative score (`DaytimeStress.swift`, `StressView.swift`). Each waking hour (6 AM to 10 PM) is compared with the
+calmest hours of the same day.
+
+1. **An hour counts** with at least 300 seconds of heart rate. Its values are the mean heart rate and the RMSSD of its clean beats
+   (at least 20 pairs).
+2. **Moving hours are left out.** An hour is left out when at least 30% of its minutes are moving. So is the hour right after one, while
+   its heart rate is still more than 8 bpm above the calm reference. Moving hours don't count toward the reference.
+3. **Calm reference:** the lower quartile of the day's hourly heart rates and the upper quartile of its hourly RMSSD. With fewer than 4
+   hours, the plain mean. The spread is the population standard deviation across the same hours.
+4. **Score:** `raw = (HR − calm HR) / spread HR + (calm RMSSD − RMSSD) / spread RMSSD`, then `score = 3 / (1 + e^(−raw))`.
+5. **Levels:** Calm below 1, Moderate from 1 to below 2, High from 2. An hour that matches the calm reference scores 1.5, so Moderate is
+   the normal middle of the scale.
+
+*Our choices for this band:* a minute is moving at a movement of 30 or more, the same floor as the walk suggestion, because the WHOOP 4.0
+data has no NOOP-style gravity reading. Minutes inside a workout also count as moving, and sleep is left out using Pulse's own sleep
+times. Time per level is the time measured in each hour, not a full hour. "Right now" is the newest hour scored in the last two clock hours.
+Levels stay hidden until 4 hours are scored. NOOP shows them from the first hour, but with two hours one always reads calm and the other
+high, whatever the heart rates are.
+
+**Limits:** the score is relative to the day itself, so even a relaxed day has its higher hours, and scores can shift as the day goes on.
+Caffeine, heat, a big meal or illness look the same as stress. NOOP's stress score is not a clinical measure, and this one has not been
+compared with WHOOP's stress monitor.
 
 ### Bugs the truth tests caught while building v1
 1. One HR threshold for the whole month split nights where resting HR ran a few beats high → per-noon-block threshold.

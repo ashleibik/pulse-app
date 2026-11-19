@@ -19,30 +19,30 @@ struct StressView: View {
                     Text("RIGHT NOW")
                         .textStyle(.label)
                         .foregroundStyle(DS.Colors.secondary)
-                    Text(day?.current?.title ?? "Can't tell yet")
+                    Text(headline)
                         .textStyle(.display)
-                        .foregroundStyle(color(day?.current))
-                    Text(day?.current == nil ? "Pulse needs a few still minutes in the last half hour." : "Based on your heart rate while you were still.")
+                        .foregroundStyle(color(day?.current?.level))
+                    Text(detail)
                         .textStyle(.body)
                         .foregroundStyle(DS.Colors.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .combine)
 
-                if let day {
+                if let day, !day.isEarlyRead {
                     VStack(alignment: .leading, spacing: 0) {
-                        SectionTitle(title: "Today, while still")
+                        SectionTitle(title: "Today")
                             .padding(.bottom, DS.Space.s)
                         ValueRow(label: "Calm", value: PulseFormat.duration(minutes: day.calmMinutes))
                         Hairline()
-                        ValueRow(label: "Elevated", value: PulseFormat.duration(minutes: day.mediumMinutes))
+                        ValueRow(label: "Moderate", value: PulseFormat.duration(minutes: day.mediumMinutes))
                         Hairline()
                         ValueRow(label: "High", value: PulseFormat.duration(minutes: day.highMinutes))
                     }
                     if !day.hours.isEmpty {
                         VStack(alignment: .leading, spacing: DS.Space.m) {
                             SectionTitle(title: "Hour by hour", trailing: "taller = more stress")
-                            DayBarsChart(bars: hourBars(day.hours), domain: 0...2.2, height: 110,
+                            DayBarsChart(bars: hourBars(day.hours), domain: 0...3.2, height: 110,
                                          summary: "Stress by hour today")
                         }
                     }
@@ -50,7 +50,7 @@ struct StressView: View {
 
                 VStack(alignment: .leading, spacing: DS.Space.s) {
                     SectionTitle(title: "How it works")
-                    Text("While you sit still, your heart rate should be close to resting. The further above resting it sits, the higher the level. Minutes when you move or sleep are left out.")
+                    Text("Each hour from 6 AM to 10 PM is compared with your calmest hours today, using your heart rate and heart rate variability. Hours when you move or sleep are left out.")
                         .textStyle(.body)
                         .foregroundStyle(DS.Colors.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -70,6 +70,23 @@ struct StressView: View {
             }
         }
         .monoSheet()
+    }
+
+    private var headline: String {
+        if let level = day?.current?.level { return level.title }
+        if day?.isMovingNow == true { return "Moving" }
+        return (day?.scoredHours ?? 0) > 0 ? "Too early to tell" : "Can't tell yet"
+    }
+
+    private var detail: String {
+        if let hour = day?.current {
+            return "Your \(hour.start.formatted(.dateTime.hour())) hour, compared with your calmest hours today."
+        }
+        if day?.isMovingNow == true { return "Pulse doesn't score hours when you're moving, because exercise raises your heart rate too." }
+        if let day, day.scoredHours > 0, day.isEarlyRead {
+            return "Pulse compares each hour with your calmest hours today, so it needs \(StressMonitor.settledHours) hours. You have \(day.scoredHours) so far."
+        }
+        return "Pulse needs at least 5 minutes of heart rate in an hour, between 6 AM and 10 PM."
     }
 
     private func color(_ level: StressLevel?) -> Color {
