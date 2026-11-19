@@ -19,6 +19,7 @@ struct LiveWorkoutView: View {
     @State private var kind: WorkoutKind = .run
     @State private var start = Date.now
     @State private var confirmDiscard = false
+    @State private var confirmTooShort = false
 
     private var maxHR: Double { profiles.first?.estimatedMaxHeartRate() ?? 190 }
 
@@ -97,7 +98,13 @@ struct LiveWorkoutView: View {
         }
         .onDisappear { band.stopLive() }
         .confirmationDialog("Discard this workout?", isPresented: $confirmDiscard, titleVisibility: .visible) {
-            Button("Discard") { dismiss() }
+            Button("Discard", role: .destructive) { dismiss() }
+        }
+        .confirmationDialog("Too short. Discard?", isPresented: $confirmTooShort, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { dismiss() }
+            Button("Keep going", role: .cancel) {}
+        } message: {
+            Text("A workout needs at least a minute to be saved.")
         }
     }
 
@@ -116,16 +123,19 @@ struct LiveWorkoutView: View {
 
     private func finish() {
         let end = Date.now
-        // Under a minute is a mis-tap, not a workout.
-        if end.timeIntervalSince(start) >= 60 {
-            let raw = PulseStore.minutes(from: start, to: end, in: context)
-            let rest = days.first { Calendar.current.isDate($0.date, inSameDayAs: start) }?.restingHeartRate
-            let workout = WorkoutDetector.manual(kind: kind, start: start, end: end, minutes: raw,
-                                                 profile: profiles.first?.metricsProfile ?? MetricsProfile(),
-                                                 restingHeartRate: rest)
-            context.insert(WorkoutRecord(workout))
-            try? context.save()
+        guard !WorkoutDetector.isTooShort(start: start, end: end) else {
+            confirmTooShort = true
+            return
         }
+        let raw = PulseStore.minutes(from: start, to: end, in: context)
+        let rest = days.first { Calendar.current.isDate($0.date, inSameDayAs: start) }?.restingHeartRate
+        let workout = WorkoutDetector.manual(kind: kind, start: start, end: end, minutes: raw,
+                                             profile: profiles.first?.metricsProfile ?? MetricsProfile(),
+                                             body: profiles.first?.calorieBody(), restingHeartRate: rest)
+        context.insert(WorkoutRecord(workout))
+        try? context.save()
+        // The band still holds the last minutes: fetch them so the numbers fill in.
+        Task { await band.refresh(context: context) }
         dismiss()
     }
 }

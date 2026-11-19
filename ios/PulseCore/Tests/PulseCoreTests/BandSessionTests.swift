@@ -185,7 +185,8 @@ struct SessionHarness {
         #expect(hit, "missed \(workout.kind) at \(workout.start)")
     }
     // And it must not invent a crowd of workouts out of normal daily life.
-    #expect(detected.count <= dataset.workouts.count + 6, "\(detected.count) detected vs \(dataset.workouts.count) planned")
+    let counted = detected.filter { $0.isSuggestion != true }
+    #expect(counted.count <= dataset.workouts.count + 6, "\(counted.count) detected vs \(dataset.workouts.count) planned")
     // Found in simulated minutes = still simulated, so it can never be exported as real.
     #expect(detected.allSatisfy { $0.source == .simulated })
     for workout in detected {
@@ -201,20 +202,19 @@ struct SessionHarness {
                      heartRate: [UInt8](repeating: hr, count: 60), rrIntervalsMs: [],
                      activity: [UInt8](repeating: 40, count: 60), source: .history)
     }
-    // 6 hard minutes (too short), a long rest, then 8 hard + 2 easy + 8 hard (one workout with a pause).
+    // 6 hard minutes (too short), a long rest, then 8 hard + 1 easy + 8 hard (one workout with a pause).
     var minutes: [MinuteSample] = []
     for i in 0..<6 { minutes.append(minute(i, hr: 150)) }
     for i in 6..<30 { minutes.append(minute(i, hr: 70)) }
     for i in 30..<38 { minutes.append(minute(i, hr: 150)) }
-    for i in 38..<40 { minutes.append(minute(i, hr: 80)) }
-    for i in 40..<48 { minutes.append(minute(i, hr: 150)) }
-    for i in 48..<60 { minutes.append(minute(i, hr: 70)) }
+    for i in 38..<39 { minutes.append(minute(i, hr: 80)) }
+    for i in 39..<47 { minutes.append(minute(i, hr: 150)) }
+    for i in 47..<60 { minutes.append(minute(i, hr: 70)) }
 
     let detected = WorkoutDetector.detect(minutes: minutes) { _ in 60 }
     #expect(detected.count == 1)
     #expect(detected.first?.start == minutes[30].start)
-    #expect(detected.first?.durationMinutes == 18)              // the trailing easy minutes are not counted
-    #expect(detected.first?.kind == .other)
+    #expect(detected.first?.durationMinutes == 17)              // the trailing easy minutes are not counted
     #expect(detected.first?.source == .history)
 }
 

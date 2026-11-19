@@ -39,8 +39,10 @@ struct SettingsView: View {
                 bandSection
 
                 SettingsSection("Apple Health", footer: healthFooter) {
-                    ValueRow(label: "Export", value: health.isEnabled ? "On" : "Off",
-                             symbol: "heart.text.square", emphasized: health.isEnabled)
+                    ValueRow(label: "Export", value: health.signing == .missing ? "Not available" : (health.isEnabled ? "On" : "Off"),
+                             symbol: "heart.text.square", emphasized: health.isEnabled && health.signing != .missing)
+                    Hairline()
+                    ValueRow(label: "Last written", value: lastWrittenText)
                     Hairline()
                     HStack(spacing: DS.Space.s) {
                         Button(health.isEnabled ? "Turn off" : "Turn on") {
@@ -68,8 +70,12 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .tint(DS.Colors.accent)
-                    .disabled(health.status == .working)
+                    .disabled(health.status == .working || !health.isAvailable)
                     .padding(.top, DS.Space.m)
+                    Button("Copy Apple Health log") { UIPasteboard.general.string = health.traceLines.joined(separator: "\n") }
+                        .buttonStyle(.secondaryPill)
+                        .disabled(health.traceLines.isEmpty)
+                        .padding(.top, DS.Space.s)
                 }
 
                 CloudSettingsView()
@@ -93,7 +99,7 @@ struct SettingsView: View {
                     .padding(.top, DS.Space.m)
                 }
 
-                SettingsSection("Your data", footer: backupMessage ?? "The backup is one JSON file with all your band data, workouts, journal and profile. Use it to move Pulse to a new install. Importing adds to what is here and never deletes anything.") {
+                SettingsSection("Your data", footer: backupMessage ?? (health.signing == .missing ? "This is your main backup, because Apple Health isn't available on this install. " : "") + "The backup is one JSON file with all your band data, workouts, journal and profile. Use it to move Pulse to a new install. Importing adds to what is here and never deletes anything.") {
                     BackupButtons(message: $backupMessage)
                     if !sleepCorrections.isEmpty {
                         Button("Undo my sleep edits (\(sleepCorrections.count))") { undoSleepEdits() }
@@ -175,8 +181,15 @@ struct SettingsView: View {
         }
     }
 
+    /// "Nov 18, 5:43 PM · 1,204 samples", or dashes before the first write.
+    private var lastWrittenText: String {
+        guard let date = health.lastWrittenAt else { return "--" }
+        return "\(date.formatted(date: .abbreviated, time: .shortened)) · \(health.lastWrittenSamples.formatted()) samples"
+    }
+
     /// What happened last, or what the export does.
     private var healthFooter: String {
+        if health.signing == .missing { return HealthAccess.missingMessage }
         switch health.status {
         case .working: "Exporting…"
         case .done(let message): message

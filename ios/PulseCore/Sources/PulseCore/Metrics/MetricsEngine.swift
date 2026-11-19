@@ -33,7 +33,8 @@ public enum MetricsEngine {
     /// 4: sleep is a probability per minute from several signals, learned from the person's own nights and edits.
     /// 5: minutes with no band data are unknown instead of awake, personal learning waits for 3 nights,
     ///    unsure sleeps ask "Is this right?", and new minutes measure motion from the wrist angle.
-    public static let algorithmVersion = 5
+    /// 6: breathing, restful sleep, zones, calories and workout detection ported from OpenStrap and NOOP.
+    public static let algorithmVersion = 6
     /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v2.json).
     /// The confirmation stage on top of them is Swift only.
     public static let sharedFormulaVersion = 2

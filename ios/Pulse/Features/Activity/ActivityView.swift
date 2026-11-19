@@ -17,8 +17,8 @@ struct ActivityView: View {
     @State private var path: [UUID] = []
     @State private var showAdd = false
     @State private var showLive = false
-    /// Rough active calories so far today.
-    @State private var activeCalories = 0
+    /// Estimated active calories so far today. nil = not enough details to estimate.
+    @State private var activeCalories: Int?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -28,6 +28,7 @@ struct ActivityView: View {
                         strain(today).riseIn(0)
                         zones.riseIn(1)
                     }
+                    ForEach(suggestions) { WalkSuggestionCard(workout: $0).riseIn(2) }
                     workoutList.riseIn(2)
                 }
                 .padding(.horizontal, DS.Space.side)
@@ -73,9 +74,13 @@ struct ActivityView: View {
         let start = Calendar.current.startOfDay(for: .now)
         let minutes = PulseStore.minutes(from: start, to: .now, in: context)
         let maxHR = profiles.first?.estimatedMaxHeartRate() ?? 190
-        zoneMinutes = HeartRateZones.minutesPerZone(minutes.map(\.averageHeartRate), maxHeartRate: maxHR)
-        activeCalories = DailyEnergy.activeCalories(minutes: minutes, restingHR: days.first?.restingHeartRate ?? 60,
-                                                    maxHR: maxHR)
+        let resting = days.first?.restingHeartRate ?? days.first?.baselineRestingHeartRate
+        let zones = OpenStrapZones.zones(restingHistory: Array(days.prefix(28)).compactMap(\.restingHeartRate), maxHeartRate: maxHR)
+        zoneMinutes = OpenStrapZones.secondsInZones(minutes, zones: zones).map { $0 / 60 }
+        activeCalories = profiles.first?.calorieBody().flatMap { body in
+            DailyCalories.estimate(minutes: minutes, body: body, dayStart: start, end: .now, maxHeartRate: maxHR,
+                                   restingHeartRate: resting)?.active
+        }
     }
 
     // MARK: - Sections
@@ -104,9 +109,11 @@ struct ActivityView: View {
                 .textStyle(.body)
                 .foregroundStyle(DS.Colors.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("About \(activeCalories) active kcal today (a rough estimate from heart rate).")
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.secondary)
+            if let activeCalories {
+                Text("About \(activeCalories) active kcal today (estimated from heart rate).")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -119,7 +126,7 @@ struct ActivityView: View {
             if zoneMinutes.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 100)
             } else if zoneMinutes.reduce(0, +) == 0 {
-                Text("No time above 50% of your max heart rate yet today.")
+                Text("No time in your heart rate zones yet today.")
                     .textStyle(.body)
                     .foregroundStyle(DS.Colors.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -159,7 +166,13 @@ struct ActivityView: View {
 
     private var recent: [WorkoutRecord] {
         let cutoff = Calendar.current.date(byAdding: .day, value: -14, to: .now) ?? .now
-        return workouts.filter { $0.start >= cutoff }
+        return workouts.filter { $0.start >= cutoff && $0.isSuggestion != true }
+    }
+
+    /// Walks Pulse is asking about.
+    private var suggestions: [WorkoutRecord] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -14, to: .now) ?? .now
+        return workouts.filter { $0.start >= cutoff && $0.isSuggestion == true }
     }
 
     struct DayGroup: Identifiable {

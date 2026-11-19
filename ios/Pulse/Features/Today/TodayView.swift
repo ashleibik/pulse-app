@@ -456,7 +456,9 @@ struct TodayView: View {
         let dayEnd = min(calendar.date(byAdding: .day, value: 1, to: selectedDay) ?? selectedDay, .now)
         calories = calorieBody.flatMap { body in
             DailyCalories.estimate(minutes: isToday ? minutes : PulseStore.minutes(from: selectedDay, to: dayEnd, in: context),
-                                   body: body, dayStart: selectedDay, end: dayEnd)
+                                   body: body, dayStart: selectedDay, end: dayEnd, maxHeartRate: profile.maxHeartRate,
+                                   restingHeartRate: days.first { calendar.isDate($0.date, inSameDayAs: selectedDay) }
+                                       .flatMap { $0.restingHeartRate ?? $0.baselineRestingHeartRate })
         }
         stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value),
                                    restingHR: days.first?.restingHeartRate ?? 60, maxHR: profile.maxHeartRate,
@@ -465,8 +467,7 @@ struct TodayView: View {
         let tonight = mainSleep
         let from = calendar.date(byAdding: .day, value: -30, to: selectedDay) ?? selectedDay
         let earlier = sleepRecords.filter { !$0.isNap && $0.end < (tonight?.start ?? selectedDay) && $0.end >= from }
-        respiratory = (tonight.flatMap { NightVitals.respiratoryRate($0, context: context) },
-                       earlier.compactMap { NightVitals.respiratoryRate($0, context: context) })
+        Task { respiratory = await NightVitals.respiratoryRates(tonight: tonight, earlier: earlier, context: context) }
     }
 }
 

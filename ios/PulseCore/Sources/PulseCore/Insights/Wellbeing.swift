@@ -79,62 +79,30 @@ public enum Bedtime {
 // MARK: - Respiratory rate
 
 /// Breaths per minute, estimated from the beat-to-beat intervals. Breathing makes the heart speed
-/// up and slow down slightly with every breath (respiratory sinus arrhythmia), so counting those
-/// waves counts breaths. Works best during sleep.
+/// up and slow down slightly with every breath (respiratory sinus arrhythmia).
 ///
-/// Honest limits: needs clean beat-to-beat data (whether the band stores it overnight is still
-/// unverified), and it refuses to answer when the waves are irregular instead of guessing.
+/// Honest limits: it needs clean beat-to-beat data, and it refuses to answer when the rhythm isn't stable.
 public enum RespiratoryRate {
 
-    /// One window of beats (a few minutes). `nil` when there is no clear, regular breathing wave.
-    public static func estimate(rrMs: [Double]) -> Double? {
-        guard rrMs.count >= 90 else { return nil }
-        // 1. Remove the slow drift: subtract the average of the surrounding beats.
-        let half = 8
-        var detrended: [Double] = []
-        var times: [Double] = []
-        var clock = 0.0
-        for i in rrMs.indices {
-            clock += rrMs[i] / 1000
-            let window = rrMs[max(0, i - half)...min(rrMs.count - 1, i + half)]
-            detrended.append(rrMs[i] - window.reduce(0, +) / Double(window.count))
-            times.append(clock)
-        }
-        // 2. Smooth lightly (3 beats), so single noisy beats don't count as breaths.
-        var smooth: [Double] = []
-        for i in detrended.indices {
-            let window = detrended[max(0, i - 1)...min(detrended.count - 1, i + 1)]
-            smooth.append(window.reduce(0, +) / Double(window.count))
-        }
-        // 3. Each upward crossing of zero is one breath.
-        var crossings: [Double] = []
-        for i in 1..<smooth.count where smooth[i - 1] < 0 && smooth[i] >= 0 {
-            crossings.append(times[i])
-        }
-        guard crossings.count >= 8, let first = crossings.first, let last = crossings.last, last > first else { return nil }
-        // 4. Real breathing is regular. Random noise also crosses zero, but at irregular intervals.
-        var gaps: [Double] = []
-        for i in 1..<crossings.count { gaps.append(crossings[i] - crossings[i - 1]) }
-        let meanGap = Stats.mean(gaps)
-        let variance = gaps.reduce(0) { $0 + ($1 - meanGap) * ($1 - meanGap) } / Double(gaps.count)
-        guard meanGap > 0, variance.squareRoot() / meanGap < 0.40 else { return nil }
-
-        let rate = 60 / meanGap
-        return (6...30).contains(rate) ? rate : nil
-    }
-
-    /// A whole night: the middle value of all 3-minute windows that gave a clear answer.
+    /// A whole night, from OpenStrap's spectral method (docs/THIRD_PARTY.md). Each minute's beats are
+    /// cleaned on their own and timed from the start of that minute. nil when there is no stable rhythm.
     public static func night(minutes: [MinuteSample]) -> Double? {
         let sorted = minutes.sorted { $0.start < $1.start }
-        var estimates: [Double] = []
-        var index = 0
-        while index < sorted.count {
-            let window = sorted[index..<min(index + 3, sorted.count)]
-            let cleaned = HRV.cleanRR(window.flatMap { $0.rrIntervalsMs.map { Double($0) } }).compactMap { $0 }
-            if let rate = estimate(rrMs: cleaned) { estimates.append(rate) }
-            index += 3
+        guard let origin = sorted.first?.start else { return nil }
+        var beats: [Double] = [], times: [Double] = []
+        for minute in sorted where minute.isWorn {
+            var clock = minute.start.timeIntervalSince(origin) * 1000
+            let raw = minute.rrIntervalsMs.map { Double($0) }
+            for (interval, clean) in zip(raw, HRV.cleanBeats(raw)) {
+                // The filler value is not a beat, so no time passes for it.
+                if interval != HRV.fillerRRMs, (HRV.rrMinMs...HRV.rrMaxMs).contains(interval) { clock += interval }
+                if let clean {
+                    beats.append(clean)
+                    times.append(clock)
+                }
+            }
         }
-        return estimates.count >= 5 ? Stats.median(estimates) : nil
+        return OpenStrapRespiration.rate(beats: beats, times: times)
     }
 }
 
@@ -220,18 +188,3 @@ public enum StressMonitor {
 
 // MARK: - Energy
 
-/// Active calories for a stretch of time: a rough estimate from heart rate alone.
-/// 12 kcal per minute at 100% of heart-rate reserve, scaled down linearly, counted only above
-/// 15% of reserve (below that you are resting). No weight, no power meter: treat it as a ballpark.
-public enum DailyEnergy {
-    public static func activeCalories(minutes: [MinuteSample], restingHR: Double, maxHR: Double) -> Int {
-        let reserveSize = max(1, maxHR - restingHR)
-        var total = 0.0
-        for minute in minutes {
-            guard let hr = minute.averageHeartRate else { continue }
-            let reserve = (hr - restingHR) / reserveSize
-            if reserve > 0.15 { total += min(reserve, 1) * 12 }
-        }
-        return Int(total.rounded())
-    }
-}

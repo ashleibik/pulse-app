@@ -1,4 +1,4 @@
-# Pulse Metrics: Specification (algorithm version 4, shared formulas version 2)
+# Pulse Metrics: Specification (algorithm version 6, shared formulas version 2)
 
 This is the **single source of truth** for how Pulse computes its numbers. There are two implementations:
 
@@ -101,8 +101,7 @@ dimensions rather than the z-axis only. Minutes saved earlier keep the older for
 **Left out, on purpose:**
 
 - **Breathing.** Breathing was faster and shallower in every sleep stage than awake in Douglas et al. 1982, so a slower rate
-  is not a sign of sleep. Pulse's estimate from beat intervals (method family: Schäfer & Kratky 2008) also read about 7
-  breaths a minute on the real night, too low to trust, and gave a value in only 16% of awake minutes.
+  is not a sign of sleep. The breathing rate Pulse shows for a night is described in §11.
 - **Skin temperature.** Warming of the hands and feet does predict falling asleep quickly (Kräuchi et al. 1999), but Pulse
   does not decode or store temperature, and the band's raw value has no confirmed unit.
 
@@ -153,8 +152,8 @@ latest week only. An edit recalculates its own week and, if that changes what wa
 8. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
 9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (`A > 2.5`, or HR 10+ bpm
    above the sleep's), or the band was off the wrist for an hour, or 6 hours have passed without newer data.
-10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. Restful =
-    `A < 1` and HR at or below the median. Light = the rest. Asleep time, awake time, wake-ups and the phases all come from
+10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. Restful = a quiet heart
+    (§12). Light = the rest. Asleep time, awake time, wake-ups and the phases all come from
     this one rule, so light + restful = asleep and asleep + awake + unknown = the length of the sleep. Efficiency is asleep ÷
     (asleep + awake).
 11. **Missing data.** A sleep starts and ends on measured minutes and needs 45 of them asleep. A gap of up to 3 hours with
@@ -267,14 +266,46 @@ Needs weight, height, birth year and sex. Without them, or without band data for
 
 - **Resting (Mifflin–St Jeor):** `10 × kg + 6.25 × cm − 5 × age`, then `+ 5` (male) or `− 161` (female), per day.
   Every minute of the day so far costs one 1440th of it.
-- **Active (Keytel):** for a worn minute with an average heart rate of **≥ 90 bpm**, in kcal/min:
+- **Active (Keytel):** for a worn minute with an average heart rate at or above **resting HR + 40% of heart-rate reserve**,
+  in kcal/min:
   male `(−55.0969 + 0.6309 × HR + 0.1988 × kg + 0.2017 × age) / 4.184`,
   female `(−20.4022 + 0.4472 × HR − 0.1263 × kg + 0.074 × age) / 4.184`.
   Only what it adds above the resting rate counts, and it never subtracts.
 
 *Sources:* Mifflin et al., *Am J Clin Nutr* 1990; 51:241–247. Keytel et al., *J Sports Sci* 2005; 23:289–297.
-*Our choice:* the 90 bpm threshold, because Keytel was derived from exercise and overstates low heart rates. It is an
-estimate and has not been compared with a calorimeter.
+The 40% gate is OpenStrap's (`calories.dart`): it is where moderate exercise starts, and Keytel was derived from exercise and
+overstates everyday heart rates. It is an estimate and has not been compared with a calorimeter.
+
+## 10. Workouts and heart-rate zones
+
+Sources and licenses for the ported parts are in `docs/THIRD_PARTY.md`.
+
+- **Zones:** `resting HR + share × (max HR − resting HR)` with shares 50/60/70/80/90% (Karvonen, OpenStrap `hr_zones.dart`), counted
+  second by second so short peaks aren't averaged away. Resting HR is the median of recent nights. With none, zones are a share of max HR.
+- **Workout calories:** active calories only: seconds at or above the 40% gate of §9, minus the resting rate (OpenStrap `calories.dart`).
+- **Cardio:** HR at or above `max(resting + 40, resting + 45% of reserve)` for 12+ minutes, with dips up to 90 s bridged (OpenStrap
+  `auto_detect.dart`).
+- **Strength:** 20+ minutes of raised HR (average 20% or peak 30% of reserve, pauses up to 5 minutes), average movement of at least 8,
+  at least 3 climbs and falls of 15 bpm, and NOOP's classifier agreeing. *Our choice:* everything except the classifier.
+- **Walk suggestion:** 10+ minutes of movement of at least 30 with HR 10% of reserve above resting. Pulse asks "Was this a walk?"
+  and doesn't count it until you answer. At one reading a second the rhythm of steps can't be measured. *Our choice.*
+
+None of this has been compared with a chest strap, and the strength and walk rules have not yet been run on a real workout.
+
+## 11. Breathing rate
+
+OpenStrap's method (`resp_rate.dart`): breathing speeds the heart up and slows it down, so the strongest rhythm in the beat intervals
+between 9 and 30 cycles a minute is the breathing rate. Each 5-minute window (overlapping by half) gets a Lomb-Scargle spectrum, and
+the night's rate is the window closest to the median. At least half the windows must agree within 2 breaths a minute. Otherwise
+Pulse shows `--`.
+
+## 12. Restful sleep
+
+OpenStrap's score (`cardio_stager.dart`): four measures of a quiet heart per minute, each compared with the same night using the
+median and scaled median absolute deviation. The weights are the effect sizes OpenStrap measured on 99 sleep-lab nights: beat-to-beat
+heart-rate change 0.53, heart-rate spread 0.43, SDNN 0.41 and LF/HF 0.33. A minute is restful when the weighted score is above 0.4, and
+bouts under 3 minutes don't count. OpenStrap ships 0.3. *Our choice:* 0.4, which gives 1h48 of 9h asleep on the owner's night. This
+estimates cardiac calm. It does not measure deep sleep, and OpenStrap's own four-stage agreement with sleep-lab scoring is low (kappa 0.13).
 
 ### Bugs the truth tests caught while building v1
 1. One HR threshold for the whole month split nights where resting HR ran a few beats high → per-noon-block threshold.

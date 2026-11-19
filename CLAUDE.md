@@ -33,9 +33,14 @@ The owner develops on Windows, has no Mac, and installs by sideloading (moving t
   awake level, clean beats, HRV and time of day, and learns from their nights and edits. Breathing and skin temperature are
   left out until the data supports them. Keep the replay of the real night in `RealNightReplayTests` passing.
 
+## Third-party code
+
+Logic ported from OpenStrap and NOOP lives in `ios/PulseCore/Sources/PulseCore/ThirdParty/` and is listed in `docs/THIRD_PARTY.md`.
+Port OpenStrap only from commit `e59d63c` or earlier: that code is MIT, and later versions are AGPL-3.0. NOOP code is noncommercial only.
+
 ## Later
 
-- **Speed up the 1-year case (target under 2 s).** A sync with a year of data takes 3.2 s in an optimized build on the
+- **Find out why a 1-year sync varies from 3.4 to 9.6 s, and speed it up (target under 2 s).** A sync with a year of data takes 3.2 s in an optimized build on the
   PC (30 days: 0.27 s). One idea: recompute only the last night instead of the whole latest week.
 
 ## Do not break (working on the real band)

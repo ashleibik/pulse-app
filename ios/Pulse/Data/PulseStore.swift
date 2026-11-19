@@ -117,6 +117,7 @@ actor MetricsRecomputer {
         } else {
             try? sleepCache.encoded().write(to: Self.sleepCacheURL, options: .atomic)
         }
+        let body = try modelContext.fetch(FetchDescriptor<ProfileRecord>()).first?.calorieBody()
         var strain: [UUID: Double] = [:]
         var manual: [UUID: Workout] = [:]
         for workout in try modelContext.fetch(FetchDescriptor<WorkoutRecord>()) {
@@ -124,14 +125,15 @@ actor MetricsRecomputer {
             strain[workout.id] = MetricsEngine.strain(of: minutes, from: workout.start, to: workout.end,
                                                       restingHR: rest, profile: profile)
             if workout.sourceRaw == DataSource.manual.rawValue {
-                manual[workout.id] = WorkoutDetector.manual(kind: workout.kind, start: workout.start, end: workout.end,
-                                                            minutes: minutes, profile: profile, restingHeartRate: rest)
+                manual[workout.id] = WorkoutDetector.manual(id: workout.id, kind: workout.kind, start: workout.start, end: workout.end,
+                                                            minutes: minutes, profile: profile, body: body,
+                                                            restingHeartRate: result.days.first { calendar.isDate($0.date, inSameDayAs: workout.start) }?.restingHeartRate)
             }
         }
         var output = RecomputeOutput(days: result.days, sleeps: result.sleeps, workoutStrain: strain)
         output.manualWorkouts = manual
         if detectWorkouts {
-            output.detectedWorkouts = WorkoutDetector.detect(minutes: minutes, profile: profile) { date in
+            output.detectedWorkouts = WorkoutDetector.detect(minutes: minutes, profile: profile, body: body) { date in
                 result.days.first { calendar.isDate($0.date, inSameDayAs: date) }?.restingHeartRate
             }
         }
@@ -197,8 +199,10 @@ extension PulseStore {
             for workout in workouts where workout.sourceRaw == DataSource.history.rawValue {
                 fromBand[workout.id] = workout
             }
+            let dismissed = WorkoutSuggestions.dismissed
             for found in detected {
                 if demo.contains(where: { $0.start < found.end && $0.end > found.start }) { continue }
+                if found.isSuggestion == true, dismissed.contains(found.id.uuidString) { continue }
                 if let existing = fromBand.removeValue(forKey: found.id) {
                     existing.end = found.end
                     existing.averageHeartRate = found.averageHeartRate

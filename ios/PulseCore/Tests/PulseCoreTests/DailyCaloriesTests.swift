@@ -15,7 +15,8 @@ private func minute(_ index: Int, bpm: UInt8, source: DataSource = .history) -> 
 }
 
 private func estimate(_ minutes: [MinuteSample], body: DailyCalories.Body = man, hours: Double = 24) -> DailyCalories.Estimate? {
-    DailyCalories.estimate(minutes: minutes, body: body, dayStart: dayStart, end: dayStart.addingTimeInterval(hours * 3600))
+    DailyCalories.estimate(minutes: minutes, body: body, dayStart: dayStart, end: dayStart.addingTimeInterval(hours * 3600),
+                           maxHeartRate: 190, restingHeartRate: 60)       // active from 112 bpm
 }
 
 @Test func mifflinStJeorMatchesWorkedExamples() throws {
@@ -45,11 +46,21 @@ private func estimate(_ minutes: [MinuteSample], body: DailyCalories.Body = man,
 }
 
 @Test func lowHeartRatesNeverAddCaloriesAndNeverSubtract() throws {
-    #expect(try #require(estimate([minute(0, bpm: 89)])).active == 0)
+    #expect(try #require(estimate([minute(0, bpm: 111)])).active == 0)
     // Keytel goes negative for a heavy body at a low heart rate: it must not subtract from the day.
     let heavy = DailyCalories.Body(weightKg: 200, heightCm: 170, age: 20, sex: .female)
     #expect(try #require(DailyCalories.keytelPerMinute(heartRate: 90, body: heavy)) < 0)
-    #expect(try #require(estimate([minute(0, bpm: 90)], body: heavy)).active == 0)
+    #expect(try #require(estimate([minute(0, bpm: 112)], body: DailyCalories.Body(weightKg: 400, heightCm: 170, age: 20, sex: .female))).active == 0)
+}
+
+@Test func anOrdinaryDayWithARaisedHeartRateAddsNoActiveCalories() throws {
+    // Hours of everyday activity at 95 bpm used to count as exercise.
+    #expect(try #require(estimate((0..<600).map { minute($0, bpm: 95) })).active == 0)
+}
+
+@Test func noRestingHeartRateMeansNoEstimate() {
+    #expect(DailyCalories.estimate(minutes: [minute(0, bpm: 60)], body: man, dayStart: dayStart, end: dayStart.addingTimeInterval(3600),
+                                   maxHeartRate: 190, restingHeartRate: nil) == nil)
 }
 
 @Test func aDayStillGoingCountsOnlyTheTimeSoFar() throws {

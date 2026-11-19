@@ -2,9 +2,8 @@ import SwiftUI
 import SwiftData
 import PulseCore
 
-/// Add a workout by hand, for sessions Pulse can't spot by itself (weights, yoga: the heart rate
-/// stays too low for automatic detection). You give the type and the time; Pulse fills in heart
-/// rate, zones and strain from what the band recorded in that window.
+/// Add a past workout by hand. You give the type, start and end; Pulse fills in heart rate, zones,
+/// strain and calories from what the band recorded in that window.
 /// Mono design (ios/design/DESIGN.md).
 struct AddWorkoutView: View {
     @Environment(\.modelContext) private var context
@@ -14,7 +13,10 @@ struct AddWorkoutView: View {
 
     @State private var kind: WorkoutKind = .strength
     @State private var start = Date.now.addingTimeInterval(-3600)
-    @State private var minutes = 45
+    @State private var end = Date.now.addingTimeInterval(-900)
+
+    /// A workout ends after it starts, lasts at least a minute, and can't end in the future.
+    private var timesAreValid: Bool { !WorkoutDetector.isTooShort(start: start, end: end) && end <= .now }
 
     var body: some View {
         ScrollView {
@@ -40,22 +42,17 @@ struct AddWorkoutView: View {
                             .tint(DS.Colors.primary)
                     }
                     Hairline()
-                    row("Duration") {
-                        Text(PulseFormat.duration(minutes: minutes))
-                            .textStyle(.bodyStrong)
-                            .monospacedDigit()
-                            .foregroundStyle(DS.Colors.primary)
-                            .padding(.trailing, DS.Space.xs)
-                        IconButton(systemName: "minus", label: "Shorter") { minutes = max(10, minutes - 5) }
-                            .disabled(minutes <= 10)
-                        IconButton(systemName: "plus", label: "Longer") { minutes = min(240, minutes + 5) }
-                            .disabled(minutes >= 240)
+                    row("Ended") {
+                        DatePicker("Ended", selection: $end, in: ...Date.now)
+                            .labelsHidden()
+                            .tint(DS.Colors.primary)
                     }
                 }
 
-                Text("Heart rate, zones and strain are filled in from your band's data for that time.")
+                Text(timesAreValid ? "Heart rate, zones, strain and calories are filled in from your band's data for that time."
+                                   : "The end must be at least a minute after the start, and not in the future.")
                     .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
+                    .foregroundStyle(timesAreValid ? DS.Colors.secondary : DS.Colors.warn)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, DS.Space.side)
@@ -74,6 +71,7 @@ struct AddWorkoutView: View {
                 Text("Add workout").frame(maxWidth: .infinity)
             }
             .buttonStyle(.primaryPill)
+            .disabled(!timesAreValid)
             .padding(.horizontal, DS.Space.side)
             .padding(.vertical, DS.Space.m)
             .background(DS.Colors.sheet)
@@ -93,13 +91,11 @@ struct AddWorkoutView: View {
     }
 
     private func add() {
-        // A workout can't end in the future: there is no band data for that yet.
-        let end = min(start.addingTimeInterval(Double(minutes) * 60), .now)
         let raw = PulseStore.minutes(from: start, to: end, in: context)
         let rest = days.first { Calendar.current.isDate($0.date, inSameDayAs: start) }?.restingHeartRate
         let workout = WorkoutDetector.manual(kind: kind, start: start, end: end, minutes: raw,
                                              profile: profiles.first?.metricsProfile ?? MetricsProfile(),
-                                             restingHeartRate: rest)
+                                             body: profiles.first?.calorieBody(), restingHeartRate: rest)
         context.insert(WorkoutRecord(workout))
         try? context.save()
         dismiss()

@@ -28,8 +28,6 @@ public enum SleepTimeline {
 
     /// A minute with this much movement (`MinuteSample.movement`) is awake.
     public static let awakeMovement = 6.0
-    /// A minute with less movement than this can be restful.
-    public static let restfulMovement = 1.0
 
     /// One phase per minute of a sleep. This is the only place that decides which minutes of a sleep
     /// count as awake, so the night's headline numbers and its phases always add up to the same total.
@@ -37,10 +35,7 @@ public enum SleepTimeline {
     /// Per minute:
     ///   nil     = no band data: unknown, neither asleep nor awake
     ///   awake   = moving, OR heart rate >= the night's median + 10
-    ///   restful = very still AND heart rate at or below the night's median
-    ///   light   = everything else
-    /// Then non-awake runs shorter than 3 minutes are absorbed by their neighbour, so the chart
-    /// shows the shape of the night instead of noise.
+    ///   light   = asleep. `build` then marks the restful minutes among them.
     public static func phases(hr: [Double?], movement: [Double?]) -> [SleepPhase?] {
         let rates = hr.compactMap { $0 }
         guard !rates.isEmpty else { return hr.map { _ in nil } }
@@ -55,7 +50,7 @@ public enum SleepTimeline {
                 if moved >= awakeMovement || rate >= median + 10 {
                     run.append(.awake)
                 } else {
-                    run.append((moved < restfulMovement && rate <= median) ? .restful : .light)
+                    run.append(.light)
                 }
                 end += 1
             }
@@ -66,18 +61,25 @@ public enum SleepTimeline {
     }
 
     /// The night as segments. Minutes with no band data belong to no segment.
-    public static func build(minutes: [MinuteSample], from start: Date, to end: Date) -> [SleepSegment] {
+    /// - Parameter findRestful: false skips the slower restful estimate when only asleep and awake matter.
+    public static func build(minutes: [MinuteSample], from start: Date, to end: Date, findRestful: Bool = true) -> [SleepSegment] {
         let count = Int((end.timeIntervalSince(start) / 60).rounded(.up))
         guard count > 0 else { return [] }
         var hr = [Double?](repeating: nil, count: count)
         var movement = [Double?](repeating: nil, count: count)
+        var night = [MinuteSample?](repeating: nil, count: count)
         for minute in minutes where minute.start >= start && minute.start < end && minute.isWorn {
             let index = Int(minute.start.timeIntervalSince(start) / 60)
             hr[index] = minute.averageHeartRate
             movement[index] = minute.movement
+            night[index] = minute
         }
         guard hr.contains(where: { $0 != nil }) else { return [] }
-        let phases = SleepTimeline.phases(hr: hr, movement: movement)
+        var phases = SleepTimeline.phases(hr: hr, movement: movement)
+        if findRestful {
+            let restful = OpenStrapDeepSleep.restful(night: night, asleep: phases.map { $0 == .light })
+            for index in phases.indices where restful[index] { phases[index] = .restful }
+        }
 
         var segments: [SleepSegment] = []
         var runStart = 0

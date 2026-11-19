@@ -96,6 +96,19 @@ three pills stacked full width: "Yes" (primary), "Fix times" and "Not asleep" (s
 opens "Edit sleep", and "Not asleep" asks once before removing the sleep. An answered card does not
 come back, and the answer teaches Pulse about similar nights.
 
+## 4b-3. Apple Health in Settings
+
+The Apple Health section shows whether export is on, "Last written" (time · N samples, `--` before the first
+write) and a "Copy Apple Health log" button. If the tool that signed this install left out HealthKit, Export reads
+"Not available", the buttons are disabled, and the footer points to Export all data as the main backup.
+
+## 4b-4. Workouts
+
+Types are Run, Cycle, Strength, Walk, HIIT and Other. The Activity tab's + adds a past workout (type, start, end).
+A likely walk appears above the workout list as a "Was this a walk?" card (`monoCard`) with its time and two pills side by
+side: "Yes" (primary) and "No" (secondary). Until answered it is not counted as a workout. Finishing a workout
+under a minute long asks "Too short. Discard?" with Discard and Keep going.
+
 ## 4c. Home Screen widget
 
 Last night at a glance: recovery ring (zone colour + the word), sleep score and sleep time. Small

@@ -75,7 +75,8 @@ public enum HealthExport {
             sleeps: sleeps.filter { isExportable($0.source) && $0.end >= cutoff && $0.start >= first }
                 .sorted { $0.start < $1.start },
             workouts: workouts.filter {
-                isExportable($0.source) && $0.end >= cutoff && ($0.source == .manual || $0.start >= first)
+                $0.isSuggestion != true && isExportable($0.source) && $0.end >= cutoff
+                    && ($0.source == .manual || $0.start >= first)
             }.sorted { $0.start < $1.start },
             restingDays: days.filter {
                 isExportable($0.source) && $0.restingHeartRate != nil

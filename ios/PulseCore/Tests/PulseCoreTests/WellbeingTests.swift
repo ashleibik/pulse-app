@@ -37,23 +37,43 @@ private func night(_ d: Int, bed: Double, length: Double = 450, source: DataSour
     #expect(Bedtime.recommended(sleeps: Array(nights.prefix(2)), needMinutes: 480, now: now, calendar: utcCalendar) == nil)
 }
 
-@Test func respiratoryRateCountsBreathingWavesAndRefusesNoise() throws {
-    // Heart beating about once a second, sped up and slowed down by a breath every 4 seconds (15 / min).
-    var rr: [Double] = []
+/// One hour of beats about a second apart. `wave` gives the change in ms at a time in seconds.
+private func beatMinutes(hours: Double = 1, wave: (Double) -> Double) -> [MinuteSample] {
+    let origin = Date(timeIntervalSince1970: 1_790_000_040)
+    var out: [MinuteSample] = []
     var t = 0.0
-    while rr.count < 240 {
-        let interval = 1000 + 45 * sin(2 * Double.pi * t / 4)
-        rr.append(interval)
-        t += interval / 1000
+    for index in 0..<Int(hours * 60) {
+        var rr: [UInt16] = []
+        while t < Double(index + 1) * 60 {
+            let interval = 1000 + wave(t)
+            rr.append(UInt16(interval.rounded()))
+            t += interval / 1000
+        }
+        out.append(MinuteSample(start: origin.addingTimeInterval(Double(index) * 60), heartRate: [UInt8](repeating: 60, count: 60),
+                                rrIntervalsMs: rr, activity: [UInt8](repeating: 1, count: 60), source: .history))
     }
-    let rate = try #require(RespiratoryRate.estimate(rrMs: rr))
-    #expect(abs(rate - 15) < 1.5)
+    return out
+}
 
-    // Random jitter has no regular wave: no answer is better than a made-up one.
+@Test func breathingIsReadFromTheRhythmOfTheBeats() throws {
+    for breaths in [12.0, 15.0, 18.0] {
+        let rate = try #require(RespiratoryRate.night(minutes: beatMinutes { 45 * sin(2 * .pi * breaths / 60 * $0) }))
+        #expect(abs(rate - breaths) < 1, "\(breaths) breaths read as \(rate)")
+    }
+}
+
+@Test func breathingIsWithheldWhenThereIsNoStableRhythm() {
     var random = SeededRandom(seed: 7)
-    let noise = (0..<240).map { _ in 1000 + Double(random.next() % 90) - 45 }
-    #expect(RespiratoryRate.estimate(rrMs: noise) == nil)
-    #expect(RespiratoryRate.estimate(rrMs: Array(rr.prefix(40))) == nil)      // too little data
+    let noise = beatMinutes { _ in Double(random.next() % 90) - 45 }
+    #expect(RespiratoryRate.night(minutes: noise) == nil)
+    #expect(RespiratoryRate.night(minutes: beatMinutes(hours: 2.0 / 60) { 45 * sin(2 * .pi * 15 / 60 * $0) }) == nil)   // too little data
+}
+
+@Test func theBandsFillerBeatsDontChangeTheBreathingRate() throws {
+    var minutes = beatMinutes { 45 * sin(2 * .pi * 15 / 60 * $0) }
+    for index in minutes.indices { minutes[index].rrIntervalsMs[index % 40 + 5] = 500 }
+    let rate = try #require(RespiratoryRate.night(minutes: minutes))
+    #expect(abs(rate - 15) < 1)
 }
 
 private func minute(_ index: Int, hr: UInt8, activity: UInt8, source: DataSource = .history) -> MinuteSample {
@@ -82,14 +102,6 @@ private func minute(_ index: Int, hr: UInt8, activity: UInt8, source: DataSource
     #expect(day.calmMinutes == 30 && day.mediumMinutes == 0 && day.highMinutes == 20)
     #expect(day.current == .high)
     #expect(day.hours.count == 2)          // hour 1 (calm) and hour 2 (high); the sleeping hour has nothing
-}
-
-@Test func activeCaloriesIgnoreRest() {
-    let resting = (0..<60).map { minute($0, hr: 62, activity: 2) }
-    let working = (0..<30).map { minute($0, hr: 150, activity: 60) }
-    #expect(DailyEnergy.activeCalories(minutes: resting, restingHR: 60, maxHR: 190) == 0)
-    let burned = DailyEnergy.activeCalories(minutes: working, restingHR: 60, maxHR: 190)
-    #expect(burned > 200 && burned < 300)          // 30 min at 69% of reserve, about 8.3 kcal / min
 }
 
 @Test func journalComparesTheMorningAfter() {

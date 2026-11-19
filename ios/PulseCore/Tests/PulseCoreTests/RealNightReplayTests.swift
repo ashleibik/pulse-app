@@ -131,6 +131,35 @@ private func close(_ date: Date, to expected: Date, minutes: Double = 15) -> Boo
     print("RECOMPUTED five copies: " + nights.map { "\(text($0.start))-\(text($0.end))" }.joined(separator: ", "))
 }
 
+@Test(.enabled(if: hasBackup)) func aRealDayAtADeskHasNoWorkouts() throws {
+    let backup = try loadBackup()
+    let found = WorkoutDetector.detect(minutes: backup.minutes, profile: MetricsProfile(maxHeartRate: 190)) { _ in 52.75 }
+    print("RECOMPUTED workouts: " + found.map { "\($0.kind.rawValue) \(text($0.start))-\(text($0.end)) suggestion \($0.isSuggestion == true)" }.joined(separator: ", "))
+    #expect(found.allSatisfy { $0.isSuggestion == true }, "the desk evening must not become a workout")
+}
+
+@Test(.enabled(if: hasBackup)) func theRealNightHasABelievableAmountOfRestfulSleep() throws {
+    let backup = try loadBackup()
+    let night = try #require(MetricsEngine.run(minutes: backup.minutes, calendar: localCalendar, now: backup.exportedAt).sleeps.first)
+    let clock = ContinuousClock()
+    var segments: [SleepSegment] = []
+    let spent = clock.measure { segments = SleepTimeline.build(minutes: backup.minutes, from: night.start, to: night.end) }
+    let totals = SleepTimeline.totals(segments)
+    let restful = totals[.restful] ?? 0
+    print("RECOMPUTED phases awake \(totals[.awake] ?? 0) light \(totals[.light] ?? 0) restful \(restful) in \(spent)")
+    #expect((60...120).contains(restful), "restful \(restful) minutes")
+    #expect((totals[.light] ?? 0) + restful == night.asleepMinutes)
+}
+
+@Test(.enabled(if: hasBackup)) func theRealNightsBreathingRateIsInTheNormalRange() throws {
+    let backup = try loadBackup()
+    let night = try #require(MetricsEngine.run(minutes: backup.minutes, calendar: localCalendar, now: backup.exportedAt).sleeps.first)
+    let minutes = backup.minutes.filter { $0.start >= night.start && $0.start < night.end }
+    let rate = RespiratoryRate.night(minutes: minutes)
+    print("RECOMPUTED breathing \(rate.map { String(format: "%.1f", $0) } ?? "withheld") per minute")
+    if let rate { #expect((9...24).contains(rate)) }
+}
+
 @Test(.enabled(if: hasBackup)) func theOwnersEditedBedtimeStaysAndTheMorningFollowsTheBetterDetection() throws {
     let backup = try loadBackup()
     #expect(backup.corrections.count == 1)

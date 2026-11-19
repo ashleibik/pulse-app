@@ -3,13 +3,10 @@ import Foundation
 /// Estimated calories burned in a day. Spec: docs/METRICS.md §9. Shown in the app only: it is never
 /// written to Apple Health, where the Apple Watch owns active energy.
 ///
-/// Every minute costs at least your resting rate (Mifflin-St Jeor). A worn minute with a heart rate
-/// of 90 bpm or more costs what the Keytel formula says, if that is higher. Keytel was built from
-/// exercise data, so it is not used for everyday low heart rates.
+/// Every minute costs at least your resting rate (Mifflin-St Jeor). Only a minute at or above 40% of your
+/// heart-rate reserve counts as active (`OpenStrapCalories`). Keytel was built from exercise data, so
+/// it is not used for everyday heart rates.
 public enum DailyCalories {
-    /// Below this heart rate a minute counts as resting.
-    public static let activeHeartRate = 90.0
-
     public struct Body: Sendable, Equatable {
         public var weightKg: Double
         public var heightCm: Double
@@ -61,20 +58,19 @@ public enum DailyCalories {
     ///   - minutes: raw minutes, in any order. Minutes outside the day are ignored.
     ///   - dayStart: start of the day.
     ///   - end: the end of the day, or now for a day still going.
-    /// - Returns: nil when the sex is unknown or the band recorded nothing that day: without data
-    ///   there is no estimate to show.
-    public static func estimate(minutes: [MinuteSample], body: Body, dayStart: Date, end: Date) -> Estimate? {
+    ///   - maxHeartRate, restingHeartRate: what "clearly raised" is measured against.
+    /// - Returns: nil when the sex or resting heart rate is unknown or the band recorded nothing that day:
+    ///   without data there is no estimate to show.
+    public static func estimate(minutes: [MinuteSample], body: Body, dayStart: Date, end: Date, maxHeartRate: Double,
+                                restingHeartRate: Double?) -> Estimate? {
         guard let perDay = restingPerDay(body), end > dayStart else { return nil }
         let inDay = minutes.filter { $0.start >= dayStart && $0.start < end && $0.source != .simulated && $0.isWorn }
         guard !inDay.isEmpty else { return nil }
         let restingPerMinute = perDay / 1440
         let resting = restingPerMinute * end.timeIntervalSince(dayStart) / 60
-        var active = 0.0
-        for minute in inDay {
-            guard let heartRate = minute.averageHeartRate, heartRate >= activeHeartRate,
-                  let burned = keytelPerMinute(heartRate: heartRate, body: body) else { continue }
-            active += max(0, burned - restingPerMinute)
-        }
+        guard let restingHeartRate,
+              let active = OpenStrapCalories.dailyActive(minuteHeartRates: inDay.map(\.averageHeartRate), body: body, basalPerMinute: restingPerMinute,
+                                                         maxHeartRate: maxHeartRate, restingHeartRate: restingHeartRate) else { return nil }
         let restingWhole = Int(resting.rounded())
         let activeWhole = Int(active.rounded())
         return Estimate(total: restingWhole + activeWhole, resting: restingWhole, active: activeWhole)

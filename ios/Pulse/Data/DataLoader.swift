@@ -61,7 +61,7 @@ final class DataLoader {
         defaults.set(MetricsEngine.algorithmVersion, forKey: Self.formulasKey)
         // Rows were deleted: recalculate from what's left.
         if removedFromBandData || removedOldOwner || formulasChanged {
-            await recompute(context: context, detectWorkouts: removedOldOwner)
+            await recompute(context: context, detectWorkouts: removedOldOwner || formulasChanged)
         }
     }
 

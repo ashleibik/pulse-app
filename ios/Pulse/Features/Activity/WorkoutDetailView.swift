@@ -119,9 +119,9 @@ struct WorkoutDetailView: View {
                           number: Double(workout.durationMinutes),
                           format: { PulseFormat.duration(minutes: Int($0.rounded())) })
                 StatBlock(symbol: "bolt", label: "Calories",
-                          number: Double(workout.calories),
+                          number: workout.calories > 0 ? Double(workout.calories) : nil,
                           format: { "\(Int($0.rounded()))" }, unit: "kcal",
-                          caption: "rough estimate")
+                          caption: workout.calories > 0 ? "estimated active" : "add your details in Settings")
             }
             Hairline()
             HStack(alignment: .top, spacing: DS.Space.m) {

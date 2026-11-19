@@ -95,11 +95,11 @@ public enum WorkoutKind: String, Codable, Sendable, CaseIterable {
     public var displayName: String {
         switch self {
         case .run: "Run"
-        case .ride: "Ride"
+        case .ride: "Cycle"
         case .strength: "Strength"
         case .walk: "Walk"
         case .hiit: "HIIT"
-        case .other: "Workout"
+        case .other: "Other"
         }
     }
 
@@ -125,14 +125,18 @@ public struct Workout: Identifiable, Codable, Sendable, Hashable {
     public var maxHeartRate: Int
     /// 0...21 scale (see Phase 3 for the formula).
     public var strain: Double
-    /// Seconds spent in HR zones 1-5 (by % of max HR: 50-60, 60-70, 70-80, 80-90, 90+).
+    /// Seconds spent in HR zones 1-5 (50-60, 60-70, 70-80, 80-90, 90+% of heart-rate reserve).
     public var zoneSeconds: [Int]
-    /// Rough estimate. Labelled "approx." in the UI.
+    /// Estimated active calories. 0 = unknown (the profile has no body details).
     public var calories: Int
     public var source: DataSource
+    /// true = Pulse is asking whether this happened ("Was this a walk?"). It isn't counted until confirmed.
+    public var isSuggestion: Bool?
 
     public init(id: UUID = UUID(), kind: WorkoutKind, start: Date, end: Date, averageHeartRate: Int,
-                maxHeartRate: Int, strain: Double, zoneSeconds: [Int], calories: Int, source: DataSource) {
+                maxHeartRate: Int, strain: Double, zoneSeconds: [Int], calories: Int, source: DataSource,
+                isSuggestion: Bool? = nil) {
+        self.isSuggestion = isSuggestion
         self.id = id
         self.kind = kind
         self.start = start

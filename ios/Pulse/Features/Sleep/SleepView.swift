@@ -47,7 +47,7 @@ struct SleepView: View {
         // Only the screenshot job sets this (to capture the lower half of the screen).
         .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
         .monoBackground()
-        .task(id: "\(nightIndex)-\(loader.rawDataReady)-\(loader.revision)-\(sleeps.count)") { loadNight() }
+        .task(id: "\(nightIndex)-\(loader.rawDataReady)-\(loader.revision)-\(sleeps.count)") { await loadNight() }
         .sensoryFeedback(.selection, trigger: nightIndex)
         .sensoryFeedback(.selection, trigger: selectedSegment)
         .onChange(of: nightIndex) { _, _ in selectedSegment = nil }
@@ -60,13 +60,19 @@ struct SleepView: View {
         }
     }
 
-    private func loadNight() {
+    private func loadNight() async {
         guard !sleeps.isEmpty else { return }
         let night = sleeps[min(nightIndex, sleeps.count - 1)]
         let minutes = PulseStore.minutes(from: night.start, to: night.end, in: context)
         heartRate = minutes.compactMap { m in m.averageHeartRate.map { ChartPoint(date: m.start, value: $0) } }
-        segments = SleepTimeline.build(minutes: minutes, from: night.start, to: night.end)
-        breathing = RespiratoryRate.night(minutes: minutes)
+        let (start, end) = (night.start, night.end)
+        // The restful estimate takes a moment on a full night, so it runs off the main thread.
+        let built = await Task.detached(priority: .userInitiated) { SleepTimeline.build(minutes: minutes, from: start, to: end) }.value
+        guard !Task.isCancelled else { return }
+        segments = built
+        // The spectrum takes a moment on a full night, so it runs off the main thread.
+        let rate = await Task.detached(priority: .utility) { RespiratoryRate.night(minutes: minutes) }.value
+        if !Task.isCancelled { breathing = rate }
     }
 
     // MARK: - Sections

@@ -114,8 +114,9 @@ struct RecoveryDetailView: View {
         let tonight = NightVitals.mainSleep(endingOn: day.date, in: sleeps)
         let from = Calendar.current.date(byAdding: .day, value: -30, to: day.date) ?? day.date
         let earlier = sleeps.filter { !$0.isNap && $0.end < (tonight?.start ?? day.date) && $0.end >= from }
-        let values = earlier.compactMap { NightVitals.respiratoryRate($0, context: context) }
-        respiratory = (tonight.flatMap { NightVitals.respiratoryRate($0, context: context) },
-                       values.isEmpty ? nil : Stats.mean(values))
+        Task {
+            let (today, values) = await NightVitals.respiratoryRates(tonight: tonight, earlier: earlier, context: context)
+            respiratory = (today, values.isEmpty ? nil : Stats.mean(values))
+        }
     }
 }

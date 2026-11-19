@@ -17,8 +17,8 @@ import PulseCore
 /// 4. Pulse reads back only to avoid doubling: samples an earlier install of Pulse wrote (re-signing
 ///    can make it a different source), and workouts another app such as the Apple Watch recorded.
 ///
-/// ⚠ Never run on a real iPhone yet. HealthKit also needs the HealthKit capability in the signed
-/// app (Pulse.entitlements), which the unsigned simulator builds in CI don't exercise.
+/// HealthKit also needs the HealthKit capability in the signed app. `signing` reads whether the tool
+/// that signed this install kept it, and every step leaves a HEALTHKIT line in `traceLines`.
 @MainActor
 @Observable
 final class HealthExporter {
@@ -35,10 +35,21 @@ final class HealthExporter {
     private(set) var isEnabled = UserDefaults.standard.bool(forKey: HealthExporter.enabledKey)
     /// "Write sleep stages to Apple Health (estimated)". Off until the stages have been validated.
     private(set) var writesSleepStages = UserDefaults.standard.bool(forKey: HealthExporter.stagesKey)
+    /// Whether the signing tool gave this install access to Apple Health.
+    let signing = HealthAccess.signing(embeddedProfile: Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision")
+        .flatMap { try? Data(contentsOf: $0) })
+    private(set) var lastWrittenAt = UserDefaults.standard.object(forKey: HealthExporter.lastWrittenAtKey) as? Date
+    private(set) var lastWrittenSamples = UserDefaults.standard.integer(forKey: HealthExporter.lastWrittenSamplesKey)
+    /// The newest HEALTHKIT log lines, oldest first.
+    private(set) var traceLines = UserDefaults.standard.stringArray(forKey: HealthExporter.traceKey) ?? []
 
     private static let enabledKey = "healthExportEnabled"
     private static let stagesKey = "healthExportSleepStages"
     private static let ledgerKey = "healthExportLedger.v1"
+    private static let lastWrittenAtKey = "healthExportLastWrittenAt"
+    private static let lastWrittenSamplesKey = "healthExportLastWrittenSamples"
+    private static let traceKey = "healthExportTrace"
+    private static let traceLimit = 200
     /// Marks a sample as written by Pulse, whichever install wrote it.
     private static let exportIDKey = "PulseExportID"
     private static let saveChunk = 500
@@ -47,9 +58,11 @@ final class HealthExporter {
     @ObservationIgnored private var ledger = HealthExporter.loadLedger()
     /// The user changed a sleep older than the usual re-check window: look back this far once.
     @ObservationIgnored private var recheckOverride: Date?
+    /// Samples saved to Apple Health by the export that is running.
+    @ObservationIgnored private var samplesThisExport = 0
 
     /// False on devices without the Health app (some iPads).
-    var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
+    var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() && signing != .missing }
 
     private var sleepType: HKCategoryType { HKCategoryType(.sleepAnalysis) }
     private var heartRateType: HKQuantityType { HKQuantityType(.heartRate) }
@@ -64,15 +77,22 @@ final class HealthExporter {
 
     /// Shows Apple's permission sheet, then exports once.
     func enable(context: ModelContext) async {
+        trace("turn on tapped, signing \(signing.rawValue), health data available \(HKHealthStore.isHealthDataAvailable())")
+        guard signing != .missing else {
+            status = .failed(HealthAccess.missingMessage)
+            return
+        }
         guard isAvailable else {
             status = .failed("Apple Health isn't available on this device.")
             return
         }
         do {
             try await store.requestAuthorization(toShare: writeTypes, read: readTypes)
+            trace("permission sheet finished, \(authorizationSummary)")
             setEnabled(true)
             await export(context: context, everything: true)
         } catch {
+            traceFailure("permission request", error)
             status = .failed("Apple Health did not open: \(error.localizedDescription)")
         }
     }
@@ -116,6 +136,8 @@ final class HealthExporter {
     func export(context: ModelContext, everything: Bool = false) async {
         guard isEnabled, isAvailable, status != .working else { return }
         status = .working
+        samplesThisExport = 0
+        trace(everything ? "export started, all history" : "export started, new data")
         if everything { ledger = HealthLedger() }
         defer { saveLedger() }
         do {
@@ -143,15 +165,48 @@ final class HealthExporter {
             ledger.prune(now: .now)
 
             let total = sleep.nights + sleep.hrv + resting + workouts + minutes
+            recordWritten()
+            trace("export finished, \(samplesThisExport) samples: \(sleep.nights) nights, \(minutes) heart rate, "
+                + "\(sleep.hrv) HRV, \(resting) resting, \(workouts) workouts")
             status = total == 0 && !everything ? .idle
                 : .done("Saved \(sleep.nights) nights, \(minutes) heart rate minutes, \(sleep.hrv) HRV readings, \(resting) resting heart rates and \(workouts) workouts.")
         } catch let error as HKError where error.code == .errorDatabaseInaccessible {
+            trace("export paused, the iPhone is locked")
             status = .idle      // the iPhone is locked: the next export picks this up
         } catch is CancellationError {
             status = .idle
         } catch {
+            traceFailure("export", error)
+            recordWritten()
             status = .failed("Apple Health export failed: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - What happened
+
+    private var authorizationSummary: String {
+        [("sleep", sleepType), ("heart rate", heartRateType), ("resting", restingType), ("HRV", hrvType), ("workouts", workoutType)]
+            .map { name, type in "\(name) \(store.authorizationStatus(for: type) == .sharingAuthorized ? "allowed" : "not allowed")" }
+            .joined(separator: ", ")
+    }
+
+    private func recordWritten() {
+        guard samplesThisExport > 0 else { return }
+        lastWrittenAt = .now
+        lastWrittenSamples = samplesThisExport
+        UserDefaults.standard.set(lastWrittenAt, forKey: Self.lastWrittenAtKey)
+        UserDefaults.standard.set(lastWrittenSamples, forKey: Self.lastWrittenSamplesKey)
+    }
+
+    private func traceFailure(_ step: String, _ error: Error) {
+        let details = error as NSError
+        trace("\(step) failed, \(details.domain) code \(details.code): \(details.localizedDescription)")
+    }
+
+    private func trace(_ message: String) {
+        traceLines.append("HEALTHKIT \(Date.now.formatted(date: .numeric, time: .standard)) \(message)")
+        if traceLines.count > Self.traceLimit { traceLines.removeFirst(traceLines.count - Self.traceLimit) }
+        UserDefaults.standard.set(traceLines, forKey: Self.traceKey)
     }
 
     /// False when an older version was allowed fewer kinds of data and the user isn't here to be asked.
@@ -193,7 +248,7 @@ final class HealthExporter {
         var nights: [Night] = []
         for session in sessions {
             let minutes = try await reader.minutes(from: session.start, to: session.end)
-            let segments = SleepTimeline.build(minutes: minutes, from: session.start, to: session.end)
+            let segments = SleepTimeline.build(minutes: minutes, from: session.start, to: session.end, findRestful: writesSleepStages)
             let intervals = HealthExport.sleepIntervals(for: session, segments: segments, writeStages: writesSleepStages)
             nights.append(Night(session: session, id: HealthExport.sleepID(session),
                                 fingerprint: HealthExport.fingerprint(intervals), intervals: intervals,
@@ -224,6 +279,7 @@ final class HealthExporter {
                                      metadata: Self.metadata(id: prefix + String(index), version: version))
                 }
                 try await store.save(samples)
+                samplesThisExport += samples.count
                 if changed.contains(where: { $0.id == night.id }) { written += 1 }
             }
             ledger.record(night.id, fingerprint: night.fingerprint, at: .now)
@@ -243,6 +299,7 @@ final class HealthExporter {
                 let quantity = HKQuantity(unit: .secondUnit(with: .milli), doubleValue: point.sdnnMs)
                 try await store.save(HKQuantitySample(type: hrvType, quantity: quantity, start: point.start, end: point.end,
                                                       metadata: Self.metadata(id: point.syncID)))
+                samplesThisExport += 1
                 written += 1
             }
             ledger.record(point.syncID, fingerprint: fingerprint, at: .now)
@@ -266,6 +323,7 @@ final class HealthExporter {
                 try await deleteOwnSamples(of: restingType, from: day.date, to: end)
                 try await store.save(HKQuantitySample(type: restingType, quantity: HKQuantity(unit: bpm, doubleValue: value),
                                                       start: day.date, end: end, metadata: Self.metadata(id: id)))
+                samplesThisExport += 1
                 written += 1
             }
             ledger.record(id, fingerprint: fingerprint, at: .now)
@@ -288,6 +346,7 @@ final class HealthExporter {
                 .map { DateInterval(start: $0.startDate, end: $0.endDate) }
             if !HealthExport.isAlreadyRecorded(workout, by: others) {
                 try await write(workout, id: id)
+                samplesThisExport += 1
                 records.first { $0.id == workout.id }?.healthKitID = workout.id
                 written += 1
             }
@@ -336,6 +395,7 @@ final class HealthExporter {
             }
             for index in stride(from: 0, to: samples.count, by: Self.saveChunk) {
                 try await store.save(Array(samples[index..<min(index + Self.saveChunk, samples.count)]))
+                samplesThisExport += min(Self.saveChunk, samples.count - index)
             }
             written += samples.count
             ledger.exportedThrough = min(to, range.last)

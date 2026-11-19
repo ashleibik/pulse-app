@@ -338,15 +338,30 @@ struct DayPager: View {
 
 @MainActor
 enum NightVitals {
-    /// Respiratory rate per sleep (from its raw minutes), cached: it needs the beat-to-beat data.
-    private static var respiratoryCache: [String: Double?] = [:]
+    /// Breaths per minute per sleep, kept between launches. -1 = the night had no stable rhythm.
+    private static let respiratoryKey = "nightBreathingRates.v2"
+    private static var respiratoryCache = UserDefaults.standard.dictionary(forKey: respiratoryKey) as? [String: Double] ?? [:]
 
-    static func respiratoryRate(_ sleep: SleepRecord, context: ModelContext) -> Double? {
+    /// The spectrum takes a moment on a full night, so it is worked out off the main thread, once per night.
+    static func respiratoryRate(_ sleep: SleepRecord, context: ModelContext) async -> Double? {
         let key = "\(sleep.id)-\(sleep.end.timeIntervalSince1970)"
-        if let cached = respiratoryCache[key] { return cached }
-        let value = RespiratoryRate.night(minutes: PulseStore.minutes(from: sleep.start, to: sleep.end, in: context))
-        respiratoryCache[key] = value
+        if let cached = respiratoryCache[key] { return cached < 0 ? nil : cached }
+        let minutes = PulseStore.minutes(from: sleep.start, to: sleep.end, in: context)
+        let value = await Task.detached(priority: .utility) { RespiratoryRate.night(minutes: minutes) }.value
+        respiratoryCache[key] = value ?? -1
+        UserDefaults.standard.set(respiratoryCache, forKey: respiratoryKey)
         return value
+    }
+
+    /// The rate of one night and of the nights before it.
+    static func respiratoryRates(tonight: SleepRecord?, earlier: [SleepRecord], context: ModelContext) async -> (Double?, [Double]) {
+        var tonightRate: Double?
+        if let tonight { tonightRate = await respiratoryRate(tonight, context: context) }
+        var rates: [Double] = []
+        for night in earlier {
+            if let rate = await respiratoryRate(night, context: context) { rates.append(rate) }
+        }
+        return (tonightRate, rates)
     }
 
     /// The main (longest non-nap) sleep that ends on `day`.

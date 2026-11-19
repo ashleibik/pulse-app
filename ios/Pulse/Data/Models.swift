@@ -136,8 +136,11 @@ final class WorkoutRecord {
     var stravaActivityID: Int?      // unused: Strava's ids are not stored (its 7-day cache rule)
     /// When Pulse sent this workout to Strava (Phase 7). Our own mark, not Strava data.
     var stravaUploadedAt: Date?
+    /// true = "Was this a walk?" hasn't been answered yet.
+    var isSuggestion: Bool?
 
     init(_ w: Workout) {
+        isSuggestion = w.isSuggestion
         id = w.id
         kindRaw = w.kind.rawValue
         start = w.start
@@ -156,7 +159,7 @@ final class WorkoutRecord {
     var value: Workout {
         Workout(id: id, kind: kind, start: start, end: end, averageHeartRate: averageHeartRate,
                 maxHeartRate: maxHeartRate, strain: strain, zoneSeconds: zoneSeconds, calories: calories,
-                source: DataSource(rawValue: sourceRaw) ?? .history)
+                source: DataSource(rawValue: sourceRaw) ?? .history, isSuggestion: isSuggestion)
     }
     var durationMinutes: Int { Int(end.timeIntervalSince(start) / 60) }
 }

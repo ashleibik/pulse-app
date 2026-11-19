@@ -53,7 +53,7 @@ struct SleepDetailView: View {
             MetricExplainerView(kind: .sleep, today: summary, history: Array(days.prefix(14)))
                 .presentationDetents([.medium, .large])
         }
-        .task(id: sleep.map { "\($0.id)-\($0.end.timeIntervalSince1970)" }) { load() }
+        .task(id: sleep.map { "\($0.id)-\($0.end.timeIntervalSince1970)" }) { await load() }
     }
 
     private func content(_ sleep: SleepRecord) -> some View {
@@ -197,10 +197,14 @@ struct SleepDetailView: View {
         }
     }
 
-    private func load() {
+    private func load() async {
         guard let sleep else { return }
         let minutes = PulseStore.minutes(from: sleep.start, to: sleep.end, in: context)
-        segments = SleepTimeline.build(minutes: minutes, from: sleep.start, to: sleep.end)
+        let (start, end) = (sleep.start, sleep.end)
+        // The restful estimate takes a moment on a full night, so it runs off the main thread.
+        let built = await Task.detached(priority: .userInitiated) { SleepTimeline.build(minutes: minutes, from: start, to: end) }.value
+        guard !Task.isCancelled else { return }
+        segments = built
         heartRate = minutes.compactMap { m in m.averageHeartRate.map { ChartPoint(date: m.start, value: $0) } }
         let profile = profiles.first?.metricsProfile ?? MetricsProfile()
         sleepStress = SleepPerformance.sleepStress(minutes: minutes, restingHR: summary?.restingHeartRate ?? 60,
