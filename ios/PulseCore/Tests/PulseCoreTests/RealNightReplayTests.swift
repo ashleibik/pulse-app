@@ -93,7 +93,7 @@ private func close(_ date: Date, to expected: Date, minutes: Double = 15) -> Boo
     let backup = try loadBackup()
     let night = try #require(MetricsEngine.run(minutes: backup.minutes, calendar: localCalendar, now: backup.exportedAt).sleeps.first)
     let totals = SleepTimeline.totals(SleepTimeline.build(minutes: backup.minutes, from: night.start, to: night.end))
-    #expect((totals[.light] ?? 0) + (totals[.restful] ?? 0) == night.asleepMinutes)
+    #expect((totals[.light] ?? 0) + (totals[.deep] ?? 0) + (totals[.rem] ?? 0) == night.asleepMinutes)
     #expect((totals[.awake] ?? 0) == night.awakeMinutes)
     #expect(night.asleepMinutes + night.awakeMinutes == Int(night.end.timeIntervalSince(night.start) / 60))
 }
@@ -138,17 +138,17 @@ private func close(_ date: Date, to expected: Date, minutes: Double = 15) -> Boo
     #expect(found.allSatisfy { $0.isSuggestion == true }, "the desk evening must not become a workout")
 }
 
-@Test(.enabled(if: hasBackup)) func theRealNightHasABelievableAmountOfRestfulSleep() throws {
+@Test(.enabled(if: hasBackup)) func theRealNightHasAllThreeSleepStages() throws {
     let backup = try loadBackup()
     let night = try #require(MetricsEngine.run(minutes: backup.minutes, calendar: localCalendar, now: backup.exportedAt).sleeps.first)
     let clock = ContinuousClock()
     var segments: [SleepSegment] = []
     let spent = clock.measure { segments = SleepTimeline.build(minutes: backup.minutes, from: night.start, to: night.end) }
     let totals = SleepTimeline.totals(segments)
-    let restful = totals[.restful] ?? 0
-    print("RECOMPUTED phases awake \(totals[.awake] ?? 0) light \(totals[.light] ?? 0) restful \(restful) in \(spent)")
-    #expect((60...120).contains(restful), "restful \(restful) minutes")
-    #expect((totals[.light] ?? 0) + restful == night.asleepMinutes)
+    let (deep, rem, light) = (totals[.deep] ?? 0, totals[.rem] ?? 0, totals[.light] ?? 0)
+    print("RECOMPUTED phases awake \(totals[.awake] ?? 0) light \(light) deep \(deep) REM \(rem) in \(spent)")
+    #expect(deep > 0 && rem > 0 && light > 0)
+    #expect(light + deep + rem == night.asleepMinutes)
 }
 
 @Test(.enabled(if: hasBackup)) func theRealNightsBreathingRateIsInTheNormalRange() throws {

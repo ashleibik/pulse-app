@@ -98,10 +98,9 @@ come back, and the answer teaches Pulse about similar nights.
 
 ## 4b-3. Wear sensor
 
-When the band reports a loose strap, Today and the live workout screen show one `caption` line with a `warn` icon:
-"Strap seems loose, tighten for accurate heart rate". Settings > Band has a "Wear sensor" row: OK, Loose, Error or
-Loose / error. After 30 minutes without a reading it shows the last one with its time ("Loose at 7:44 PM"), and `--` before the first. A `caption` sits under it when the sensor reports errors. A workout or
-night spent mostly loose shows a `caption` saying its heart rate is less certain.
+Settings > Band has a "Wear sensor" row: No errors or Error. After 30 minutes without a reading it shows the last one with its
+time ("No errors at 7:44 PM"), and `--` before the first. A `caption` sits under it when the sensor reports errors. Pulse never says the
+strap is loose: the band's loose flag was wrong on the owner's wrist (docs/METRICS.md §13).
 
 ## 4b-4. Workouts
 
@@ -117,6 +116,12 @@ reads. An hour spent moving shows "Moving", and with no recent reading it shows 
 with the time in each level, "Hour by hour" bars on the 0 to 3 scale, and "How it works". With fewer than 4 scored hours it shows "Too early
 to tell" with the count so far, and leaves out the levels and bars. The Today card shows the same level and score, and says "Moving",
 "Too early" or "No reading" when there is no level.
+
+## 4b-6. Sleep stages
+
+The Sleep tab and the Sleep page show four stages. From the top of the chart: Awake (`warn`), REM (`accent`), Light (`sleepTint` at 45%) and
+Deep (`sleepTint`). "Your night" says "Stages estimated" on the right, and each stage's sheet says stages are estimates, not a
+sleep-lab measurement.
 
 ## 4c. Home Screen widget
 

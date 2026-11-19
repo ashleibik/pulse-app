@@ -161,7 +161,7 @@ private func nightWithRestingOffset(_ from: Double, _ to: Double) -> [MinuteSamp
     let sleep = try #require(sleeps(minutes, now: time(33)).first)
     let segments = SleepTimeline.build(minutes: minutes, from: sleep.start, to: sleep.end)
     let totals = SleepTimeline.totals(segments)
-    #expect((totals[.light] ?? 0) + (totals[.restful] ?? 0) == sleep.asleepMinutes)
+    #expect((totals[.light] ?? 0) + (totals[.deep] ?? 0) + (totals[.rem] ?? 0) == sleep.asleepMinutes)
     #expect((totals[.awake] ?? 0) == sleep.awakeMinutes)
     #expect(totals.values.reduce(0, +) + sleep.unknownMinutes == sleep.inBedMinutes)
     #expect(sleep.unknownMinutes == 10)

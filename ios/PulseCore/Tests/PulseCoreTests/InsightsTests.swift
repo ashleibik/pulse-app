@@ -108,15 +108,14 @@ import Testing
     }
     let totals = SleepTimeline.totals(segments)
     #expect(totals.values.reduce(0, +) == night.inBedMinutes)
-    #expect((totals[.restful] ?? 0) > 30)
     #expect((totals[.light] ?? 0) > 30)
     // awake minutes in the timeline should be in the same ballpark as the session's
     #expect(abs((totals[.awake] ?? 0) - night.awakeMinutes) <= night.awakeMinutes + 10)
 }
 
 @Test func smoothingAbsorbsBlips() {
-    let p: [SleepPhase] = [.restful, .restful, .restful, .light, .restful, .restful, .awake, .light, .light, .light]
-    #expect(SleepTimeline.smooth(p) == [.restful, .restful, .restful, .restful, .restful, .restful, .awake, .light, .light, .light])
+    let p: [SleepPhase] = [.deep, .deep, .deep, .light, .deep, .deep, .awake, .light, .light, .light]
+    #expect(SleepTimeline.smooth(p) == [.deep, .deep, .deep, .deep, .deep, .deep, .awake, .light, .light, .light])
 }
 
 // MARK: - Zones + sleep need

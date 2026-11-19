@@ -157,9 +157,9 @@ struct SettingsView: View {
                          emphasized: record.batteryPercent != nil)
                 Hairline()
                 ValueRow(label: "Wear sensor", value: WearSensorStore.shared.rowText,
-                         emphasized: WearSensorStore.shared.status.label == "OK")
+                         emphasized: WearSensorStore.shared.status.label == "No errors")
                 if WearSensorStore.shared.status.hasError {
-                    Text("The band reports an error from its wear sensor, so its loose-strap reading may not be reliable. Heart rate comes from a separate optical sensor.")
+                    Text("The band reports an error from its wear sensor. Heart rate comes from a separate optical sensor.")
                         .textStyle(.caption)
                         .foregroundStyle(DS.Colors.secondary)
                         .fixedSize(horizontal: false, vertical: true)

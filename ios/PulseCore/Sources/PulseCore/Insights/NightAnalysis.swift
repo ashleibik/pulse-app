@@ -2,16 +2,16 @@ import Foundation
 
 // MARK: - Sleep timeline ("hypnogram")
 
-/// What the sleep timeline shows. Deliberately NOT "REM/deep": HR + motion can't measure stages
-/// reliably, so we show calmness instead and say so in the UI.
+/// What the sleep timeline shows, from the top of the chart. REM, light and deep are estimates (`NoopSleepStager`).
 public enum SleepPhase: String, Sendable, CaseIterable {
-    case awake, light, restful
+    case awake, rem, light, deep
 
     public var title: String {
         switch self {
         case .awake: "Awake"
+        case .rem: "REM"
         case .light: "Light"
-        case .restful: "Restful"
+        case .deep: "Deep"
         }
     }
 }
@@ -28,6 +28,8 @@ public enum SleepTimeline {
 
     /// A minute with this much movement (`MinuteSample.movement`) is awake.
     public static let awakeMovement = 6.0
+    /// How far around a sleep `build` needs minutes: the stager's heart-rate windows reach past both ends.
+    public static let stagingPadding: TimeInterval = 7 * 60
 
     /// One phase per minute of a sleep. This is the only place that decides which minutes of a sleep
     /// count as awake, so the night's headline numbers and its phases always add up to the same total.
@@ -35,7 +37,7 @@ public enum SleepTimeline {
     /// Per minute:
     ///   nil     = no band data: unknown, neither asleep nor awake
     ///   awake   = moving, OR heart rate >= the night's median + 10
-    ///   light   = asleep. `build` then marks the restful minutes among them.
+    ///   light   = asleep. `build` then picks out the deep and REM minutes among them.
     public static func phases(hr: [Double?], movement: [Double?]) -> [SleepPhase?] {
         let rates = hr.compactMap { $0 }
         guard !rates.isEmpty else { return hr.map { _ in nil } }
@@ -61,22 +63,27 @@ public enum SleepTimeline {
     }
 
     /// The night as segments. Minutes with no band data belong to no segment.
+    /// - Parameter minutes: the night, and `stagingPadding` either side of it for the best stages.
     public static func build(minutes: [MinuteSample], from start: Date, to end: Date) -> [SleepSegment] {
         let count = Int((end.timeIntervalSince(start) / 60).rounded(.up))
         guard count > 0 else { return [] }
         var hr = [Double?](repeating: nil, count: count)
         var movement = [Double?](repeating: nil, count: count)
-        var night = [MinuteSample?](repeating: nil, count: count)
         for minute in minutes where minute.start >= start && minute.start < end && minute.isWorn {
             let index = Int(minute.start.timeIntervalSince(start) / 60)
             hr[index] = minute.averageHeartRate
             movement[index] = minute.movement
-            night[index] = minute
         }
         guard hr.contains(where: { $0 != nil }) else { return [] }
         var phases = SleepTimeline.phases(hr: hr, movement: movement)
-        let restful = OpenStrapDeepSleep.restful(night: night, asleep: phases.map { $0 == .light })
-        for index in phases.indices where restful[index] { phases[index] = .restful }
+        let stages = stagesPerMinute(minutes: minutes, from: start, to: end, count: count)
+        for index in phases.indices where phases[index] == .light {
+            switch stages[index] {
+            case .deep: phases[index] = .deep
+            case .rem: phases[index] = .rem
+            default: break                              // Pulse's own rule decides who is awake
+            }
+        }
 
         var segments: [SleepSegment] = []
         var runStart = 0
@@ -91,7 +98,24 @@ public enum SleepTimeline {
         return segments
     }
 
-    /// Absorb restful/light runs shorter than `minRun` into the previous run (awake runs are kept).
+    /// NOOP's stage for each minute: the stage of its first 30 seconds. A minute with no epoch keeps the stage before it.
+    private static func stagesPerMinute(minutes: [MinuteSample], from start: Date, to end: Date, count: Int) -> [NoopSleepStager.Stage?] {
+        let first = Int(start.timeIntervalSince1970)
+        let epochs = NoopSleepStager.stage(start: first, end: Int(end.timeIntervalSince1970),
+                                           input: NoopSleepStager.input(from: minutes))
+        var stages = [NoopSleepStager.Stage?](repeating: nil, count: count)
+        for epoch in epochs {
+            let index = (epoch.start - first) / 60
+            if stages.indices.contains(index), stages[index] == nil { stages[index] = epoch.stage }
+        }
+        var previous = epochs.first?.stage
+        for index in stages.indices {
+            if let stage = stages[index] { previous = stage } else { stages[index] = previous }
+        }
+        return stages
+    }
+
+    /// Absorb sleeping runs shorter than `minRun` into the previous run (awake runs are kept).
     static func smooth(_ phases: [SleepPhase], minRun: Int = 3) -> [SleepPhase] {
         var out = phases
         var i = 0

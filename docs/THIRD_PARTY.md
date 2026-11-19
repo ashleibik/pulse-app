@@ -6,9 +6,9 @@ Pulse ports some logic from two open projects. The ported Swift lives in
 ## What this means for sharing Pulse
 
 - **OpenStrap code is MIT.** It can be used in any project, as long as the notice below stays with it.
-- **NOOP code is noncommercial only.** The three files in `ThirdParty/NOOP/` are under the PolyForm Noncommercial License 1.0.0. While
+- **NOOP code is noncommercial only.** The four files in `ThirdParty/NOOP/` are under the PolyForm Noncommercial License 1.0.0. While
   they are in Pulse, Pulse can't be sold or used commercially. Deleting them, and replacing their uses in `WorkoutDetector.swift`,
-  `DailyCalories.swift` and `Wellbeing.swift`, removes that limit.
+  `DailyCalories.swift`, `Wellbeing.swift` and `NightAnalysis.swift`, removes that limit.
 - **Nothing here comes from OpenStrap's AGPL code.** OpenStrap moved to AGPL-3.0 after the commit below, so only that commit or
   earlier may be used as a source. Don't update these ports from a newer OpenStrap version without checking its license first.
 
@@ -21,7 +21,6 @@ Pulse ports some logic from two open projects. The ported Swift lives in
 |---|---|---|
 | `OpenStrap/OpenStrapSpectrum.swift` | `lib/src/onehz/util.dart` | Lomb-Scargle spectrum |
 | `OpenStrap/OpenStrapRespiration.swift` | `lib/src/onehz/respiration/resp_rate.dart` | Breathing rate |
-| `OpenStrap/OpenStrapDeepSleep.swift` | `lib/src/onehz/sleep/cardio_stager.dart` | Restful sleep |
 | `OpenStrap/OpenStrapZones.swift` | `lib/src/onehz/workout/hr_zones.dart` | Heart-rate zones |
 | `OpenStrap/OpenStrapCalories.swift` | `lib/src/onehz/workout/calories.dart` | Active calories |
 | `OpenStrap/OpenStrapAutoDetect.swift` | `lib/src/onehz/workout/auto_detect.dart` | Cardio workout detection |
@@ -62,6 +61,7 @@ SOFTWARE.
 | `NOOP/NoopWorkoutType.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/WorkoutTypeClassifier.swift` | Tells strength, walking, running and cycling apart |
 | `NOOP/NoopDaytimeStress.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/DaytimeStress.swift`, `Strand/Screens/StressView.swift` | Daytime stress score and levels |
 | `NOOP/NoopCalories.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/WorkoutDetector.swift` (`enum Calories`) | Whole-day calories |
+| `NOOP/NoopSleepStager.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStagerV2.swift` | Deep, REM and light sleep |
 
 ## Pulse's own rules
 

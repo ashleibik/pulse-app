@@ -124,14 +124,14 @@ struct SleepDetailView: View {
                     HStack {
                         Text(phase.title.uppercased()).textStyle(.label).foregroundStyle(DS.Colors.primary)
                         Text("\(Int((100 * Double(minutes) / Double(total)).rounded()))%")
-                            .textStyle(.caption).foregroundStyle(color(phase))
+                            .textStyle(.caption).foregroundStyle(phase.tint)
                         Spacer()
                         Text(PulseFormat.clock(minutes: minutes)).textStyle(.bodyStrong).foregroundStyle(DS.Colors.primary)
                     }
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule().fill(DS.Colors.muted)
-                            Capsule().fill(color(phase))
+                            Capsule().fill(phase.tint)
                                 .frame(width: max(4, geo.size.width * Double(minutes) / Double(total)))
                         }
                     }
@@ -140,15 +140,7 @@ struct SleepDetailView: View {
                 .accessibilityElement(children: .combine)
             }
             UnknownMinutesNote(minutes: sleep.value.unknownMinutes)
-            WearQualityNote(start: sleep.start, end: sleep.end)
-            HStack {
-                Image(systemName: "sparkles").foregroundStyle(DS.Colors.sleepTint)
-                Text("RESTFUL SLEEP").textStyle(.label).foregroundStyle(DS.Colors.primary)
-                Spacer()
-                Text(PulseFormat.clock(minutes: totals[.restful] ?? 0)).textStyle(.heading).foregroundStyle(DS.Colors.primary)
-            }
-            .padding(.top, DS.Space.s)
-            Text("Phases are estimated from heart rate and movement. A wrist band can't tell REM from deep sleep reliably, so Pulse shows how calm the night was instead.")
+            Text("Stages are estimated from your heart rate and movement. They are a rough guide, not a sleep-lab measurement.")
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -190,20 +182,14 @@ struct SleepDetailView: View {
 
     private func percent(_ value: Double) -> String { "\(Int(value.rounded()))%" }
 
-    private func color(_ phase: SleepPhase) -> Color {
-        switch phase {
-        case .awake: DS.Colors.secondary
-        case .light: DS.Colors.sleepTint.opacity(0.55)
-        case .restful: DS.Colors.sleepTint
-        }
-    }
-
     private func load() async {
         guard let sleep else { return }
-        let minutes = PulseStore.minutes(from: sleep.start, to: sleep.end, in: context)
         let (start, end) = (sleep.start, sleep.end)
-        // The restful estimate takes a moment on a full night, so it runs off the main thread.
-        let built = await Task.detached(priority: .userInitiated) { SleepTimeline.build(minutes: minutes, from: start, to: end) }.value
+        let around = PulseStore.minutes(from: start.addingTimeInterval(-SleepTimeline.stagingPadding),
+                                        to: end.addingTimeInterval(SleepTimeline.stagingPadding), in: context)
+        let minutes = around.filter { $0.start >= start && $0.start < end }
+        // The stages take a moment on a full night, so they are worked out off the main thread.
+        let built = await Task.detached(priority: .userInitiated) { SleepTimeline.build(minutes: around, from: start, to: end) }.value
         guard !Task.isCancelled else { return }
         segments = built
         heartRate = minutes.compactMap { m in m.averageHeartRate.map { ChartPoint(date: m.start, value: $0) } }

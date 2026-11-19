@@ -8,11 +8,9 @@ import Foundation
 ///     IQS7223B: Error reported, error code 0x05
 ///     CAPSENSE: Error reported while processing command
 ///
-/// WHOOP doesn't document these lines, so their meaning is read from their wording.
+/// WHOOP doesn't document these lines, so their meaning is read from their wording. The loose flag is read but
+/// never shown: the band reported it while the owner's strap was tight.
 public enum WearSensor {
-    public static let looseHint = "Strap seems loose, tighten for accurate heart rate"
-    public static let lessCertainNote = "The strap seemed loose for much of this time, so heart rate is less certain."
-
     public enum Event: Sendable, Equatable {
         case tightness(looseCount: Int, isLoose: Bool)
         /// The capacitive sensor chip reported an error.
@@ -158,57 +156,21 @@ public enum WearSensor {
     }
 
     public struct Status: Sendable, Equatable {
-        /// nil = the band hasn't reported lately.
-        public var isLoose: Bool?
+        /// true = the band has reported on its wear sensor lately.
+        public var isReporting: Bool
         public var hasError: Bool
         public var errorCode: Int?
-        /// The newest tightness reading, however old. For showing what the band last said.
+        /// The newest reading, however old. For showing what the band last said.
         public var lastReading: Observation?
 
-        /// "OK", "Loose", "Error", "Loose / error", or "--".
-        public var label: String {
-            switch (isLoose, hasError) {
-            case (true, true): "Loose / error"
-            case (true, false): "Loose"
-            case (_, true): "Error"
-            case (false, false): "OK"
-            case (nil, false): "--"
-            default: "--"
-            }
-        }
+        /// "No errors", "Error", or "--".
+        public var label: String { hasError ? "Error" : isReporting ? "No errors" : "--" }
     }
 
     public static func status(_ list: [Observation], now: Date) -> Status {
         // A minute of slack: the band's clock can run slightly ahead of the phone's.
         let fresh = list.filter { now.timeIntervalSince($0.time) <= freshSeconds && $0.time <= now.addingTimeInterval(60) }
         let error = fresh.last { $0.hasError }
-        return Status(isLoose: fresh.last { $0.isLoose != nil }?.isLoose, hasError: error != nil, errorCode: error?.errorCode,
-                      lastReading: list.last { $0.isLoose != nil })
-    }
-
-    // MARK: - Data quality
-
-    public enum Quality: Sendable, Equatable { case good, reduced, unknown }
-
-    /// The strap counts as loose for a stretch when at least this share of the measured time was loose.
-    public static let reducedShare = 0.25
-    /// Below this share of readings over a stretch, Pulse can't say how the strap sat.
-    static let knownShare = 0.25
-
-    /// How much to trust the heart rate of a workout or a night.
-    public static func quality(from start: Date, to end: Date, observations: [Observation]) -> Quality {
-        guard end > start else { return .unknown }
-        let readings = observations.filter { $0.isLoose != nil }.sorted { $0.time < $1.time }
-        var known = 0.0, loose = 0.0
-        for (index, reading) in readings.enumerated() {
-            let until = index + 1 < readings.count ? readings[index + 1].time : .distantFuture
-            let from = max(reading.time, start)
-            let to = min(until, reading.time.addingTimeInterval(freshSeconds), end)
-            guard to > from else { continue }
-            known += to.timeIntervalSince(from)
-            if reading.isLoose == true { loose += to.timeIntervalSince(from) }
-        }
-        guard known >= knownShare * end.timeIntervalSince(start) else { return .unknown }
-        return loose / known >= reducedShare ? .reduced : .good
+        return Status(isReporting: !fresh.isEmpty, hasError: error != nil, errorCode: error?.errorCode, lastReading: list.last)
     }
 }

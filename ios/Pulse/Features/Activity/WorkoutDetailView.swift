@@ -16,7 +16,6 @@ struct WorkoutDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.xxl) {
                 hero.riseIn(0)
-                WearQualityNote(start: workout.start, end: workout.end)
                 stats.riseIn(1)
                 heart.riseIn(2)
                 zones.riseIn(3)

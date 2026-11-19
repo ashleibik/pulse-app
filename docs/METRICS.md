@@ -147,9 +147,9 @@ latest week only. An edit recalculates its own week and, if that changes what wa
 8. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
 9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (`A > 2.5`, or HR 10+ bpm
    above the sleep's), or the band was off the wrist for an hour, or 6 hours have passed without newer data.
-10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. Restful = a quiet heart
-    (§12). Light = the rest. Asleep time, awake time, wake-ups and the phases all come from
-    this one rule, so light + restful = asleep and asleep + awake + unknown = the length of the sleep. Efficiency is asleep ÷
+10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. The other minutes are
+    asleep, and §12 splits them into deep, REM and light. Asleep time, awake time and wake-ups all come from
+    this one rule, so deep + REM + light = asleep and asleep + awake + unknown = the length of the sleep. Efficiency is asleep ÷
     (asleep + awake).
 11. **Missing data.** A sleep starts and ends on measured minutes and needs 45 of them asleep. A gap of up to 3 hours with
     sleep on both sides stays inside the sleep as unknown. A longer gap splits it.
@@ -167,8 +167,7 @@ no longer uses them to find sleep.
 *Our choice:* every number in this section. The research above supports which signals to use and how to combine them. It
 does not supply these values. They are set on **one** real night (2026-11-17/18, including the awake evening before it) and
 simulated nights, and **must be checked against more real nights**. Holding very still with a low heart rate for a long time
-can still look like sleep, which is why a sleep can be edited or removed. **Sleep stages (REM/deep) are deliberately not
-estimated:** HR + motion can't do it accurately enough to be honest.
+can still look like sleep, which is why a sleep can be edited or removed. Sleep stages are estimates (§12).
 
 ### Sources for this section
 
@@ -304,13 +303,29 @@ between 9 and 30 cycles a minute is the breathing rate. Each 5-minute window (ov
 the night's rate is the window closest to the median. At least half the windows must agree within 2 breaths a minute. Otherwise
 Pulse shows `--`.
 
-## 12. Restful sleep
+## 12. Sleep stages
 
-OpenStrap's score (`cardio_stager.dart`): four measures of a quiet heart per minute, each compared with the same night using the
-median and scaled median absolute deviation. The weights are the effect sizes OpenStrap measured on 99 sleep-lab nights: beat-to-beat
-heart-rate change 0.53, heart-rate spread 0.43, SDNN 0.41 and LF/HF 0.33. A minute is restful when the weighted score is above 0.4, and
-bouts under 3 minutes don't count. OpenStrap ships 0.3. *Our choice:* 0.4, which gives 1h48 of 9h asleep on the owner's night. This
-estimates cardiac calm. It does not measure deep sleep, and OpenStrap's own four-stage agreement with sleep-lab scoring is low (kappa 0.13).
+NOOP's default stager (`SleepStagerV2.swift`), with its constants unchanged. Each 30 seconds of a night gets a score for each stage, and
+the most likely path through the night is chosen (Viterbi, with NOOP's transition table). All `z` values are standardized within the night.
+
+- **Signals:** `H` mean heart rate, `V` heart-rate spread over 5 minutes, `M` share of seconds moving, `R` regularity of the breathing
+  rhythm in the beat intervals (0.15 to 0.40 Hz), `c` how far through the night, from 0 to 1.
+- `deep = −1.1 zV − 0.5 zM − gate + 0.6 zR + 1.2 × max(0, 1 − c / 0.55) + ln 0.15`, with `gate = 5 × max(0, flatness rank − 0.25)` and
+  flatness = heart-rate spread over 11 minutes.
+- `REM = 0.6 zV − 0.6 zM + 0.4 zH − 0.6 zR + c − guard + ln 0.22`, with `guard = 3 × (1 − minutes since sleep onset / 60)`, kept between 0 and 3.
+- `light = ln 0.50`.
+- `awake = zM + 0.8 zV + 0.4 zH + ln 0.10`. On a still wrist the heart-rate part can only lower this. Add 2 when the peak jerk passes 55 × the
+  night's median jerk. A second is moving above 38 × that median.
+
+*Changed for this band:*
+- NOOP reads the gravity vector. Pulse stores how far the wrist turned each second, so jerk = `2 × sin(angle / 2)`. Older minutes use
+  activity ÷ 500. The median jerk can't go below 0.002, the smallest step those values can show.
+- The band doesn't time each beat, so beat times are rebuilt from the start of each minute, and its filler value is left out.
+- Step 10 of §4 still decides asleep or awake, so sleep totals don't change. NOOP's stage only splits the asleep minutes. A minute takes the
+  stage of its first 30 seconds, and an asleep minute NOOP calls awake counts as light.
+
+*Accuracy:* NOOP scored this stager against sleep-lab results for 31 people (PhysioNet sleep-accel): four-stage kappa 0.36 and REM F1 0.575.
+These are rough estimates. Pulse's port has not been compared with a sleep lab or with WHOOP's own stages.
 
 ## 13. Wear sensor
 
@@ -322,9 +337,10 @@ if a packet is missing.
 The owner's band also logged `Capsense triggered an off wrist event, but Sigproc controls wear detection`: the capacitive sensor doesn't
 decide on its own whether the band is worn.
 
-- A reading counts for 30 minutes. Settings > Band shows OK, Loose, Error or Loose / error.
-- A workout or night is marked less certain when at least 25% of the time with tightness readings was loose. With readings for under
-  25% of it, Pulse doesn't judge. The numbers themselves aren't changed. *Our choice:* all of these limits.
+- A reading counts for 30 minutes. Settings > Band shows No errors or Error, from the two error lines.
+- **The loose flag is not shown or used.** On 2026-11-18 the band reported `loose flag = 1` while the owner's strap was tight, and WHOOP
+  doesn't document what the flag measures. Pulse doesn't tell you the strap is loose, and doesn't mark a workout or night as less certain
+  because of this flag.
 
 ## 14. Daytime stress
 

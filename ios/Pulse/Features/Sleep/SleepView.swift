@@ -63,11 +63,13 @@ struct SleepView: View {
     private func loadNight() async {
         guard !sleeps.isEmpty else { return }
         let night = sleeps[min(nightIndex, sleeps.count - 1)]
-        let minutes = PulseStore.minutes(from: night.start, to: night.end, in: context)
-        heartRate = minutes.compactMap { m in m.averageHeartRate.map { ChartPoint(date: m.start, value: $0) } }
         let (start, end) = (night.start, night.end)
-        // The restful estimate takes a moment on a full night, so it runs off the main thread.
-        let built = await Task.detached(priority: .userInitiated) { SleepTimeline.build(minutes: minutes, from: start, to: end) }.value
+        let around = PulseStore.minutes(from: start.addingTimeInterval(-SleepTimeline.stagingPadding),
+                                        to: end.addingTimeInterval(SleepTimeline.stagingPadding), in: context)
+        let minutes = around.filter { $0.start >= start && $0.start < end }
+        heartRate = minutes.compactMap { m in m.averageHeartRate.map { ChartPoint(date: m.start, value: $0) } }
+        // The stages take a moment on a full night, so they are worked out off the main thread.
+        let built = await Task.detached(priority: .userInitiated) { SleepTimeline.build(minutes: around, from: start, to: end) }.value
         guard !Task.isCancelled else { return }
         segments = built
         // The spectrum takes a moment on a full night, so it runs off the main thread.
@@ -159,12 +161,12 @@ struct SleepView: View {
         .accessibilityValue("\(Int((fraction * 100).rounded())) percent of the \(PulseFormat.duration(minutes: need)) you needed")
     }
 
-    /// The one card on this screen: when you were restful, in light sleep, or awake.
+    /// The one card on this screen: when you were in each sleep stage, or awake.
     /// Tap a block to see its times; tap a label to read what that phase means.
     private var timeline: some View {
         let totals = SleepTimeline.totals(segments)
         return VStack(alignment: .leading, spacing: DS.Space.m) {
-            SectionTitle(title: "Your night")
+            SectionTitle(title: "Your night", trailing: "Stages estimated")
             if segments.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             } else {
@@ -172,7 +174,7 @@ struct SleepView: View {
                     RectangleMark(xStart: .value("Start", segment.start),
                                   xEnd: .value("End", segment.end),
                                   y: .value("Phase", segment.phase.title))
-                        .foregroundStyle(Self.gray(for: segment.phase))
+                        .foregroundStyle(segment.phase.tint)
                         .cornerRadius(3)
                         // With a block selected, the others step back.
                         .opacity(selectedSegment == nil || selectedSegment == segment ? 1 : 0.3)
@@ -228,7 +230,7 @@ struct SleepView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {
                                     RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                        .fill(Self.gray(for: phase))
+                                        .fill(phase.tint)
                                         .frame(width: 10, height: 10)
                                     Text(phase.title)
                                         .textStyle(.caption)
@@ -314,15 +316,6 @@ struct SleepView: View {
     }
 
     // MARK: - Helpers
-
-    /// Gray level per phase. The rows of the chart are labelled, so this is only extra help.
-    private static func gray(for phase: SleepPhase) -> Color {
-        switch phase {
-        case .restful: DS.Colors.accent
-        case .light: DS.Colors.accent.opacity(0.4)
-        case .awake: DS.Colors.warn
-        }
-    }
 
     private func minutesText(_ minutes: Double, sign: String) -> String {
         sign + PulseFormat.duration(minutes: Int(minutes.rounded()))

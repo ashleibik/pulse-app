@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import SwiftUI
 import PulseCore
 
 /// What the band last said about how it sits on the wrist. Kept on this iPhone in a small file.
@@ -22,12 +21,8 @@ final class WearSensorStore {
     /// What the Settings row shows: the current state, or the last reading with its time.
     var rowText: String {
         let current = status
-        guard current.label == "--", let last = current.lastReading, let loose = last.isLoose else { return current.label }
-        return "\(loose ? "Loose" : "OK") at \(last.time.formatted(date: .omitted, time: .shortened))"
-    }
-
-    func quality(from start: Date, to end: Date) -> WearSensor.Quality {
-        WearSensor.quality(from: start, to: end, observations: observations)
+        guard current.label == "--", let last = current.lastReading else { return current.label }
+        return "\(last.hasError ? "Error" : "No errors") at \(last.time.formatted(date: .omitted, time: .shortened))"
     }
 
     func record(_ readings: [WearSensor.Reading], receivedAt now: Date) {
@@ -46,35 +41,5 @@ final class WearSensorStore {
         guard let data = try? JSONEncoder().encode(observations) else { return }
         try? FileManager.default.createDirectory(at: URL.applicationSupportDirectory, withIntermediateDirectories: true)
         try? data.write(to: Self.fileURL, options: .atomic)
-    }
-}
-
-/// One small line when the band reports a loose strap (DESIGN.md §4b-3).
-struct LooseStrapHint: View {
-    private var store: WearSensorStore { .shared }
-
-    var body: some View {
-        if store.status.isLoose == true {
-            Label(WearSensor.looseHint, systemImage: "exclamationmark.triangle")
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.warn)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-/// One small line on a workout or night spent mostly with a loose strap.
-struct WearQualityNote: View {
-    let start: Date
-    let end: Date
-    private var store: WearSensorStore { .shared }
-
-    var body: some View {
-        if store.quality(from: start, to: end) == .reduced {
-            Label(WearSensor.lessCertainNote, systemImage: "exclamationmark.triangle")
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.warn)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 }

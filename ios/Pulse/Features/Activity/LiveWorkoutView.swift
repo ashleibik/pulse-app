@@ -66,8 +66,6 @@ struct LiveWorkoutView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, DS.Space.side)
             }
-            LooseStrapHint()
-                .padding(.horizontal, DS.Space.side)
             Spacer(minLength: 0)
 
             HStack(spacing: DS.Space.m) {

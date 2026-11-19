@@ -92,19 +92,22 @@ private func minutes(_ value: Double) -> Date { start.addingTimeInterval(value *
 
 @Test func theSettingsRowSaysWhatTheBandReported() {
     #expect(WearSensor.status([], now: start).label == "--")
-    let tight = WearSensor.Observation(time: start, isLoose: false)
-    let loose = WearSensor.Observation(time: start, isLoose: true)
+    let reading = WearSensor.Observation(time: start, isLoose: false)
     let error = WearSensor.Observation(.sensorError(code: 5), at: start)
-    #expect(WearSensor.status([tight], now: minutes(1)).label == "OK")
-    #expect(WearSensor.status([loose], now: minutes(1)).label == "Loose")
-    #expect(WearSensor.status([tight, error], now: minutes(1)).label == "Error")
-    #expect(WearSensor.status([loose, error], now: minutes(1)).label == "Loose / error")
-    #expect(WearSensor.status([loose, error], now: minutes(1)).errorCode == 5)
+    #expect(WearSensor.status([reading], now: minutes(1)).label == "No errors")
+    #expect(WearSensor.status([reading, error], now: minutes(1)).label == "Error")
+    #expect(WearSensor.status([reading, error], now: minutes(1)).errorCode == 5)
 }
 
-@Test func theNewestTightnessReadingWinsAndOldReadingsExpire() {
-    let list = [WearSensor.Observation(time: start, isLoose: true), WearSensor.Observation(time: minutes(5), isLoose: false)]
-    #expect(WearSensor.status(list, now: minutes(6)).isLoose == false)
+@Test func theBandsLooseFlagIsNeverShownAsLoose() {
+    // The band reported this while the owner's strap was tight.
+    let flagged = WearSensor.Observation(.tightness(looseCount: 5, isLoose: true), at: start)
+    #expect(WearSensor.status([flagged], now: minutes(1)).label == "No errors")
+}
+
+@Test func oldReadingsExpire() {
+    let list = [WearSensor.Observation(time: start, isLoose: false)]
+    #expect(WearSensor.status(list, now: minutes(6)).label == "No errors")
     #expect(WearSensor.status(list, now: minutes(40)).label == "--")
 }
 
@@ -123,35 +126,11 @@ private func minutes(_ value: Double) -> Date { start.addingTimeInterval(value *
     var list = WearSensor.adding(.init(time: minutes(20), isLoose: false), to: [])
     list = WearSensor.adding(.init(time: minutes(5), isLoose: true), to: list)
     #expect(list.map(\.time) == [minutes(5), minutes(20)])
-    #expect(WearSensor.status(list, now: minutes(21)).isLoose == false)
+    #expect(WearSensor.status(list, now: minutes(21)).lastReading?.time == minutes(20))
 }
 
 @Test func theLastReadingIsKeptAfterItExpires() {
     let list = [WearSensor.Observation(time: start, isLoose: true)]
     let later = WearSensor.status(list, now: minutes(120))
     #expect(later.label == "--" && later.lastReading?.isLoose == true)
-}
-
-@Test func aWorkoutSpentLooseHasReducedQuality() {
-    let loose = (0..<9).map { WearSensor.Observation(time: minutes(Double($0) * 5), isLoose: true) }
-    #expect(WearSensor.quality(from: minutes(0), to: minutes(45), observations: loose) == .reduced)
-}
-
-@Test func aWorkoutWithATightStrapIsGood() {
-    let tight = (0..<9).map { WearSensor.Observation(time: minutes(Double($0) * 5), isLoose: false) }
-    #expect(WearSensor.quality(from: minutes(0), to: minutes(45), observations: tight) == .good)
-}
-
-@Test func aBriefMomentOfLoosenessDoesNotLowerAWorkout() {
-    var list = (0..<9).map { WearSensor.Observation(time: minutes(Double($0) * 5), isLoose: false) }
-    list[4].isLoose = true                                                            // 5 of 45 minutes
-    #expect(WearSensor.quality(from: minutes(0), to: minutes(45), observations: list) == .good)
-}
-
-@Test func noReadingsMeansTheQualityIsUnknown() {
-    #expect(WearSensor.quality(from: minutes(0), to: minutes(45), observations: []) == .unknown)
-    let late = [WearSensor.Observation(time: minutes(44), isLoose: true)]
-    #expect(WearSensor.quality(from: minutes(0), to: minutes(45), observations: late) == .unknown)
-    let errorsOnly = [WearSensor.Observation(.commandError, at: minutes(1))]
-    #expect(WearSensor.quality(from: minutes(0), to: minutes(45), observations: errorsOnly) == .unknown)
 }

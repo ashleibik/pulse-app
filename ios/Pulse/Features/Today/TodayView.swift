@@ -125,7 +125,6 @@ struct TodayView: View {
 
     private var home: some View {
         VStack(alignment: .leading, spacing: DS.Space.xl) {
-            LooseStrapHint()
             rings.riseIn(1)
             monitors.riseIn(2)
             caloriesCard.riseIn(2)
