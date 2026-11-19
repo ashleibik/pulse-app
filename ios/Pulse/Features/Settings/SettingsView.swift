@@ -190,7 +190,7 @@ struct SettingsView: View {
     /// What happened last, or what the export does.
     private var healthFooter: String {
         if health.signing == .missing { return HealthAccess.missingMessage }
-        switch health.status {
+        return switch health.status {
         case .working: "Exporting…"
         case .done(let message): message
         case .failed(let message): message
