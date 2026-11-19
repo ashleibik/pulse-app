@@ -58,6 +58,7 @@ All styles follow Dynamic Type.
 ## 4. Layout and shapes
 
 - 8 pt grid; side padding 24; 48 between sections.
+- Tab screens end with 96 pt of space (`DS.Space.tabBarClearance`), so their last content scrolls clear of the tab bar.
 - Cards: `surface`, radius 22, 1 pt `border` edge. Few of them.
 - Buttons: pills, height 52. Primary = `accent` fill with a glow, dark text. Secondary = quiet fill.
 - Tab screens and sheets pin a slim header (`ScreenHeader`); pushed screens keep the system bar.
@@ -119,9 +120,14 @@ to tell" with the count so far, and leaves out the levels and bars. The Today ca
 
 ## 4b-6. Sleep stages
 
-The Sleep tab and the Sleep page show four stages. From the top of the chart: Awake (`warn`), REM (`accent`), Light (`sleepTint` at 45%) and
-Deep (`sleepTint`). "Your night" says "Stages estimated" on the right, and each stage's sheet says stages are estimates, not a
-sleep-lab measurement.
+The Sleep tab and the Sleep page show four stages. From the top of the chart: Awake (`warn`), REM (`accent`), Light (`sleepTint` at 70%,
+at least 3:1 against `surface`) and Deep (`sleepTint`). "Your night" says "Stages estimated" on the right, and each stage's sheet says
+stages are estimates, not a sleep-lab measurement.
+
+"Your night" is one connected step chart, 160 pt tall: each stage is a block 12 pt high on its row, and a 1.5 pt `tertiary` line joins
+one stage to the next. The time axis shows when the sleep started and ended, with minutes, and whole hours between them (every 2 hours
+on a night over 4 hours), leaving out an hour that would crowd either end. Under the chart, a 2 × 2 grid holds the four stages with
+their times: Deep and Light, then REM and Awake.
 
 ## 4c. Home Screen widget
 

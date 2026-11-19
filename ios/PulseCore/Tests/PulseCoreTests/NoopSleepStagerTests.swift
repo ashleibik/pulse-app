@@ -42,10 +42,20 @@ private func runs(_ stages: [Stager.Stage]) -> String {
 /// The expected value comes from running NOOP's original SleepStagerV2.swift on this same night.
 @Test func theStagesMatchNoopsOwnCodeOnAKnownNight() {
     let start = 1_790_000_010
-    let epochs = Stager.stage(start: start, end: start + 4 * 3600, input: madeUpNight(start: start))
+    let epochs = Stager.stage(start: start, end: start + 4 * 3600, input: madeUpNight(start: start), breathingRhythm: true)
     #expect(epochs.count == 480)
     #expect(epochs.first?.start == 1_790_000_010 + 0)
     #expect(runs(epochs.map(\.stage)) == noopOriginalRuns)
+}
+
+@Test func theBreathingTermIsOffAsInNoopsSleepLabTest() {
+    let start = 1_790_000_010
+    let input = madeUpNight(start: start)
+    var withoutBeats = input
+    withoutBeats.beats = []
+    let off = Stager.stage(start: start, end: start + 4 * 3600, input: input)
+    #expect(off == Stager.stage(start: start, end: start + 4 * 3600, input: withoutBeats))
+    #expect(off != Stager.stage(start: start, end: start + 4 * 3600, input: input, breathingRhythm: true))
 }
 
 @Test func theRemGuardFadesOverTheFirstHourAfterSleepOnset() {

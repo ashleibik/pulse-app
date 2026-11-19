@@ -64,9 +64,10 @@ struct BackupButtons: View {
         let header = PulseBackup.Header(exportedAt: .now, appVersion: version, dataStart: BandDataCutoff.date,
                                         profile: ProfileStore.current(in: context).backup)
         let container = context.container
+        let wearSensor = WearSensorStore.shared.observations
         Task {
             do {
-                exportURL = try await BackupStore(modelContainer: container).export(header: header)
+                exportURL = try await BackupStore(modelContainer: container).export(header: header, wearSensor: wearSensor)
                 message = "Backup ready. Save it somewhere safe, such as Files or iCloud Drive. It contains your health data."
             } catch {
                 message = "The backup could not be written: \(error.localizedDescription)"

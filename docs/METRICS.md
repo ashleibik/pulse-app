@@ -147,10 +147,13 @@ latest week only. An edit recalculates its own week and, if that changes what wa
 8. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
 9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (`A > 2.5`, or HR 10+ bpm
    above the sleep's), or the band was off the wrist for an hour, or 6 hours have passed without newer data.
-10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. The other minutes are
+10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. An awake stretch
+    shorter than 3 minutes between asleep minutes counts as asleep, so only longer ones are wake-ups. The other minutes are
     asleep, and §12 splits them into deep, REM and light. Asleep time, awake time and wake-ups all come from
     this one rule, so deep + REM + light = asleep and asleep + awake + unknown = the length of the sleep. Efficiency is asleep ÷
     (asleep + awake).
+    *Our choice:* 3 minutes. On the owner's night of 2026-11-17/18, 11 of the 12 wake-ups were 1 to 2 minutes long, mostly a heart-rate
+    jump with no movement, and the band's signal was clean in all of them (no missing heart rate, filler beats as usual).
 11. **Missing data.** A sleep starts and ends on measured minutes and needs 45 of them asleep. A gap of up to 3 hours with
     sleep on both sides stays inside the sleep as unknown. A longer gap splits it.
 12. **Asking the owner.** A sleep shows "Is this right?" when at least 15% of it has no data, when at least 15% of its measured
@@ -309,7 +312,7 @@ NOOP's default stager (`SleepStagerV2.swift`), with its constants unchanged. Eac
 the most likely path through the night is chosen (Viterbi, with NOOP's transition table). All `z` values are standardized within the night.
 
 - **Signals:** `H` mean heart rate, `V` heart-rate spread over 5 minutes, `M` share of seconds moving, `R` regularity of the breathing
-  rhythm in the beat intervals (0.15 to 0.40 Hz), `c` how far through the night, from 0 to 1.
+  rhythm in the beat intervals (0.15 to 0.40 Hz, off in Pulse, see below), `c` how far through the night, from 0 to 1.
 - `deep = −1.1 zV − 0.5 zM − gate + 0.6 zR + 1.2 × max(0, 1 − c / 0.55) + ln 0.15`, with `gate = 5 × max(0, flatness rank − 0.25)` and
   flatness = heart-rate spread over 11 minutes.
 - `REM = 0.6 zV − 0.6 zM + 0.4 zH − 0.6 zR + c − guard + ln 0.22`, with `guard = 3 × (1 − minutes since sleep onset / 60)`, kept between 0 and 3.
@@ -322,7 +325,11 @@ the most likely path through the night is chosen (Viterbi, with NOOP's transitio
   activity ÷ 500. The median jerk can't go below 0.002, the smallest step those values can show.
 - The band doesn't time each beat, so beat times are rebuilt from the start of each minute, and its filler value is left out.
 - Step 10 of §4 still decides asleep or awake, so sleep totals don't change. NOOP's stage only splits the asleep minutes. A minute takes the
-  stage of its first 30 seconds, and an asleep minute NOOP calls awake counts as light.
+  stage of its first 30 seconds, and an asleep minute NOOP calls awake counts as light. A stage lasting under 3 minutes joins the stage
+  before it.
+- **The breathing term `R` is off.** NOOP's sleep-lab test used data without beat intervals, so the term never ran there and its weight
+  is untested. On the owner's night of 2026-11-17/18 it moved deep from 14% to 22% of sleep and REM from 25% to 37%, past the usual adult
+  ranges. Without it the stager runs as NOOP tested it.
 
 *Accuracy:* NOOP scored this stager against sleep-lab results for 31 people (PhysioNet sleep-accel): four-stage kappa 0.36 and REM F1 0.575.
 These are rough estimates. Pulse's port has not been compared with a sleep lab or with WHOOP's own stages.
@@ -338,6 +345,7 @@ The owner's band also logged `Capsense triggered an off wrist event, but Sigproc
 decide on its own whether the band is worn.
 
 - A reading counts for 30 minutes. Settings > Band shows No errors or Error, from the two error lines.
+- Export all data includes the readings of the last 30 days (`wear_sensor`, format 2), so they can be compared with a night or a workout.
 - **The loose flag is not shown or used.** On 2026-11-18 the band reported `loose flag = 1` while the owner's strap was tight, and WHOOP
   doesn't document what the flag measures. Pulse doesn't tell you the strap is loose, and doesn't mark a workout or night as less certain
   because of this flag.

@@ -65,7 +65,7 @@ struct TodayView: View {
                 }
                 .padding(.horizontal, DS.Space.side)
                 .padding(.top, DS.Space.m)
-                .padding(.bottom, DS.Space.xxl)
+                .padding(.bottom, DS.Space.tabBarClearance)
                 // New data slides in quietly when a pull saved something.
                 .animation(DS.Motion.spring, value: loader.revision)
             }

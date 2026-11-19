@@ -133,8 +133,29 @@ private func readAll(_ data: Data, size: Int = 4096) throws -> (PulseBackup.Cont
 
 @Test func aBackupFromANewerVersionIsRefused() throws {
     let text = String(decoding: try file(minutes: []), as: UTF8.self)
-        .replacingOccurrences(of: "\"formatVersion\":1", with: "\"formatVersion\":2")
+        .replacingOccurrences(of: "\"formatVersion\":\(PulseBackup.formatVersion)", with: "\"formatVersion\":\(PulseBackup.formatVersion + 1)")
     #expect(throws: PulseBackup.Failure.newerVersion) { _ = try readAll(Data(text.utf8)) }
+}
+
+@Test func theWearSensorReadingsMakeTheRoundTrip() throws {
+    var contents = fixture
+    contents.wearSensor = [WearSensor.Observation(time: date(100), isLoose: true),
+                           WearSensor.Observation(.sensorError(code: 5), at: date(101))]
+    var data = Data()
+    var writer = try PulseBackup.Writer(contents: contents) { data.append($0) }
+    try writer.append([minute(0)])
+    try writer.finish()
+    #expect(try readAll(data).0.wearSensor == contents.wearSensor)
+}
+
+@Test func aFormatOneBackupStillReads() throws {
+    // Written before the wear sensor's readings were added.
+    let text = String(decoding: try file(minutes: [minute(0)]), as: UTF8.self)
+        .replacingOccurrences(of: "\"wear_sensor\":[],\n", with: "")
+        .replacingOccurrences(of: "\"formatVersion\":\(PulseBackup.formatVersion)", with: "\"formatVersion\":1")
+    #expect(!text.contains("wear_sensor"))
+    let read = try readAll(Data(text.utf8))
+    #expect(read.0.wearSensor.isEmpty && read.1.count == 1)
 }
 
 // MARK: - Merging

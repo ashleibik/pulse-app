@@ -33,7 +33,7 @@ struct ActivityView: View {
                 }
                 .padding(.horizontal, DS.Space.side)
                 .padding(.top, DS.Space.l)
-                .padding(.bottom, DS.Space.xxl)
+                .padding(.bottom, DS.Space.tabBarClearance)
             }
             .refreshable { await band.refresh(context: context) }
             .safeAreaInset(edge: .top, spacing: 0) {

@@ -3,9 +3,8 @@ import SwiftData
 import Charts
 import PulseCore
 
-/// One night at a time: how long, how calm, overnight heart rate, and why you needed what you needed.
-/// Mono design (ios/design/DESIGN.md): the sleep phases are told apart by their row and a gray
-/// level, not by color.
+/// One night at a time: how long, its stages, overnight heart rate, and why you needed what you needed.
+/// Mono design (ios/design/DESIGN.md §4b-6): each stage has its own row, and its color is extra help.
 struct SleepView: View {
     @Query(sort: \SleepRecord.end, order: .reverse) private var allSleeps: [SleepRecord]
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
@@ -40,7 +39,7 @@ struct SleepView: View {
             }
             .padding(.horizontal, DS.Space.side)
             .padding(.top, DS.Space.l)
-            .padding(.bottom, DS.Space.xxl)
+            .padding(.bottom, DS.Space.tabBarClearance)
         }
         .refreshable { await band.refresh(context: context) }
         .safeAreaInset(edge: .top, spacing: 0) { header }
@@ -103,7 +102,7 @@ struct SleepView: View {
             if night.value.reviewReason != nil {
                 SleepReviewCard(sleep: night).riseIn(1)
             }
-            timeline.riseIn(1)
+            timeline(night).riseIn(1)
             heart.riseIn(2)
             HStack(alignment: .top, spacing: DS.Space.m) {
                 StatBlock(symbol: "bed.double", label: "Efficiency",
@@ -163,35 +162,56 @@ struct SleepView: View {
 
     /// The one card on this screen: when you were in each sleep stage, or awake.
     /// Tap a block to see its times; tap a label to read what that phase means.
-    private var timeline: some View {
+    private func timeline(_ night: SleepRecord) -> some View {
         let totals = SleepTimeline.totals(segments)
+        let ticks = SleepTimeline.axisTimes(from: night.start, to: night.end, calendar: .current)
         return VStack(alignment: .leading, spacing: DS.Space.m) {
             SectionTitle(title: "Your night", trailing: "Stages estimated")
             if segments.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+                ProgressView().frame(maxWidth: .infinity, minHeight: 160)
             } else {
-                Chart(segments) { segment in
-                    RectangleMark(xStart: .value("Start", segment.start),
-                                  xEnd: .value("End", segment.end),
-                                  y: .value("Phase", segment.phase.title))
-                        .foregroundStyle(segment.phase.tint)
-                        .cornerRadius(3)
-                        // With a block selected, the others step back.
-                        .opacity(selectedSegment == nil || selectedSegment == segment ? 1 : 0.3)
+                Chart {
+                    // The lines joining one stage to the next, behind the blocks.
+                    ForEach(Self.joins(segments)) { join in
+                        RuleMark(x: .value("Time", join.time),
+                                 yStart: .value("Stage", join.from),
+                                 yEnd: .value("Stage", join.to))
+                            .foregroundStyle(DS.Colors.tertiary)
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
+                    }
+                    ForEach(segments) { segment in
+                        RectangleMark(xStart: .value("Start", segment.start),
+                                      xEnd: .value("End", segment.end),
+                                      yStart: .value("Stage", Self.row(segment.phase) - Self.blockHalfHeight),
+                                      yEnd: .value("Stage", Self.row(segment.phase) + Self.blockHalfHeight))
+                            .foregroundStyle(segment.phase.tint)
+                            .cornerRadius(3)
+                            // With a block selected, the others step back.
+                            .opacity(selectedSegment == nil || selectedSegment == segment ? 1 : 0.3)
+                    }
                 }
-                .chartYScale(domain: SleepPhase.allCases.map(\.title))
+                .chartXScale(domain: night.start...night.end)
+                .chartYScale(domain: -0.6...Double(SleepPhase.allCases.count) - 0.4)
                 .chartYAxis {
-                    AxisMarks(position: .leading) { _ in
-                        AxisValueLabel()
-                            .font(.footnote)
-                            .foregroundStyle(DS.Colors.secondary)
+                    AxisMarks(position: .leading, values: SleepPhase.allCases.map(Self.row)) { value in
+                        AxisValueLabel {
+                            if let row = value.as(Double.self) {
+                                Text(Self.phase(atRow: row).title)
+                            }
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(DS.Colors.secondary)
                     }
                 }
                 .chartXAxis {
-                    AxisMarks(values: .stride(by: .hour, count: 2)) { _ in
-                        AxisValueLabel(format: .dateTime.hour())
+                    AxisMarks(values: ticks) { value in
+                        if let time = value.as(Date.self) {
+                            AxisValueLabel(anchor: Self.anchor(time, ticks: ticks)) {
+                                Text(Self.tickText(time, ticks: ticks))
+                            }
                             .font(.footnote)
                             .foregroundStyle(DS.Colors.secondary)
+                        }
                     }
                 }
                 .chartOverlay { proxy in
@@ -210,7 +230,7 @@ struct SleepView: View {
                         }
                     }
                 }
-                .frame(height: 120)
+                .frame(height: 160)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(timelineSummary(totals))
 
@@ -222,7 +242,9 @@ struct SleepView: View {
                     UnknownMinutesNote(minutes: sleeps[min(nightIndex, sleeps.count - 1)].value.unknownMinutes)
                 }
 
-                HStack(alignment: .top, spacing: DS.Space.s) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: DS.Space.s, alignment: .leading),
+                                    GridItem(.flexible(), alignment: .leading)],
+                          alignment: .leading, spacing: DS.Space.s) {
                     ForEach(SleepPhase.allCases.reversed(), id: \.self) { phase in
                         Button {
                             explainedPhase = SleepPhaseSelection(phase: phase)
@@ -316,6 +338,45 @@ struct SleepView: View {
     }
 
     // MARK: - Helpers
+
+    /// Half the height of a stage block, in rows.
+    private static let blockHalfHeight = 0.22
+
+    /// Awake on the top row, deep on the bottom one.
+    private static func row(_ phase: SleepPhase) -> Double {
+        Double(SleepPhase.allCases.count - 1 - (SleepPhase.allCases.firstIndex(of: phase) ?? 0))
+    }
+
+    private static func phase(atRow row: Double) -> SleepPhase {
+        let index = SleepPhase.allCases.count - 1 - Int(row.rounded())
+        return SleepPhase.allCases[min(max(index, 0), SleepPhase.allCases.count - 1)]
+    }
+
+    /// Where one stage meets the next.
+    private struct StageJoin: Identifiable {
+        let time: Date
+        let from: Double
+        let to: Double
+        var id: Date { time }
+    }
+
+    private static func joins(_ segments: [SleepSegment]) -> [StageJoin] {
+        zip(segments, segments.dropFirst())
+            .filter { $0.end == $1.start }
+            .map { StageJoin(time: $1.start, from: row($0.phase), to: row($1.phase)) }
+    }
+
+    /// The start and end of the night keep their labels inside the chart.
+    private static func anchor(_ time: Date, ticks: [Date]) -> UnitPoint {
+        time == ticks.first ? .topLeading : time == ticks.last ? .topTrailing : .top
+    }
+
+    /// The start and the end with minutes ("1:12 AM"), the hours between without ("3 AM").
+    private static func tickText(_ time: Date, ticks: [Date]) -> String {
+        time == ticks.first || time == ticks.last
+            ? time.formatted(date: .omitted, time: .shortened)
+            : time.formatted(.dateTime.hour())
+    }
 
     private func minutesText(_ minutes: Double, sign: String) -> String {
         sign + PulseFormat.duration(minutes: Int(minutes.rounded()))

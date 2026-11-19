@@ -114,8 +114,27 @@ import Testing
 }
 
 @Test func smoothingAbsorbsBlips() {
-    let p: [SleepPhase] = [.deep, .deep, .deep, .light, .deep, .deep, .awake, .light, .light, .light]
-    #expect(SleepTimeline.smooth(p) == [.deep, .deep, .deep, .deep, .deep, .deep, .awake, .light, .light, .light])
+    let p: [SleepPhase] = [.deep, .deep, .deep, .light, .deep, .deep, .awake, .awake, .awake, .light, .light, .light]
+    #expect(SleepTimeline.smooth(p) == [.deep, .deep, .deep, .deep, .deep, .deep, .awake, .awake, .awake, .light, .light, .light])
+}
+
+@Test func aWakeUnderThreeMinutesIsNotAWakeUp() {
+    let blip: [SleepPhase] = [.light, .light, .light, .awake, .awake, .rem, .rem, .rem]
+    #expect(SleepTimeline.smooth(blip) == [.light, .light, .light, .light, .light, .rem, .rem, .rem])
+    let real: [SleepPhase] = [.light, .light, .light, .awake, .awake, .awake, .rem, .rem, .rem]
+    #expect(SleepTimeline.smooth(real) == real)
+    // At either end of the measured minutes there is nothing to merge with.
+    let edges: [SleepPhase] = [.awake, .light, .light, .light, .awake]
+    #expect(SleepTimeline.smooth(edges) == edges)
+}
+
+@Test func aNightsTimeAxisShowsItsStartAndEnd() {
+    func at(_ hour: Int, _ minute: Int) -> Date { Date(timeIntervalSince1970: 1_750_032_000 + Double(hour * 3600 + minute * 60)) }
+    // 1:12 to 7:55: 7 AM would crowd the end.
+    #expect(SleepTimeline.axisTimes(from: at(1, 12), to: at(7, 55), calendar: utcCalendar) == [at(1, 12), at(3, 0), at(5, 0), at(7, 55)])
+    // A short sleep gets every hour.
+    #expect(SleepTimeline.axisTimes(from: at(13, 5), to: at(16, 10), calendar: utcCalendar) == [at(13, 5), at(14, 0), at(15, 0), at(16, 10)])
+    #expect(SleepTimeline.axisTimes(from: at(13, 5), to: at(13, 30), calendar: utcCalendar) == [at(13, 5), at(13, 30)])
 }
 
 // MARK: - Zones + sleep need

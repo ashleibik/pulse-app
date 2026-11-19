@@ -18,7 +18,7 @@ actor BackupStore {
     // MARK: - Export
 
     /// Writes everything to a new file in the temporary folder and returns its address.
-    func export(header: PulseBackup.Header) throws -> URL {
+    func export(header: PulseBackup.Header, wearSensor: [WearSensor.Observation]) throws -> URL {
         let name = "pulse-backup-\(header.exportedAt.formatted(.iso8601.year().month().day())).json"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
         try? FileManager.default.removeItem(at: url)
@@ -40,7 +40,7 @@ actor BackupStore {
         let sleeps = try modelContext.fetch(FetchDescriptor<SleepRecord>(sortBy: [SortDescriptor(\.start)])).map(\.value)
         let corrections = try modelContext.fetch(FetchDescriptor<SleepCorrectionRecord>()).map(\.value)
         let contents = PulseBackup.Contents(header: header, workouts: workouts, journal: journal, days: days, sleeps: sleeps,
-                                            sleepCorrections: corrections)
+                                            sleepCorrections: corrections, wearSensor: wearSensor)
 
         var writer = try PulseBackup.Writer(contents: contents) { try handle.write(contentsOf: $0) }
         var after = Date.distantPast

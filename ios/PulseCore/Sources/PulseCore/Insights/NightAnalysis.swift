@@ -30,6 +30,8 @@ public enum SleepTimeline {
     public static let awakeMovement = 6.0
     /// How far around a sleep `build` needs minutes: the stager's heart-rate windows reach past both ends.
     public static let stagingPadding: TimeInterval = 7 * 60
+    /// A wake-up lasts at least this many minutes. A shorter awake stretch between sleeping minutes counts as asleep.
+    public static let shortestWake = 3
 
     /// One phase per minute of a sleep. This is the only place that decides which minutes of a sleep
     /// count as awake, so the night's headline numbers and its phases always add up to the same total.
@@ -84,6 +86,8 @@ public enum SleepTimeline {
             default: break                              // Pulse's own rule decides who is awake
             }
         }
+        // A stage lasting a minute or two joins the one before it. Only sleeping minutes swap, so the totals stay.
+        phases = smoothRuns(phases)
 
         var segments: [SleepSegment] = []
         var runStart = 0
@@ -115,10 +119,35 @@ public enum SleepTimeline {
         return stages
     }
 
-    /// Absorb sleeping runs shorter than `minRun` into the previous run (awake runs are kept).
+    /// `smooth` on each stretch of minutes with data.
+    static func smoothRuns(_ phases: [SleepPhase?]) -> [SleepPhase?] {
+        var out = phases
+        var i = 0
+        while i < out.count {
+            guard out[i] != nil else { i += 1; continue }
+            var end = i
+            while end < out.count, out[end] != nil { end += 1 }
+            let run = smooth(out[i..<end].compactMap { $0 })
+            for (offset, phase) in run.enumerated() { out[i + offset] = phase }
+            i = end
+        }
+        return out
+    }
+
+    /// First, an awake stretch shorter than `shortestWake` with sleep on both sides becomes light sleep.
+    /// Then a sleeping run shorter than `minRun` joins the run before it, unless that run is awake.
     static func smooth(_ phases: [SleepPhase], minRun: Int = 3) -> [SleepPhase] {
         var out = phases
         var i = 0
+        while i < out.count {
+            var j = i
+            while j < out.count && out[j] == out[i] { j += 1 }
+            if out[i] == .awake && j - i < shortestWake && i > 0 && j < out.count {
+                for k in i..<j { out[k] = .light }
+            }
+            i = j
+        }
+        i = 0
         while i < out.count {
             var j = i
             while j < out.count && out[j] == out[i] { j += 1 }
@@ -128,6 +157,23 @@ public enum SleepTimeline {
             i = j
         }
         return out
+    }
+
+    /// Times to label under a night chart: the start and the end, and whole hours between them that leave room for the labels.
+    /// Every 2 hours on a night over 4 hours, otherwise every hour.
+    public static func axisTimes(from start: Date, to end: Date, calendar: Calendar) -> [Date] {
+        guard end > start else { return [start] }
+        let length = end.timeIntervalSince(start)
+        let step: TimeInterval = length > 4 * 3600 ? 7200 : 3600
+        let room = max(0.18 * length, 20 * 60)
+        guard var hour = calendar.dateInterval(of: .hour, for: start.addingTimeInterval(room))?.start else { return [start, end] }
+        if hour < start.addingTimeInterval(room) { hour = hour.addingTimeInterval(3600) }
+        var times = [start]
+        while hour <= end.addingTimeInterval(-room) {
+            times.append(hour)
+            hour = hour.addingTimeInterval(step)
+        }
+        return times + [end]
     }
 
     public static func totals(_ segments: [SleepSegment]) -> [SleepPhase: Int] {

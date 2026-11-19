@@ -13,7 +13,7 @@ extension SleepPhase {
         switch self {
         case .awake: DS.Colors.warn
         case .rem: DS.Colors.accent
-        case .light: DS.Colors.sleepTint.opacity(0.45)
+        case .light: DS.Colors.sleepTint.opacity(0.7)
         case .deep: DS.Colors.sleepTint
         }
     }

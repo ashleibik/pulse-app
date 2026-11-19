@@ -95,6 +95,8 @@ enum DS {
         static let xxl: CGFloat = 48
         /// Left/right padding of every screen.
         static let side: CGFloat = 24
+        /// The space at the end of a tab screen, so its last content scrolls clear of the tab bar.
+        static let tabBarClearance: CGFloat = 96
     }
 
     enum Radius {

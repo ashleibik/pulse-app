@@ -13,6 +13,7 @@ import Foundation
 ///     "days":[...],
 ///     "sleeps":[...],
 ///     "sleep_corrections":[...],
+///     "wear_sensor":[...],
 ///     "minutes":[
 ///     {...},
 ///     {...}
@@ -24,7 +25,8 @@ import Foundation
 /// anything, and importing the same file twice changes nothing. Days and sleeps are in the file so
 /// it is a complete record, but on import they are recalculated from the raw minutes.
 public enum PulseBackup {
-    public static let formatVersion = 1
+    /// 2 added `wear_sensor`. A file of format 1 still reads.
+    public static let formatVersion = 2
 
     public struct Profile: Codable, Sendable, Equatable {
         public var birthYear: Int?
@@ -94,15 +96,19 @@ public enum PulseBackup {
         public var sleeps: [SleepSession]
         /// Sleeps the user edited or removed.
         public var sleepCorrections: [SleepCorrection]
+        /// What the band said about how it sat on the wrist (docs/METRICS.md §13). For checking a night or a workout.
+        public var wearSensor: [WearSensor.Observation]
 
         public init(header: Header, workouts: [WorkoutEntry], journal: [JournalDay],
-                    days: [DailySummary], sleeps: [SleepSession], sleepCorrections: [SleepCorrection] = []) {
+                    days: [DailySummary], sleeps: [SleepSession], sleepCorrections: [SleepCorrection] = [],
+                    wearSensor: [WearSensor.Observation] = []) {
             self.header = header
             self.workouts = workouts
             self.journal = journal
             self.days = days
             self.sleeps = sleeps
             self.sleepCorrections = sleepCorrections
+            self.wearSensor = wearSensor
         }
     }
 
@@ -175,6 +181,7 @@ public enum PulseBackup {
             start.append(try field("days", contents.days))
             start.append(try field("sleeps", contents.sleeps))
             start.append(try field("sleep_corrections", contents.sleepCorrections))
+            start.append(try field("wear_sensor", contents.wearSensor))
             start.append(Data("\"minutes\":[\n".utf8))
             try sink(start)
         }
@@ -221,19 +228,32 @@ public enum PulseBackup {
             }
             guard header.app == "Pulse" else { throw Failure.notABackup }
             guard header.formatVersion <= formatVersion else { throw Failure.newerVersion }
-            contents = Contents(header: header,
+            var read = Contents(header: header,
                                 workouts: try Self.field("workouts", lines),
                                 journal: try Self.field("journal", lines),
                                 days: try Self.field("days", lines),
                                 sleeps: try Self.field("sleeps", lines),
                                 sleepCorrections: try Self.field("sleep_corrections", lines))
-            guard try lines.next() == "\"minutes\":[" else { throw Failure.damaged }
+            var next = try lines.next()
+            // Format 2 adds the wear sensor's readings. A format 1 file goes straight on to the minutes.
+            if let line = next, line.hasPrefix(Self.wearSensorPrefix) {
+                read.wearSensor = try Self.value(line, prefix: Self.wearSensorPrefix)
+                next = try lines.next()
+            }
+            guard next == "\"minutes\":[" else { throw Failure.damaged }
+            contents = read
             self.lines = lines
         }
 
+        private static let wearSensorPrefix = "\"wear_sensor\":"
+
         private static func field<T: Decodable>(_ key: String, _ lines: LineSource) throws -> T {
-            let prefix = "\"\(key)\":"
-            guard let line = try lines.next(), line.hasPrefix(prefix), line.hasSuffix(",") else { throw Failure.damaged }
+            guard let line = try lines.next() else { throw Failure.damaged }
+            return try value(line, prefix: "\"\(key)\":")
+        }
+
+        private static func value<T: Decodable>(_ line: String, prefix: String) throws -> T {
+            guard line.hasPrefix(prefix), line.hasSuffix(",") else { throw Failure.damaged }
             return try decode(T.self, line.dropFirst(prefix.count).dropLast())
         }
 

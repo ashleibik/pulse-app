@@ -89,6 +89,15 @@ private func close(_ date: Date, to expected: Date, minutes: Double = 15) -> Boo
     }
 }
 
+@Test(.enabled(if: hasBackup)) func theRealNightsBriefWakesAreNotWakeUps() throws {
+    let backup = try loadBackup()
+    let night = try #require(MetricsEngine.run(minutes: backup.minutes, calendar: localCalendar, now: backup.exportedAt).sleeps.first)
+    // Eleven of the twelve were one or two minutes long. The wake-up at 06:44 lasted ten.
+    #expect(night.disturbances <= 3, "wake-ups \(night.disturbances)")
+    let segments = SleepTimeline.build(minutes: backup.minutes, from: night.start, to: night.end)
+    #expect(segments.filter { $0.phase == .awake }.allSatisfy { $0.minutes >= SleepTimeline.shortestWake })
+}
+
 @Test(.enabled(if: hasBackup)) func theRealNightsPhasesAddUpToItsHeadline() throws {
     let backup = try loadBackup()
     let night = try #require(MetricsEngine.run(minutes: backup.minutes, calendar: localCalendar, now: backup.exportedAt).sleeps.first)
@@ -147,8 +156,12 @@ private func close(_ date: Date, to expected: Date, minutes: Double = 15) -> Boo
     let totals = SleepTimeline.totals(segments)
     let (deep, rem, light) = (totals[.deep] ?? 0, totals[.rem] ?? 0, totals[.light] ?? 0)
     print("RECOMPUTED phases awake \(totals[.awake] ?? 0) light \(light) deep \(deep) REM \(rem) in \(spent)")
-    #expect(deep > 0 && rem > 0 && light > 0)
     #expect(light + deep + rem == night.asleepMinutes)
+    // The usual adult night: light about half, REM about a fifth to a quarter, deep about a seventh to a fifth.
+    let asleep = Double(night.asleepMinutes)
+    #expect((0.40...0.65).contains(Double(light) / asleep), "light \(light)")
+    #expect((0.10...0.30).contains(Double(rem) / asleep), "REM \(rem)")
+    #expect((0.08...0.25).contains(Double(deep) / asleep), "deep \(deep)")
 }
 
 @Test(.enabled(if: hasBackup)) func theRealNightsBreathingRateIsInTheNormalRange() throws {

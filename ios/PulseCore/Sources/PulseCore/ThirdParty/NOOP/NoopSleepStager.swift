@@ -7,6 +7,7 @@
 // Noncommercial use only. Changed for Pulse: `input(from:)` turns the band's stored minutes into NOOP's three streams.
 // Pulse keeps how far the wrist moved each second rather than the gravity vector, so the jerk arrives ready-made.
 // The jerk floor can't go below `smallestJerk`, the smallest movement the stored values can show.
+// The breathing term is off by default (`usesBreathingRhythm`): NOOP's sleep-lab test had no beat intervals, so it never ran there.
 
 import Foundation
 
@@ -32,6 +33,9 @@ enum NoopSleepStager {
     static let padHi = 390
     /// The smallest step in the stored movement values: 1 / `MinuteBuilder.activityScale`.
     static let smallestJerk = 0.002
+    /// NOOP's breathing-regularity term. Its sleep-lab test (PhysioNet sleep-accel) has no beat intervals, so the term never ran
+    /// there. On the owner's first night it pushed deep to 22% and REM to 37% of sleep. docs/METRICS.md §12.
+    static let usesBreathingRhythm = false
 
     /// Population sleep-architecture base rates as log-priors, in `Stage` order.
     static let baseLogPrior = [log(0.15), log(0.22), log(0.50), log(0.10)]
@@ -104,9 +108,10 @@ enum NoopSleepStager {
     }
 
     /// One stage per 30 seconds of the night that has data.
-    static func stage(start: Int, end: Int, input: Input) -> [StagedEpoch] {
+    /// - Parameter breathingRhythm: NOOP ships it on. Pulse leaves it off (`usesBreathingRhythm`).
+    static func stage(start: Int, end: Int, input: Input, breathingRhythm: Bool = usesBreathingRhythm) -> [StagedEpoch] {
         let epochs = features(start: start, end: end, input: input)
-        return zip(epochs, stageEpochs(epochs)).map { StagedEpoch(start: $0.start, stage: $1) }
+        return zip(epochs, stageEpochs(epochs, breathingRhythm: breathingRhythm)).map { StagedEpoch(start: $0.start, stage: $1) }
     }
 
     // MARK: - Features
@@ -362,7 +367,7 @@ enum NoopSleepStager {
     }
 
     /// One stage per epoch. All comparisons are within the night.
-    static func stageEpochs(_ epochs: [Epoch]) -> [Stage] {
+    static func stageEpochs(_ epochs: [Epoch], breathingRhythm: Bool = usesBreathingRhythm) -> [Stage] {
         guard !epochs.isEmpty else { return [] }
         let zHR = standardizer(epochs.map(\.hr))
         let zVar = standardizer(epochs.map(\.hrVar))
@@ -397,7 +402,7 @@ enum NoopSleepStager {
             let prior = cyclePrior(epoch.clock, .infinity)
             for stage in emission.indices { emission[stage] += prior[stage] }
             if epoch.jerkMax > epoch.jerkScale * jerkFloorGateMult { emission[awake] += motionGateBoost }
-            if let regularity = epoch.respReg {
+            if breathingRhythm, let regularity = epoch.respReg {
                 let z = zResp(regularity)
                 emission[deep] += respWeight * z
                 emission[rem] -= respWeight * z
