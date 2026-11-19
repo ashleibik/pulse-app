@@ -1,7 +1,6 @@
 import Foundation
 
-/// Estimated calories burned in a day. Spec: docs/METRICS.md §9. Shown in the app only: it is never
-/// written to Apple Health, where the Apple Watch owns active energy.
+/// Estimated calories burned in a day. Spec: docs/METRICS.md §9. Shown in the app only.
 ///
 /// Every minute costs at least your resting rate (Mifflin-St Jeor). Only a minute at or above 40% of your
 /// heart-rate reserve counts as active (`OpenStrapCalories`). Keytel was built from exercise data, so

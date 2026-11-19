@@ -16,6 +16,7 @@ struct WorkoutDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.xxl) {
                 hero.riseIn(0)
+                WearQualityNote(start: workout.start, end: workout.end)
                 stats.riseIn(1)
                 heart.riseIn(2)
                 zones.riseIn(3)
@@ -43,7 +44,7 @@ struct WorkoutDetailView: View {
     @ViewBuilder
     private var share: some View {
         if workout.isSimulated {
-            Text("This is a simulated workout. It is never sent to Strava or Apple Health.")
+            Text("This is a simulated workout. It is never sent to Strava.")
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
         } else if cloud.stravaConnected {

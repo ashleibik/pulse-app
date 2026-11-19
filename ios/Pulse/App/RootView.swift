@@ -9,7 +9,6 @@ struct RootView: View {
     @State private var loader = DataLoader()
     /// Shared with BackgroundSync, which can run before (or without) this screen.
     @State private var band = BandManager.shared
-    @State private var health = HealthExporter()
     @State private var cloud = CloudManager()
     /// Per-device UI preference (not health data), so UserDefaults is fine here.
     /// (UserDefaults also reads launch arguments, so `-hasSeenWelcome YES` skips it for screenshots.)
@@ -35,7 +34,6 @@ struct RootView: View {
         .sensoryFeedback(.selection, trigger: tab)                    // light tick when switching tabs
         .environment(loader)
         .environment(band)
-        .environment(health)
         .environment(cloud)
         .fullScreenCover(isPresented: Binding(get: { !hasSeenWelcome }, set: { hasSeenWelcome = !$0 })) {
             WelcomeView { hasSeenWelcome = true }
@@ -47,8 +45,6 @@ struct RootView: View {
                 band.appBecameActive(context: context)
                 Notifier.refresh(context: context)      // tonight's bedtime reminder
                 WidgetBridge.publish(context: context)
-                // Data pulled while the app was closed reaches Apple Health now.
-                if loader.rawDataReady { Task { await health.export(context: context) } }
             } else if phase == .background {
                 BackgroundSync.schedule()               // wake-ups while the app is closed
             }
@@ -67,15 +63,12 @@ struct RootView: View {
             if state == .ready { WidgetBridge.publish(context: context) }
         }
         .task {
-            band.onDataChanged = { [loader, health, cloud, context] in
+            band.onDataChanged = { [loader, cloud, context] in
                 loader.dataChanged()
                 Notifier.refresh(context: context)
                 Notifier.recoveryReady(context: context)
                 // New band data: pass it on, but only to what the user turned on.
-                Task {
-                    await health.export(context: context)       // Apple Health
-                    await cloud.sync(context: context)          // own cloud (summaries only)
-                }
+                Task { await cloud.sync(context: context) }     // own cloud (summaries only)
             }
             await cloud.load()
             await loader.prepare(context: context)      // also removes old simulated data, once

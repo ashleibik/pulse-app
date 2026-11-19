@@ -125,6 +125,7 @@ struct TodayView: View {
 
     private var home: some View {
         VStack(alignment: .leading, spacing: DS.Space.xl) {
+            LooseStrapHint()
             rings.riseIn(1)
             monitors.riseIn(2)
             caloriesCard.riseIn(2)
@@ -203,7 +204,7 @@ struct TodayView: View {
 
     private var calorieBody: DailyCalories.Body? { profiles.first?.calorieBody() }
 
-    /// An estimate, and labelled as one. Stays in the app: it is never written to Apple Health.
+    /// An estimate, and labelled as one.
     private var caloriesCard: some View {
         VStack(alignment: .leading, spacing: DS.Space.xs) {
             HStack(spacing: 6) {

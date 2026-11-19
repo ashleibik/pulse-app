@@ -237,13 +237,13 @@ public enum WorkoutDetector {
         let window = minutes.filter { $0.start >= start && $0.start < end }
         var workout = build(window, start: start, end: end, kind: kind, profile: profile, body: body,
                             resting: restingHeartRate ?? 60, restingKnown: restingHeartRate != nil, id: id)
-        // Entered on top of simulated data = still simulated (never sent to Apple Health or Strava).
+        // Entered on top of simulated data = still simulated (never sent to Strava).
         if !window.isEmpty, window.allSatisfy({ $0.source == .simulated }) { workout.source = .simulated }
         return workout
     }
 
     /// The same workout must get the same ID every time detection runs (after each sync), otherwise
-    /// its Apple Health / Strava export marks would be lost. So the ID is derived from the start minute.
+    /// its Strava mark would be lost. So the ID is derived from the start minute.
     public static func stableID(start: Date) -> UUID {
         var minute = UInt64(max(0, start.timeIntervalSince1970 / 60)).bigEndian
         var bytes: [UInt8] = [0x50, 0x55, 0x4C, 0x53, 0x45, 0x00, 0x40, 0x00]      // "PULSE", version nibble 4

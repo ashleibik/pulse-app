@@ -140,6 +140,7 @@ struct SleepDetailView: View {
                 .accessibilityElement(children: .combine)
             }
             UnknownMinutesNote(minutes: sleep.value.unknownMinutes)
+            WearQualityNote(start: sleep.start, end: sleep.end)
             HStack {
                 Image(systemName: "sparkles").foregroundStyle(DS.Colors.sleepTint)
                 Text("RESTFUL SLEEP").textStyle(.label).foregroundStyle(DS.Colors.primary)

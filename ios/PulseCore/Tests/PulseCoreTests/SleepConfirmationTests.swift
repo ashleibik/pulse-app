@@ -203,17 +203,6 @@ private func nightWithRestingOffset(_ from: Double, _ to: Double) -> [MinuteSamp
     #expect(sleeps(daytime(9, 23) + off + daytime(31, 34), now: time(34)).isEmpty)
 }
 
-@Test func appleHealthGetsNothingForMinutesWithNoData() throws {
-    let whole = daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33)
-    let gap = time(27)..<time(27).addingTimeInterval(40 * 60)
-    let minutes = whole.filter { !gap.contains($0.start) }
-    let sleep = try #require(sleeps(minutes, now: time(33)).first)
-    let segments = SleepTimeline.build(minutes: minutes, from: sleep.start, to: sleep.end)
-    let intervals = HealthExport.sleepIntervals(for: sleep, segments: segments).filter { $0.kind != .inBed }
-    #expect(!intervals.isEmpty)
-    #expect(!intervals.contains { $0.start < gap.upperBound && gap.lowerBound < $0.end })
-}
-
 @Test func aTimeTheUserLeftAloneFollowsBetterDetection() throws {
     let minutes = daytime(9, 23) + night(23, 30.5) + daytime(30.5, 33)
     // Made on an older version that saw only 01:00 to 04:00. The user moved the start and kept the end.

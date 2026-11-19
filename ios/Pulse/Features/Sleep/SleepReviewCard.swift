@@ -5,18 +5,12 @@ import PulseCore
 /// Saves what the user said about a sleep: new times, "yes, that was sleep", or "I wasn't asleep" (nil times).
 @MainActor
 enum SleepAnswer {
-    static func save(target: SleepEditTarget, start: Date?, end: Date?, context: ModelContext, loader: DataLoader,
-                     health: HealthExporter) {
+    static func save(target: SleepEditTarget, start: Date?, end: Date?, context: ModelContext, loader: DataLoader) {
         let correction = SleepCorrection(detectedStart: target.start, detectedEnd: target.end, start: start, end: end,
                                          createdAt: .now)
         context.insert(SleepCorrectionRecord(correction))
         try? context.save()
-        let from = min(target.start, start ?? target.start)
-        let to = max(target.end, end ?? target.end)
-        Task {
-            await loader.recompute(context: context)
-            await health.sleepChanged(from: from, to: to, context: context)
-        }
+        Task { await loader.recompute(context: context) }
     }
 }
 
@@ -27,7 +21,6 @@ struct SleepReviewCard: View {
 
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
-    @Environment(HealthExporter.self) private var health
     @State private var editing: SleepEditTarget?
     @State private var confirmRemove = false
 
@@ -45,7 +38,7 @@ struct SleepReviewCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Button("Yes") {
-                SleepAnswer.save(target: target, start: sleep.start, end: sleep.end, context: context, loader: loader, health: health)
+                SleepAnswer.save(target: target, start: sleep.start, end: sleep.end, context: context, loader: loader)
             }
             .buttonStyle(.primaryPill)
             Button("Fix times") { editing = target }
@@ -58,7 +51,7 @@ struct SleepReviewCard: View {
         .sheet(item: $editing) { SleepEditView(target: $0) }
         .confirmationDialog("Remove this sleep?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove sleep", role: .destructive) {
-                SleepAnswer.save(target: target, start: nil, end: nil, context: context, loader: loader, health: health)
+                SleepAnswer.save(target: target, start: nil, end: nil, context: context, loader: loader)
             }
         } message: {
             Text("Pulse will treat this time as awake.")

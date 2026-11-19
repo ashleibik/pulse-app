@@ -15,8 +15,7 @@ ios/
       Insights/        everything the screens need that's more than formatting, tested on Windows:
                        RecoveryExplainer (factor points), StrainGuidance (targets + advice),
                        SleepTimeline (restful/light/awake), HeartRateZones, SleepNeedBreakdown,
-                       TrendInsights (period comparisons + plain-language insights),
-                       HealthExport (what may be written to Apple Health: never simulated data)
+                       TrendInsights (period comparisons + plain-language insights)
       Cloud/           CloudRows (the only data that may leave the phone), StravaExport (TCX file)
       Protocol/        Swift port of re-toolkit/protocol (Whoop namespace): CRCs, frames, reassembler,
                        allowlisted command builders, packet decoder, 0x2A37 parser
@@ -29,7 +28,6 @@ ios/
     App/               PulseApp, RootView (tabs), Design (DS tokens = DESIGN.md in code)
     Data/              SwiftData models, PulseStore (+ BandImporter), DemoDataLoader
     Band/              BandLink (CoreBluetooth + simulated band), BandManager (pairing and syncing)
-    Health/            HealthExporter (writes sleep, resting HR and workouts to Apple Health)
     Cloud/             CloudClient (URLSession + Keychain), CloudManager (upload, Strava, coach)
     Features/          Today, Recovery (detail), Sleep, Activity (+ workout detail), Trends,
                        Settings (profile, band, recalculate), Pairing (+ hidden band log),
@@ -86,28 +84,6 @@ band  --Bluetooth-->  BandLink        bytes in / out                 (app, CoreB
   against the band first; it is the safer place to find surprises.
 - **Not built yet:** background reconnect, live heart rate screen.
 
-## Apple Health (Phase 6)
-
-Settings > Apple Health > *Turn on*. Pulse reads Apple Health only to avoid writing something twice.
-
-| Written | Not written, and why |
-|---|---|
-| Sleep: in bed, asleep, awake | Sleep stages, unless you turn on *Write sleep stages to Apple Health (estimated)*. REM is never written |
-| Heart rate, one sample per worn minute | Steps and active energy: the Apple Watch owns those |
-| Resting heart rate, one per day | Calories: the estimate stays in the app |
-| HRV as SDNN, one per night, from the real beats (no beats, no sample) | |
-| Workouts: type, start, end | |
-
-- With that setting on, light is written as Core and restful as Deep. They are **estimates** from heart
-  rate and motion, so the setting stays off until the stages have been validated.
-- **Simulated data and data from before the cutoff are never exported** (`HealthExport` in PulseCore).
-- **No duplicates:** stable sync identifiers, a ledger of what was written, and a workout the Apple
-  Watch already recorded is skipped. Samples from an earlier install of Pulse are left alone.
-- After every band sync and when the app opens, what is new or changed is written. *Export all* goes
-  through the whole history.
-- **Not tested on a real iPhone yet.** It needs the signed app with the HealthKit capability
-  (`Pulse/Pulse.entitlements`); the unsigned CI builds can't exercise it.
-
 ## Install on your iPhone (free, no Mac)
 
 For your own phone only. No $99 Apple Developer Program needed.
@@ -130,12 +106,8 @@ Keep Developer Mode on: sideloaded apps don't open without it.
 Limits of a free Apple ID (Apple's rules, not Pulse's):
 - The app **stops opening after 7 days**. Re-install it with step 4 (your data stays).
 - At most 3 sideloaded apps at a time.
-- **Apple Health export probably won't work**: the free signing likely drops the HealthKit
-  permission. Not tested. Everything else (Bluetooth, the band, all screens) needs no special
-  permission.
 
-The paid Developer Program (`.github/workflows/testflight.yml`) removes the 7-day limit and
-keeps HealthKit, if you ever want that.
+The paid Developer Program (`.github/workflows/testflight.yml`) removes the 7-day limit, if you ever want that.
 
 ## Widget and background sync
 
@@ -149,8 +121,8 @@ keeps HealthKit, if you ever want that.
 - **Background sync:** iOS wakes Pulse now and then (iOS picks the time, roughly hourly at best) to
   sync the band, update the widget and tonight's reminder. Needs Settings > General > Background
   App Refresh on, and the app not swiped away. Real band only; the demo never syncs by itself.
-- **Not verified yet** (no Mac, free Apple ID): that Sideloadly keeps the App Group and HealthKit
-  entitlements. The build embeds them (ad-hoc signature in `ipa.yml`) so the tool can see them.
+- **Not verified yet** (no Mac, free Apple ID): that Sideloadly keeps the App Group entitlement. The build
+  embeds it (ad-hoc signature in `ipa.yml`) so the tool can see it.
 - **Apple Watch app: not built.** Free sideloading can't reliably install Watch apps, and the band
   can only talk to one device at a time. Pulse's reminders already show on the Watch (iOS mirrors
   iPhone notifications when the phone is locked).

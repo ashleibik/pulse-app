@@ -22,6 +22,8 @@ final class SyncWorker: @unchecked Sendable {
     private var trace: SyncTrace
     private var lastActivity = Date()
     private var reportedBadFrames = 0
+    /// Reads the band's wear-sensor status lines. It only looks at the bytes and never affects the sync.
+    private var wearScanner = WearSensor.Scanner()
 
     init(queue: DispatchQueue, link: BandLink, container: ModelContainer,
          toMain: @escaping @Sendable ([BandSession.Effect], Int) -> Void) {
@@ -112,6 +114,7 @@ final class SyncWorker: @unchecked Sendable {
 
     func receive(characteristic: String, bytes: [UInt8]) {
         lastActivity = Date()
+        noteWearSensor(in: bytes)
         guard var current = session else {
             trace.add("RX (no session) \(characteristic) len=\(bytes.count) \(Whoop.hex(bytes))", at: Date().timeIntervalSince1970)
             return
@@ -122,6 +125,14 @@ final class SyncWorker: @unchecked Sendable {
     }
 
     // MARK: - Internals (on `queue`)
+
+    private func noteWearSensor(in bytes: [UInt8]) {
+        let events = wearScanner.scan(bytes)
+        guard !events.isEmpty else { return }
+        let now = Date()
+        for event in events { trace.add("WEAR SENSOR \(event)", at: now.timeIntervalSince1970) }
+        Task { @MainActor in WearSensorStore.shared.record(events, at: now) }
+    }
 
     private func run(_ effects: [BandSession.Effect]) {
         var forMain: [BandSession.Effect] = []

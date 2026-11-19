@@ -16,16 +16,13 @@ The owner develops on Windows, has no Mac, and installs by sideloading (moving t
   `DS.*` tokens and never hard-code colors, sizes or animations. Estimates are labelled as estimates.
 - **Keep the bundle ID `dev.pulse.app`** (widget: `dev.pulse.app.widget`, App Group
   `group.dev.pulse.app`). Changing it loses the installed app's data.
-- **Do not write steps or active energy to Apple Health.** The owner's Apple Watch owns those.
-  Daily calories stay inside the app.
+- **No Apple Health.** Free signing strips the HealthKit permission, so the code was removed. Export all data is the
+  owner's backup. Daily calories stay inside the app.
 - **The build is always `Pulse.ipa` in the repo root.** Each new build overwrites it. No extra copies such as
   `Pulse-<commit>.ipa`. `*.ipa` and `sideloadlydaemon.log` stay in `.gitignore`.
 
 ## Decisions
 
-- **Sleep in Apple Health is asleep + awake only (2026-11-18).** Stage estimates stay inside Pulse. The setting
-  "Write sleep stages to Apple Health (estimated)" is off by default; the owner turns it on only after the stages
-  are validated. REM is never written.
 - **A sleep must be confirmed and finished before it is shown (2026-11-18).** The owner sat at a computer from 21:30
   to 00:30 and got a false 3h06 sleep. A night appears only once they are up again, and the owner can edit or remove
   any sleep. Spec: `docs/METRICS.md` §4.
@@ -54,7 +51,7 @@ previous owner and are dropped), and the low-battery pause (below 5%, "Sync anyw
 | Path | What |
 |---|---|
 | `ios/PulseCore/` | Pure Swift logic (protocol, metrics, insights). Builds and tests on Windows |
-| `ios/Pulse/` | SwiftUI app, iOS 17+. Screens, SwiftData, CoreBluetooth, HealthKit. Keep it thin |
+| `ios/Pulse/` | SwiftUI app, iOS 17+. Screens, SwiftData, CoreBluetooth. Keep it thin |
 | `ios/PulseWidget/`, `ios/Shared/` | Widget, and the snapshot it shares with the app |
 | `ios/project.yml` | XcodeGen spec (the `.xcodeproj` is generated, never committed) |
 | `re-toolkit/` | Python protocol reference and tests |

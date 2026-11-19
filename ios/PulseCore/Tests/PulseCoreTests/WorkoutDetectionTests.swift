@@ -92,15 +92,6 @@ private func detect(_ list: [MinuteSample], body: DailyCalories.Body? = owner) -
     #expect(detect(quiet(0, 30) + chores + quiet(45, 70)).isEmpty)
 }
 
-@Test func unansweredWalksAreNotSentToAppleHealth() {
-    let walk = Workout(kind: .walk, start: start, end: moment(20), averageHeartRate: 90, maxHeartRate: 100, strain: 2,
-                       zoneSeconds: [0, 0, 0, 0, 0], calories: 0, source: .history, isSuggestion: true)
-    #expect(HealthExport.plan(sleeps: [], workouts: [walk], days: []).workouts.isEmpty)
-    var confirmed = walk
-    confirmed.isSuggestion = false
-    #expect(HealthExport.plan(sleeps: [], workouts: [confirmed], days: []).workouts.count == 1)
-}
-
 // MARK: - Zones
 
 @Test func zonesUseHeartRateReserveAndMyRestingHeartRate() throws {

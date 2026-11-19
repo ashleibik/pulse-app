@@ -58,11 +58,6 @@ minute** (a pair is never formed across two minutes). Needs ≥ 20 pairs.
 few noisy segments. *Our choice:* WHOOP reportedly weights the last slow-wave sleep. We can't detect sleep stages
 reliably, so we use the whole night.
 
-**SDNN (Apple Health only):** Apple Health stores HRV as SDNN, so the backup calculates it separately. Same walk
-through the night; each 5-minute segment needs ≥ 120 clean beats, `SDNN = sample standard deviation` of those beats,
-and the night's value is the **median** of the segments (≥ 3 segments). RMSSD stays the number used inside Pulse.
-*Source:* Task Force 1996.
-
 ## 3. Resting heart rate
 
 The **lowest mean HR over any 10 consecutive asleep minutes** in the main sleep (awake/off-wrist minutes break
@@ -260,7 +255,7 @@ and one SD better than normal scores about 84%.
 - **The first 4 days show no recovery score** (no baseline yet). That's on purpose: a number with no baseline would
   be made up.
 
-## 9. Estimated daily calories (app only, never written to Apple Health)
+## 9. Estimated daily calories
 
 Needs weight, height, birth year and sex. Without them, or without band data for the day, nothing is shown.
 
@@ -306,6 +301,16 @@ median and scaled median absolute deviation. The weights are the effect sizes Op
 heart-rate change 0.53, heart-rate spread 0.43, SDNN 0.41 and LF/HF 0.33. A minute is restful when the weighted score is above 0.4, and
 bouts under 3 minutes don't count. OpenStrap ships 0.3. *Our choice:* 0.4, which gives 1h48 of 9h asleep on the owner's night. This
 estimates cardiac calm. It does not measure deep sleep, and OpenStrap's own four-stage agreement with sleep-lab scoring is low (kappa 0.13).
+
+## 13. Wear sensor
+
+The band writes readable status lines (CONSOLE_LOGS). Pulse reads three of them: `TIGHTNESS V1: ... loose count = N, loose flag = 0 or 1`,
+`IQS7223B: Error reported, error code 0x..` and `CAPSENSE: Error reported while processing command`. WHOOP doesn't document them, so what
+they mean is read from their wording.
+
+- A reading counts for 30 minutes. Settings > Band shows OK, Loose, Error or Loose / error.
+- A workout or night is marked less certain when at least 25% of the time with tightness readings was loose. With readings for under
+  25% of it, Pulse doesn't judge. The numbers themselves aren't changed. *Our choice:* all of these limits.
 
 ### Bugs the truth tests caught while building v1
 1. One HR threshold for the whole month split nights where resting HR ran a few beats high → per-noon-block threshold.

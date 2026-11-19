@@ -96,11 +96,12 @@ three pills stacked full width: "Yes" (primary), "Fix times" and "Not asleep" (s
 opens "Edit sleep", and "Not asleep" asks once before removing the sleep. An answered card does not
 come back, and the answer teaches Pulse about similar nights.
 
-## 4b-3. Apple Health in Settings
+## 4b-3. Wear sensor
 
-The Apple Health section shows whether export is on, "Last written" (time · N samples, `--` before the first
-write) and a "Copy Apple Health log" button. If the tool that signed this install left out HealthKit, Export reads
-"Not available", the buttons are disabled, and the footer points to Export all data as the main backup.
+When the band reports a loose strap, Today and the live workout screen show one `caption` line with a `warn` icon:
+"Strap seems loose, tighten for accurate heart rate". Settings > Band has a "Wear sensor" row: OK, Loose, Error or
+Loose / error (`--` when the band hasn't reported lately), with a `caption` under it when the sensor reports errors. A workout or
+night spent mostly loose shows a `caption` saying its heart rate is less certain.
 
 ## 4b-4. Workouts
 

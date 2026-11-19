@@ -17,7 +17,6 @@ struct SleepEditView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
-    @Environment(HealthExporter.self) private var health
     @State private var start: Date
     @State private var end: Date
     @State private var confirmRemove = false
@@ -57,7 +56,7 @@ struct SleepEditView: View {
                 Button("I wasn't asleep") { confirmRemove = true }
                     .buttonStyle(.secondaryPill)
 
-                Text("Recovery, sleep need and Apple Health follow your change. You can undo your edits in Settings > Your data.")
+                Text("Recovery and sleep need follow your change. You can undo your edits in Settings > Your data.")
                     .textStyle(.caption)
                     .foregroundStyle(DS.Colors.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -93,7 +92,7 @@ struct SleepEditView: View {
     }
 
     private func save(start: Date?, end: Date?) {
-        SleepAnswer.save(target: target, start: start, end: end, context: context, loader: loader, health: health)
+        SleepAnswer.save(target: target, start: start, end: end, context: context, loader: loader)
         dismiss()
     }
 }

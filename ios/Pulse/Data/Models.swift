@@ -132,7 +132,7 @@ final class WorkoutRecord {
     var calories: Int
     var sourceRaw: String
     // Filled in by later phases:
-    var healthKitID: UUID?          // Phase 6
+    var healthKitID: UUID?          // no longer used; kept so existing installs and backups still load
     var stravaActivityID: Int?      // unused: Strava's ids are not stored (its 7-day cache rule)
     /// When Pulse sent this workout to Strava (Phase 7). Our own mark, not Strava data.
     var stravaUploadedAt: Date?

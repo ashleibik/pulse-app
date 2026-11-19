@@ -79,22 +79,6 @@ public enum HRV {
                         minSegments: minSegments) { rmssd($0) }
     }
 
-    /// Standard deviation of the clean beats (sample SD, in ms). This is the kind of HRV Apple
-    /// Health stores. nil with fewer than `minBeats` clean beats.
-    public static func sdnn(_ rr: [Double?], minBeats: Int = 120) -> Double? {
-        let beats = rr.compactMap { $0 }
-        guard beats.count >= minBeats else { return nil }
-        return Stats.sampleSD(beats)
-    }
-
-    /// Overnight SDNN: median SDNN of 5-minute fully-asleep segments, walked the same way as
-    /// `overnightRMSSD`. nil if fewer than 3 segments have enough clean beats.
-    public static func overnightSDNN(minuteRR: [[Double]], asleep: [Bool],
-                                     segmentMinutes: Int = 5, minSegments: Int = 3) -> Double? {
-        overnightMedian(minuteRR: minuteRR, asleep: asleep, segmentMinutes: segmentMinutes,
-                        minSegments: minSegments) { sdnn($0) }
-    }
-
     private static func overnightMedian(minuteRR: [[Double]], asleep: [Bool], segmentMinutes: Int,
                                         minSegments: Int, metric: ([Double?]) -> Double?) -> Double? {
         var values: [Double] = []

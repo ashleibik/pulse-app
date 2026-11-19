@@ -9,7 +9,6 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
-    @Environment(HealthExporter.self) private var health
     @Query private var profiles: [ProfileRecord]
     @Query private var bands: [BandRecord]
     @Query private var sleepCorrections: [SleepCorrectionRecord]
@@ -38,46 +37,6 @@ struct SettingsView: View {
 
                 bandSection
 
-                SettingsSection("Apple Health", footer: healthFooter) {
-                    ValueRow(label: "Export", value: health.signing == .missing ? "Not available" : (health.isEnabled ? "On" : "Off"),
-                             symbol: "heart.text.square", emphasized: health.isEnabled && health.signing != .missing)
-                    Hairline()
-                    ValueRow(label: "Last written", value: lastWrittenText)
-                    Hairline()
-                    HStack(spacing: DS.Space.s) {
-                        Button(health.isEnabled ? "Turn off" : "Turn on") {
-                            if health.isEnabled {
-                                health.disable()
-                            } else {
-                                Task { await health.enable(context: context) }
-                            }
-                        }
-                        .buttonStyle(.secondaryPill)
-                        if health.isEnabled {
-                            Button("Export all") {
-                                Task { await health.export(context: context, everything: true) }
-                            }
-                            .buttonStyle(.secondaryPill)
-                        }
-                    }
-                    .disabled(health.status == .working || !health.isAvailable)
-                    .padding(.top, DS.Space.m)
-                    Toggle(isOn: Binding(get: { health.writesSleepStages },
-                                         set: { on in Task { await health.setWritesSleepStages(on, context: context) } })) {
-                        Text("Write sleep stages to Apple Health (estimated)")
-                            .textStyle(.body)
-                            .foregroundStyle(DS.Colors.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .tint(DS.Colors.accent)
-                    .disabled(health.status == .working || !health.isAvailable)
-                    .padding(.top, DS.Space.m)
-                    Button("Copy Apple Health log") { UIPasteboard.general.string = health.traceLines.joined(separator: "\n") }
-                        .buttonStyle(.secondaryPill)
-                        .disabled(health.traceLines.isEmpty)
-                        .padding(.top, DS.Space.s)
-                }
-
                 CloudSettingsView()
 
                 SettingsSection("Reminders", footer: "A nudge 30 minutes before tonight's bedtime, and your recovery score after a sync. Created on this iPhone; nothing is sent anywhere.") {
@@ -99,7 +58,7 @@ struct SettingsView: View {
                     .padding(.top, DS.Space.m)
                 }
 
-                SettingsSection("Your data", footer: backupMessage ?? (health.signing == .missing ? "This is your main backup, because Apple Health isn't available on this install. " : "") + "The backup is one JSON file with all your band data, workouts, journal and profile. Use it to move Pulse to a new install. Importing adds to what is here and never deletes anything.") {
+                SettingsSection("Your data", footer: backupMessage ?? "Export all data is your backup. The file is one JSON file with all your band data, workouts, journal and profile. Use it to move Pulse to a new install. Importing adds to what is here and never deletes anything.") {
                     BackupButtons(message: $backupMessage)
                     if !sleepCorrections.isEmpty {
                         Button("Undo my sleep edits (\(sleepCorrections.count))") { undoSleepEdits() }
@@ -168,6 +127,7 @@ struct SettingsView: View {
                             titleVisibility: .visible) {
             Button("Delete everything") {
                 try? PulseStore.deleteAllHealthData(in: context)
+                WearSensorStore.shared.clear()
                 loader.dataChanged()
             }
         } message: {
@@ -178,23 +138,6 @@ struct SettingsView: View {
         .sheet(isPresented: $showMotionCheck) { MotionCheckView() }
         .task {
             if profiles.isEmpty { _ = ProfileStore.current(in: context) }
-        }
-    }
-
-    /// "Nov 18, 5:43 PM · 1,204 samples", or dashes before the first write.
-    private var lastWrittenText: String {
-        guard let date = health.lastWrittenAt else { return "--" }
-        return "\(date.formatted(date: .abbreviated, time: .shortened)) · \(health.lastWrittenSamples.formatted()) samples"
-    }
-
-    /// What happened last, or what the export does.
-    private var healthFooter: String {
-        if health.signing == .missing { return HealthAccess.missingMessage }
-        return switch health.status {
-        case .working: "Exporting…"
-        case .done(let message): message
-        case .failed(let message): message
-        case .idle: "Backs up sleep (asleep and awake), heart rate, resting heart rate, HRV and workouts. Sleep stages are estimates from heart rate and motion, so they stay in Pulse unless you turn them on. Steps and calories are never written. Pulse reads Apple Health only to avoid duplicates."
         }
     }
 
@@ -212,6 +155,16 @@ struct SettingsView: View {
                 Hairline()
                 ValueRow(label: "Battery", value: record.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "Unknown",
                          emphasized: record.batteryPercent != nil)
+                Hairline()
+                ValueRow(label: "Wear sensor", value: WearSensorStore.shared.status.label,
+                         emphasized: WearSensorStore.shared.status.label == "OK")
+                if WearSensorStore.shared.status.hasError {
+                    Text("The band reports an error from its wear sensor, so its loose-strap reading may not be reliable. Heart rate comes from a separate optical sensor.")
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, DS.Space.s)
+                }
                 Hairline()
                 ValueRow(label: "Last sync",
                          value: record.lastHistorySyncAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never",
@@ -257,14 +210,9 @@ struct SettingsView: View {
 
     /// Back to what Pulse detected by itself.
     private func undoSleepEdits() {
-        let changed = sleepCorrections.map(\.value)
         for record in sleepCorrections { context.delete(record) }
         try? context.save()
-        guard let from = changed.map(\.detectedStart).min(), let to = changed.map(\.detectedEnd).max() else { return }
-        Task {
-            await loader.recompute(context: context)
-            await health.sleepChanged(from: from, to: to, context: context)
-        }
+        Task { await loader.recompute(context: context) }
     }
 
     private var appVersion: String {

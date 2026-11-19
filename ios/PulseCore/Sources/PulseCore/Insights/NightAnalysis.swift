@@ -61,8 +61,7 @@ public enum SleepTimeline {
     }
 
     /// The night as segments. Minutes with no band data belong to no segment.
-    /// - Parameter findRestful: false skips the slower restful estimate when only asleep and awake matter.
-    public static func build(minutes: [MinuteSample], from start: Date, to end: Date, findRestful: Bool = true) -> [SleepSegment] {
+    public static func build(minutes: [MinuteSample], from start: Date, to end: Date) -> [SleepSegment] {
         let count = Int((end.timeIntervalSince(start) / 60).rounded(.up))
         guard count > 0 else { return [] }
         var hr = [Double?](repeating: nil, count: count)
@@ -76,10 +75,8 @@ public enum SleepTimeline {
         }
         guard hr.contains(where: { $0 != nil }) else { return [] }
         var phases = SleepTimeline.phases(hr: hr, movement: movement)
-        if findRestful {
-            let restful = OpenStrapDeepSleep.restful(night: night, asleep: phases.map { $0 == .light })
-            for index in phases.indices where restful[index] { phases[index] = .restful }
-        }
+        let restful = OpenStrapDeepSleep.restful(night: night, asleep: phases.map { $0 == .light })
+        for index in phases.indices where restful[index] { phases[index] = .restful }
 
         var segments: [SleepSegment] = []
         var runStart = 0

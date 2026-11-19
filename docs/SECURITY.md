@@ -32,7 +32,6 @@ Items marked ⚠ are open.
   The password is sent once to sign in and never stored.
 - **No logging of health data**: the app has no `print` / log statements (checked by scan).
 - **HTTPS only**: the cloud URL must start with `https://`; the app has no plain-http address.
-- **Apple Health is write-only**, and simulated data is never written (rule + test).
 - **The debug packet log** is memory-only, capped at 400 lines, hidden behind 7 taps.
 
 ### Cloud (your own Supabase project)

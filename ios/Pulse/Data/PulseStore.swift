@@ -192,7 +192,7 @@ extension PulseStore {
         if let detected = output.detectedWorkouts {
             // Planned demo workouts are kept as they are. Detected ones are added, updated, or
             // removed if the detector no longer finds them. IDs are stable (WorkoutDetector.stableID),
-            // so a workout keeps its Apple Health / Strava marks across syncs.
+            // so a workout keeps its Strava mark across syncs.
             // "kept" = demo workouts and ones the user added by hand: detection never touches them.
             let demo = workouts.filter { $0.sourceRaw != DataSource.history.rawValue }
             var fromBand: [UUID: WorkoutRecord] = [:]
