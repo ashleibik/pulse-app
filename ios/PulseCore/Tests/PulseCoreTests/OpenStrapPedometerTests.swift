@@ -77,8 +77,12 @@ private func walk(_ durationS: Double, _ stepHz: Double, fs: Double = 100, ampG:
 @Test func openStrapChunkBoundaryLossIsFlat() {
     func chunked(_ n: Int) -> Int {
         let (wx, wy, wz) = walk(Double(n) / (110 / 60.0), 110 / 60.0)
-        let sig = [Double](repeating: 1, count: 300) + (0..<wx.count).map { (wx[$0] * wx[$0] + wy[$0] * wy[$0] + wz[$0] * wz[$0]).squareRoot() }
-            + [Double](repeating: 1, count: 300)
+        var sig = [Double](repeating: 1, count: 300)
+        for i in 0..<wx.count {
+            let sum: Double = wx[i] * wx[i] + wy[i] * wy[i] + wz[i] * wz[i]
+            sig.append(sum.squareRoot())
+        }
+        sig += [Double](repeating: 1, count: 300)
         let minutes = stride(from: 0, to: sig.count, by: 6000).map { Array(sig[$0..<min($0 + 6000, sig.count)]) }
         return OpenStrapPedometer.calcSteps(minutes)
     }
