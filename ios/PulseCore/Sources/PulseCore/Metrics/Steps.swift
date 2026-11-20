@@ -282,14 +282,17 @@ public enum Steps {
         public var end: Date
         public var steps: Int
         public var createdAt: Date
+        /// A step test: the band's own 100 Hz count of the same walk (`LiveSteps`). nil without the stream.
+        public var liveSteps: Int?
 
-        public init(id: UUID = UUID(), kind: Kind, start: Date, end: Date, steps: Int, createdAt: Date) {
+        public init(id: UUID = UUID(), kind: Kind, start: Date, end: Date, steps: Int, createdAt: Date, liveSteps: Int? = nil) {
             self.id = id
             self.kind = kind
             self.start = start
             self.end = end
             self.steps = steps
             self.createdAt = createdAt
+            self.liveSteps = liveSteps
         }
     }
 

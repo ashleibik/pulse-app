@@ -308,6 +308,8 @@ final class StepReferenceRecord {
     var end: Date
     var steps: Int
     var createdAt: Date
+    /// The band's 100 Hz count of a step test. nil when the stream didn't run.
+    var liveSteps: Int?
 
     init(_ r: Steps.Reference) {
         id = r.id
@@ -316,11 +318,12 @@ final class StepReferenceRecord {
         end = r.end
         steps = r.steps
         createdAt = r.createdAt
+        liveSteps = r.liveSteps
     }
 
     var value: Steps.Reference {
         Steps.Reference(id: id, kind: Steps.Reference.Kind(rawValue: kindRaw) ?? .stepTest, start: start, end: end, steps: steps,
-                        createdAt: createdAt)
+                        createdAt: createdAt, liveSteps: liveSteps)
     }
 }
 

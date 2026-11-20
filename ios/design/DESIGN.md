@@ -152,11 +152,14 @@ hour highlighted, every third hour labelled).
 Settings has a "Steps" section: a "Daily goal" row with minus / plus (1,000 steps a click, 2,000 to 30,000), a "Calibration" row
 ("Not checked yet", "From 2 step tests", "From 3 Apple Watch days", ...), and two secondary pills: "Step test" and "Compare with Apple Watch".
 
-"Step test" is a sheet: one `body` paragraph (walk at your usual pace, count 500 steps, tap Stop), a big timer in `title` while it
-runs, and a Start / Stop primary pill. After Stop it waits for the band's data ("Waiting for the band…" with the reason), then shows
-Pulse's count and yours side by side, the difference in percent (`warn` past 5%, a word next to it too), an editable "You counted" row
-(default 500), and "Save" (primary) / "Discard" (secondary). Saved tests are listed under it with their date, both counts and the
-difference. "Compare with Apple Watch" is a sheet: a day picker and a steps field with "Add day", then each day with Pulse, Apple
+"Step test" is a sheet: one `body` paragraph (walk at your usual pace, count 500 steps, tap Stop), a Start primary pill with one
+`caption` saying the band streams its motion 100 times a second during the test, then a big timer in `title` while it runs with a
+`caption` under it ("The band has counted 312 steps so far", or why there is no count yet) and Stop (primary) / Cancel
+(secondary). After Stop it shows Pulse's count (the band's 100 Hz count when the stream ran, else the all-day estimate once its data
+is in) and yours side by side, the difference in percent (`warn` past 5%, a word next to it too), one `caption` with the all-day
+estimate and its difference, an editable "You counted" row (default 500), and "Save" (primary) / "Discard" (secondary). Saved tests
+are listed under it with their date, the 100 Hz count, the all-day estimate and yours, and the difference; the title shows the
+average error of the 100 Hz counts. "Compare with Apple Watch" is a sheet: a day picker and a steps field with "Add day", then each day with Pulse, Apple
 Watch and the difference, and at the top the average difference. Each test and day has a "Remove" button (ask once). Each difference
 is checked without that entry (docs/METRICS.md §15), and both sheets say so in one `caption`.
 

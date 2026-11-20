@@ -426,6 +426,18 @@ count, which counts typing and driving too and which NOOP itself says over-reads
 7. **A day** is counted hour by hour (each hour starts from the reading before it), and its total is the sum of the hours. With under 90%
    of the day so far measured, the day says how long the band measured, as calories do.
 
+**The step test's 100 Hz count.** The band has a faster stream: command 0x3F (SEND_R10_R11_REALTIME) makes it send, about
+once a second, 100 accelerometer samples per axis (packet type 0x2B, re-toolkit/docs/PROTOCOL.md §8b). It exists only while
+the app asks for it and, left on, floods Bluetooth and the band's memory, so Pulse turns it off on every connect and on only
+for a step test (15 minutes at most). Each unbroken run of seconds is counted with OpenStrap's pedometer, ported line for line
+(`OpenStrapPedometer`, MIT): the size of each reading, an 8-sample moving average, peaks in a 33-sample window against a
+threshold that follows recent peaks with a 0.10 g dead zone, steps 0.2 to 2 s apart, and 8 regular steps before anything
+counts. OpenStrap's own figures: exact on clean synthetic walking at 60 to 180 steps a minute; on OxWalk (39 adults, free
+living, camera ground truth) 33% average error at 100 Hz on the wrist, so it is a counter for walks it supervises, not an
+all-day source. OpenStrap also measured an earlier "movement minutes × cadence" estimate on one-second data over-reading about
+6× on a real day; Pulse's own all-day estimate above is of that kind, with a stricter test for walking, and the Apple Watch
+days are what show whether it holds. The step test shows the 100 Hz count next to the owner's and keeps both.
+
 **The personal factor.** The owner's references: a step test (walk, count the steps by hand, Pulse compares the same minutes) and Apple
 Watch day totals, typed in. A reference teaches Pulse when the band measured at least 90% of its time and both sides counted at least
 100 steps. From 3 references, NOOP's fit (`StepsEstimateEngine.calibrate`): the median of reference ÷ Pulse, each reference weighted by

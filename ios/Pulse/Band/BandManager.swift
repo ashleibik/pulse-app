@@ -89,6 +89,13 @@ final class BandManager {
     /// The band's live heart rate while a live screen asks for it. `nil` = no live reading.
     private(set) var liveHeartRate: Int?
     private var wantsLive = false
+    /// The 100 Hz motion stream's seconds while a step test runs (docs/METRICS.md §15).
+    private(set) var liveSteps = LiveSteps()
+    /// True while a step test wants the 100 Hz stream.
+    private(set) var isStreamingMotion = false
+    @ObservationIgnored private var motionStreamCap: Task<Void, Never>?
+    /// The stream turns itself off after this long, whatever happens to the step test.
+    static let motionStreamLimit: TimeInterval = 15 * 60
 
     /// Called after new data was saved and the metrics were recalculated.
     var onDataChanged: (() -> Void)?
@@ -349,6 +356,37 @@ final class BandManager {
         wantsLive = false
         liveHeartRate = nil
         if hasSession { worker?.setLive(false) }
+    }
+
+    /// A step test started: stream the band's 100 Hz motion. It stops by itself after `motionStreamLimit`, and every
+    /// new connection turns it off (BandSession.start), so a test cut short can't leave it running.
+    func startMotionStream(context: ModelContext) {
+        self.context = context
+        liveSteps = LiveSteps()
+        isStreamingMotion = true
+        traceLine("STEP TEST: asking for the 100 Hz motion stream")
+        if isConnected && hasSession {
+            worker?.setRawStream(true)
+        } else {
+            keepConnected(force: true)      // switched on after the first pull
+        }
+        motionStreamCap?.cancel()
+        motionStreamCap = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.motionStreamLimit))
+            guard !Task.isCancelled else { return }
+            self?.stopMotionStream()
+        }
+    }
+
+    /// The step test stopped: stream off. The seconds received stay in `liveSteps` until the next test.
+    func stopMotionStream() {
+        motionStreamCap?.cancel()
+        motionStreamCap = nil
+        guard isStreamingMotion else { return }
+        isStreamingMotion = false
+        let scale = liveSteps.medianG.map { String(format: "%.3f g", $0) } ?? "no readings"
+        traceLine("STEP TEST: stream off after \(liveSteps.seconds.count) seconds of motion (median size \(scale))")
+        if hasSession { worker?.setRawStream(false) }
     }
 
     /// Stop pairing (scan / connect to a new band). A paired band's connection is kept.
@@ -616,6 +654,9 @@ final class BandManager {
             case .liveHeartRate(let bpm):
                 liveHeartRate = bpm
 
+            case .rawMotion(let motion):
+                if isStreamingMotion { liveSteps.add(motion) }
+
             case .finished:
                 stopWatchdog()
                 finish()
@@ -683,6 +724,8 @@ final class BandManager {
             self.showsSyncSpinner = false
             // A live screen is waiting: switch the stream on now that the pull is done.
             if self.wantsLive && self.hasSession { self.worker?.setLive(true) }
+            // A step test is running (the connection came back): the new session turned the 100 Hz stream off.
+            if self.isStreamingMotion && self.hasSession { self.worker?.setRawStream(true) }
         }
         guard saved > 0 else {
             stage = .upToDate

@@ -25,6 +25,7 @@ Pulse ports some logic from two open projects. The ported Swift lives in
 | `OpenStrap/OpenStrapZones.swift` | `lib/src/onehz/workout/hr_zones.dart` | Heart-rate zones |
 | `OpenStrap/OpenStrapCalories.swift` | `lib/src/onehz/workout/calories.dart` | Active calories |
 | `OpenStrap/OpenStrapAutoDetect.swift` | `lib/src/onehz/workout/auto_detect.dart` | Cardio workout detection |
+| `OpenStrap/OpenStrapPedometer.swift` | `lib/src/onehz/motion/steps.dart` (Tier A: `StepParams`, `pedometer`, `calcSteps`, `livePedometer`) | Steps on the band's 100 Hz stream during a step test |
 
 ```text
 MIT License

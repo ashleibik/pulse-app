@@ -41,6 +41,8 @@ public struct SimulatedBand: Sendable {
     public private(set) var acksReceived: [[UInt8]] = []
     /// True while the app has asked for live heart rate (TOGGLE_REALTIME_HR).
     public private(set) var realtimeOn = false
+    /// True while the app has the 100 Hz stream on (SEND_R10_R11_REALTIME). Starts on, like a band left streaming.
+    public private(set) var rawStreamOn = true
     public private(set) var commandsReceived: [String] = []
 
     private var batches: [[Sample]]
@@ -104,6 +106,9 @@ public struct SimulatedBand: Sendable {
         case .toggleRealtimeHr:
             realtimeOn = frame.body.first == 1
             return respond(opcode, requestSeq, [])
+        case .sendR10R11Realtime:
+            rawStreamOn = frame.body.first == 1
+            return respond(opcode, requestSeq, [])
         case .sendHistoricalData:
             return sendCurrentBatch()
         case .historicalDataResult:
@@ -152,6 +157,30 @@ public struct SimulatedBand: Sendable {
         inner.replaceSubrange(2..<6, with: LE.bytes(timestamp))
         inner[8] = heartRate
         inner[18] = 1
+        return Whoop.buildFrame(inner: inner)
+    }
+
+    /// One second of the 100 Hz stream's motion variant (type 0x2B, 1,920 inner bytes): unix time at [11],
+    /// heart rate at [17], x, y and z samples from [85], [285] and [485].
+    public static func rawMotionFrame(timestamp: UInt32, heartRate: UInt8 = 80, accel: [[Int16]]) -> [UInt8] {
+        var inner = [UInt8](repeating: 0, count: Whoop.RawMotion.innerLength)
+        inner[0] = Whoop.PacketType.realtimeRaw.rawValue
+        inner[2] = 0x0A
+        inner.replaceSubrange(11..<15, with: LE.bytes(timestamp))
+        inner[17] = heartRate
+        for (axis, start) in [85, 285, 485].enumerated() {
+            for (i, value) in accel[axis].prefix(100).enumerated() {
+                inner.replaceSubrange((start + 2 * i)..<(start + 2 * i + 2), with: LE.bytes(UInt16(bitPattern: value)))
+            }
+        }
+        return Whoop.buildFrame(inner: inner)
+    }
+
+    /// The stream's optical variant (1,924 inner bytes), which Pulse doesn't use.
+    public static func rawOpticalFrame(timestamp: UInt32) -> [UInt8] {
+        var inner = [UInt8](repeating: 0, count: 1924)
+        inner[0] = Whoop.PacketType.realtimeRaw.rawValue
+        inner.replaceSubrange(11..<15, with: LE.bytes(timestamp))
         return Whoop.buildFrame(inner: inner)
     }
 

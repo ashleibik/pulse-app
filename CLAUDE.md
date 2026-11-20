@@ -48,7 +48,9 @@ Port OpenStrap only from commit `e59d63c` or earlier: that code is MIT, and late
 
 Band connection and kept reconnect, band clock set, history drain (a batch is acked only after it
 is saved), the data cutoff (`BandDataCutoff`: the band was bought used, older records belong to the
-previous owner and are dropped), and the low-battery pause (below 5%, "Sync anyway" overrides once).
+previous owner and are dropped), the low-battery pause (below 5%, "Sync anyway" overrides once), and the 100 Hz motion
+stream (command 0x3F): off on every connect, on only during a step test, 15 minutes at most. Left on, it floods Bluetooth
+and the band's memory.
 
 ## Layout
 

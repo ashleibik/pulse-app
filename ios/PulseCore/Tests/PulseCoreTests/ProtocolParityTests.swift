@@ -64,6 +64,7 @@ func int(_ v: Any?) -> Int? { (v as? NSNumber)?.intValue }
         switch c["name"] as! String {
         case "hr_broadcast": got = Whoop.Command.hrBroadcast(on: c["on"] as! Bool, seq: seq)
         case "realtime_hr": got = Whoop.Command.realtimeHR(on: c["on"] as! Bool, seq: seq)
+        case "raw_stream": got = Whoop.Command.rawStream(on: c["on"] as! Bool, seq: seq)
         case "report_version": got = Whoop.Command.reportVersion(seq: seq)
         case "get_battery": got = Whoop.Command.getBattery(seq: seq)
         case "get_clock": got = Whoop.Command.getClock(seq: seq)
@@ -181,6 +182,12 @@ func int(_ v: Any?) -> Int? { (v as? NSNumber)?.intValue }
             } else {
                 #expect(h.accelG == nil, "\(name)")
             }
+        case .rawMotion(let m):
+            #expect(kind == "raw_motion", "\(name)")
+            #expect(Int(m.timestamp) == int(want["timestamp"]) && Int(m.subsec) == int(want["subsec"]), "\(name)")
+            #expect(m.heartRate == int(want["hr"]), "\(name)")
+            let axes = (want["accel"] as! [[NSNumber]]).map { $0.map { Int16($0.intValue) } }
+            #expect(m.accel == axes, "\(name)")
         case .unknown(let type, let typeName, let inner):
             #expect(kind == "unknown", "\(name): Swift decoded as unknown, Python as \(kind)")
             #expect(type == int(want["packet_type"]) && typeName == want["type_name"] as! String, "\(name)")

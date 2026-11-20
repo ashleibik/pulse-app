@@ -73,12 +73,28 @@ extension Whoop {
         public var raw: [UInt8] = []
     }
 
+    /// REALTIME_RAW (0x2B), the motion variant: one second of 100 Hz accelerometer samples. Sent only while
+    /// SEND_R10_R11_REALTIME is on. Layout from NOOP's docs/PROTOCOL_SENSORS.md (WHOOP 4, 1,917-byte payload,
+    /// observed in device captures); frame offsets there are 4 more than these inner offsets.
+    public struct RawMotion: Sendable, Equatable {
+        public static let innerLength = 1920
+        public static let samplesPerAxis = 100
+        /// Raw units per g. NOOP and OpenStrap both use 1/4096 g; it matched a gravity sphere fit in NOOP's captures.
+        public static let countsPerG = 4096.0
+        public let timestamp: UInt32         // [11:15] unix seconds
+        public let subsec: UInt16            // [15:17]
+        public let heartRate: Int            // [17]
+        /// x, y, z: 100 signed samples each, from [85], [285] and [485].
+        public let accel: [[Int16]]
+    }
+
     public enum Packet: Sendable, Equatable {
         case realtime(RealtimeHR)
         case commandResponse(CommandResponse)
         case event(Event)
         case metadata(Metadata)
         case history(HistoryRecord)
+        case rawMotion(RawMotion)
         case unknown(packetType: Int, typeName: String, inner: [UInt8])
     }
 
@@ -95,9 +111,20 @@ extension Whoop {
         case .event: decoded = decodeEvent(inner)
         case .metadata: decoded = .metadata(decodeMetadata(inner))
         case .historicalData: decoded = decodeHistory(inner)
+        case .realtimeRaw: decoded = decodeRawMotion(inner)
         default: decoded = nil
         }
         return decoded ?? .unknown(packetType: frame.packetType, typeName: frame.typeName, inner: inner)
+    }
+
+    /// The motion variant is told apart by its length; the optical variant (1,924 bytes) stays unknown.
+    static func decodeRawMotion(_ inner: [UInt8]) -> Packet? {
+        guard inner.count == RawMotion.innerLength else { return nil }
+        func axis(_ start: Int) -> [Int16] {
+            (0..<RawMotion.samplesPerAxis).map { Int16(bitPattern: LE.u16(inner, start + 2 * $0)) }
+        }
+        return .rawMotion(RawMotion(timestamp: LE.u32(inner, 11), subsec: LE.u16(inner, 15), heartRate: Int(inner[17]),
+                                    accel: [axis(85), axis(285), axis(485)]))
     }
 
     static func rrList(_ inner: [UInt8], countAt off: Int, maxCount: Int = 4) -> [Int] {

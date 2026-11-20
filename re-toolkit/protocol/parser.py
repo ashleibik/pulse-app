@@ -95,6 +95,24 @@ class HistoricalRecord:
 
 
 @dataclass
+class RawMotion:
+    """
+    PacketType.REALTIME_RAW (0x2B), motion variant: one second of 100 Hz accelerometer samples, sent only while
+    SEND_R10_R11_REALTIME (0x3F) is on. Layout from NOOP docs/PROTOCOL_SENSORS.md (WHOOP 4, 1,917-byte payload,
+    observed in device captures). NOOP gives FRAME offsets; inner offsets here are 4 less. 1/4096 g per count.
+    The optical variant (1,924 inner bytes) stays Unknown.
+    """
+    kind: str = field(default="raw_motion", init=False)
+    timestamp: int = 0          # inner[11:15]
+    subsec: int = 0             # inner[15:17]
+    hr: int = 0                 # inner[17]
+    accel: list[list[int]] = field(default_factory=list)   # x, y, z: 100 int16 each from inner[85], [285], [485]
+
+
+RAW_MOTION_INNER_LENGTH = 1920
+
+
+@dataclass
 class Unknown:
     kind: str = field(default="unknown", init=False)
     packet_type: int = 0
@@ -232,6 +250,13 @@ def decode_history(inner: bytes) -> HistoricalRecord | None:
     return rec
 
 
+def decode_raw_motion(inner: bytes) -> RawMotion | None:
+    if len(inner) != RAW_MOTION_INNER_LENGTH:
+        return None
+    axes = [list(struct.unpack_from("<100h", inner, start)) for start in (85, 285, 485)]
+    return RawMotion(timestamp=_u32(inner, 11), subsec=_u16(inner, 15), hr=inner[17], accel=axes)
+
+
 def decode(frame: Frame):
     """Decode one frame. Call only on frame.valid frames."""
     inner = frame.inner
@@ -247,6 +272,8 @@ def decode(frame: Frame):
         result = decode_metadata(inner)
     elif t == PacketType.HISTORICAL_DATA:
         result = decode_history(inner)
+    elif t == PacketType.REALTIME_RAW:
+        result = decode_raw_motion(inner)
     if result is None:
         result = Unknown(packet_type=t, type_name=frame.type_name, inner_hex=inner.hex())
     return result

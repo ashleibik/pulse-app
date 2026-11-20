@@ -105,6 +105,16 @@ final class SyncWorker: @unchecked Sendable {
         }
     }
 
+    /// The 100 Hz motion stream on or off (the step test).
+    func setRawStream(_ on: Bool) {
+        queue.async { [self] in
+            guard var current = session else { return }
+            let effects = current.setRawStream(on)
+            session = current
+            run(effects)
+        }
+    }
+
     /// The connection is over: forget the session (a late save confirmation is then ignored).
     func end() {
         queue.async { [self] in session = nil }

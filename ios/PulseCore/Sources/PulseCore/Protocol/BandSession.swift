@@ -79,6 +79,8 @@ public struct BandSession: Sendable {
         case progress(Progress)
         /// A live heart-rate reading (only while realtime streaming is on).
         case liveHeartRate(Int)
+        /// One second of 100 Hz motion (only while the raw stream is on, during a step test).
+        case rawMotion(Whoop.RawMotion)
         case finished(records: Int)
         case failed(String)
         case log(LogEntry)
@@ -101,6 +103,8 @@ public struct BandSession: Sendable {
     /// packets are summarized once per batch.
     public var verboseTrace = false
     private var quiet = (notifications: 0, frames: 0, bytes: 0)
+    /// The 100 Hz stream's packets, counted like history: motion and the optical variant.
+    private var quietRaw = (motion: 0, other: 0)
     /// From GET_DATA_RANGE: where the band's unsynced data starts and ends (flash pages).
     private var range: (trim: UInt32, write: UInt32, capacity: UInt32)?
 
@@ -137,7 +141,13 @@ public struct BandSession: Sendable {
     /// One line for the history packets that were counted instead of logged.
     private mutating func flushQuiet() -> [Effect] {
         guard quiet.notifications > 0 else { return [] }
-        defer { quiet = (0, 0, 0) }
+        defer {
+            quiet = (0, 0, 0)
+            quietRaw = (0, 0)
+        }
+        if quietRaw.motion + quietRaw.other > 0 {
+            return [.trace("  … REALTIME_RAW: \(quietRaw.motion) motion and \(quietRaw.other) other packets, \(quiet.frames) history frames, in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized)")]
+        }
         return [.trace("  … HISTORICAL_DATA: \(quiet.frames) frames in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized; turn on Verbose for every packet)")]
     }
 
@@ -151,6 +161,8 @@ public struct BandSession: Sendable {
         // Battery: the live heart-rate stream must never be left on by a crash or a killed app.
         // The live workout screen switches it on again when it needs it.
         effects += write(Whoop.Command.realtimeHR(on: false, seq: seq.next()), "TOGGLE_REALTIME_HR off")
+        // The same for the 100 Hz stream, which also stays on across reconnects (a step test cut short).
+        effects += write(Whoop.Command.rawStream(on: false, seq: seq.next()), "SEND_R10_R11_REALTIME off")
         let battery = Whoop.Command.getBattery(seq: seq.next())
         effects += write(battery, "GET_BATTERY_LEVEL")
         let version = Whoop.Command.reportVersion(seq: seq.next())
@@ -182,13 +194,21 @@ public struct BandSession: Sendable {
         // A big download is thousands of identical-looking history packets. Unless the log is
         // verbose, they are counted (not hex-dumped) and summarized at the end of each batch.
         // That keeps the log small and saves the CPU time of formatting them.
-        let onlyHistory = frames.allSatisfy { $0.valid && $0.packetType == Int(Whoop.PacketType.historicalData.rawValue) }
+        let quietTypes = [Int(Whoop.PacketType.historicalData.rawValue), Int(Whoop.PacketType.realtimeRaw.rawValue)]
+        let onlyHistory = frames.allSatisfy { $0.valid && quietTypes.contains($0.packetType) }
         if !verboseTrace && !resynced && key == Whoop.dataUUID && onlyHistory {
             quiet.notifications += 1
             quiet.bytes += bytes.count
-            quiet.frames += frames.count
             var effects: [Effect] = []
-            for frame in frames { effects += handle(Whoop.decode(frame), frame: frame, channel: key, now: now) }
+            for frame in frames {
+                let packet = Whoop.decode(frame)
+                if frame.packetType == Int(Whoop.PacketType.realtimeRaw.rawValue) {
+                    if case .rawMotion = packet { quietRaw.motion += 1 } else { quietRaw.other += 1 }
+                } else {
+                    quiet.frames += 1
+                }
+                effects += handle(packet, frame: frame, channel: key, now: now)
+            }
             return effects
         }
         var effects = flushQuiet()
@@ -235,6 +255,11 @@ public struct BandSession: Sendable {
     public mutating func setLive(_ on: Bool) -> [Effect] {
         let command = Whoop.Command.realtimeHR(on: on, seq: seq.next())
         return write(command, "TOGGLE_REALTIME_HR")
+    }
+
+    /// Turns the band's 100 Hz motion stream on or off (only the step test uses it).
+    public mutating func setRawStream(_ on: Bool) -> [Effect] {
+        flushQuiet() + write(Whoop.Command.rawStream(on: on, seq: seq.next()), "SEND_R10_R11_REALTIME \(on ? "on" : "off")")
     }
 
     /// Call after the batch from `.persist` is safely on disk. Returns the ack for the band.
@@ -337,7 +362,12 @@ public struct BandSession: Sendable {
         case .history:
             return map(sync.handle(packet))
 
-        case .unknown(_, let typeName, _):
+        case .rawMotion(let motion):
+            return [.rawMotion(motion)]
+
+        case .unknown(let type, let typeName, _):
+            // The stream's optical variant: counted in the summary, not logged one by one.
+            if type == Int(Whoop.PacketType.realtimeRaw.rawValue) { return [] }
             return [log(.fromBand, channel, "Unknown packet \(typeName)", frame.raw)]
         }
     }

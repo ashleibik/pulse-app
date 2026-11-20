@@ -35,8 +35,10 @@ struct StepTestView: View {
     /// Kept outside the view, so a walk survives the app going to the background.
     @AppStorage("stepTestStart") private var startedAt: Double = 0
     @AppStorage("stepTestEnd") private var stoppedAt: Double = 0
+    /// The band's 100 Hz count of the walk, taken at Stop. -1 = the stream sent nothing.
+    @AppStorage("stepTestLive") private var liveCount = -1
     @State private var counted = 500
-    /// Pulse's count for the walk, with the factor learned before it.
+    /// Pulse's all-day (once a second) count for the walk, with the factor learned before it.
     @State private var pulse: Int?
     @State private var waitingNote = "Waiting for the band…"
     @State private var saved: [Steps.Comparison] = []
@@ -59,12 +61,18 @@ struct StepTestView: View {
                     Button("Start") {
                         startedAt = Date.now.timeIntervalSince1970
                         stoppedAt = 0
+                        liveCount = -1
                         pulse = nil
+                        band.startMotionStream(context: context)
                     }
                     .buttonStyle(.primaryPill)
+                    Text("During the test the band streams its motion 100 times a second, so Pulse can count each step. It stops at Stop, or after 15 minutes.")
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if stoppedAt == 0 {
                     walking
-                } else if let pulse {
+                } else if pulse != nil || liveCount >= 0 {
                     result(pulse)
                 } else {
                     waiting
@@ -98,17 +106,40 @@ struct StepTestView: View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
             TimelineView(.periodic(from: .now, by: 1)) { timeline in
                 let seconds = max(0, Int(timeline.date.timeIntervalSince(start)))
-                Text(String(format: "%d:%02d", seconds / 60, seconds % 60))
-                    .textStyle(.title)
-                    .monospacedDigit()
-                    .foregroundStyle(DS.Colors.accent)
-                    .accessibilityLabel("\(seconds / 60) minutes \(seconds % 60) seconds")
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text(String(format: "%d:%02d", seconds / 60, seconds % 60))
+                        .textStyle(.title)
+                        .monospacedDigit()
+                        .foregroundStyle(DS.Colors.accent)
+                        .accessibilityLabel("\(seconds / 60) minutes \(seconds % 60) seconds")
+                    Text(streamNote(seconds: seconds, now: timeline.date))
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            Button("Stop") { stoppedAt = Date.now.timeIntervalSince1970 }
+            Button("Stop") { stop() }
                 .buttonStyle(.primaryPill)
             Button("Cancel") { reset() }
                 .buttonStyle(.secondaryPill)
         }
+    }
+
+    /// What the stream is doing: the band's count so far, or why there is none.
+    private func streamNote(seconds: Int, now: Date) -> String {
+        if !band.liveSteps.isEmpty {
+            return "The band has counted \(band.liveSteps.steps(from: start, to: now).formatted()) steps so far."
+        }
+        if seconds < 15 { return "Waiting for the band's motion stream…" }
+        return band.isConnected
+            ? "The band isn't sending its 100 Hz motion. Pulse will use its once-a-second estimate."
+            : "Not connected to the band (\(band.statusLine)). Pulse will use its once-a-second estimate."
+    }
+
+    private func stop() {
+        stoppedAt = Date.now.timeIntervalSince1970
+        liveCount = band.liveSteps.isEmpty ? -1 : band.liveSteps.steps(from: start, to: end)
+        band.stopMotionStream()
     }
 
     private var waiting: some View {
@@ -125,13 +156,16 @@ struct StepTestView: View {
         }
     }
 
-    private func result(_ pulse: Int) -> some View {
-        let difference = Double(pulse - counted) / Double(max(1, counted))
+    /// - Parameter pulse: the all-day (once a second) count, nil while its minutes haven't arrived.
+    private func result(_ pulse: Int?) -> some View {
+        // The band's own 100 Hz count is the headline when the stream ran; the all-day estimate is checked too.
+        let headline = liveCount >= 0 ? liveCount : (pulse ?? 0)
+        let difference = Double(headline - counted) / Double(max(1, counted))
         let judged = verdict(difference, limit: 0.05)
         return VStack(alignment: .leading, spacing: DS.Space.m) {
             HStack(alignment: .top, spacing: DS.Space.m) {
-                StatBlock(symbol: "waveform.path.ecg", label: "Pulse", number: Double(pulse), format: { Int($0).formatted() },
-                          caption: "estimated", valueStyle: .title)
+                StatBlock(symbol: "waveform.path.ecg", label: "Pulse", number: Double(headline), format: { Int($0).formatted() },
+                          caption: liveCount >= 0 ? "100 Hz count" : "estimated", valueStyle: .title)
                 StatBlock(symbol: "hand.raised", label: "You", number: Double(counted), format: { Int($0).formatted() },
                           caption: "counted", valueStyle: .title)
             }
@@ -144,6 +178,13 @@ struct StepTestView: View {
                     .foregroundStyle(DS.Colors.secondary)
             }
             .accessibilityElement(children: .combine)
+            if liveCount >= 0 {
+                Text(pulse.map { "All-day estimate (once a second): \($0.formatted()) steps, \(StepsData.percent(Double($0 - counted) / Double(max(1, counted))))." }
+                     ?? "All-day estimate (once a second): \(waitingNote)")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             VStack(spacing: 0) {
                 HStack(spacing: DS.Space.s) {
                     Text("You counted")
@@ -160,13 +201,13 @@ struct StepTestView: View {
                 }
                 .frame(minHeight: 60)
             }
-            Text("Pulse's count uses what it learned before this walk. Saving the walk teaches it your pace.")
+            Text("The all-day estimate uses what Pulse learned before this walk. Saving the walk teaches it your pace.")
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Save") {
                 context.insert(StepReferenceRecord(Steps.Reference(kind: .stepTest, start: start, end: end, steps: counted,
-                                                                   createdAt: .now)))
+                                                                   createdAt: .now, liveSteps: liveCount >= 0 ? liveCount : nil)))
                 try? context.save()
                 reset()
             }
@@ -176,27 +217,37 @@ struct StepTestView: View {
         }
     }
 
+    /// The band's 100 Hz count against yours, for a saved test that has one.
+    private func liveDifference(_ reference: Steps.Reference) -> Double? {
+        guard let live = reference.liveSteps, reference.steps > 0 else { return nil }
+        return Double(live - reference.steps) / Double(reference.steps)
+    }
+
     private var savedTests: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let liveErrors = saved.compactMap { liveDifference($0.reference) }.map(abs)
+        return VStack(alignment: .leading, spacing: 0) {
             SectionTitle(title: "Your step tests",
-                         trailing: Steps.averageError(saved).map { String(format: "Average off %.1f%%", $0 * 100) })
+                         trailing: liveErrors.isEmpty ? nil
+                             : String(format: "100 Hz average off %.1f%%", liveErrors.reduce(0, +) / Double(liveErrors.count) * 100))
                 .padding(.bottom, DS.Space.s)
             ForEach(Array(saved.enumerated()), id: \.element.id) { index, item in
                 if index > 0 { Hairline() }
+                let live = liveDifference(item.reference)
                 HStack(spacing: DS.Space.m) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.reference.start.formatted(date: .abbreviated, time: .shortened))
                             .textStyle(.body)
                             .foregroundStyle(DS.Colors.primary)
-                        Text("Pulse \(item.pulse.map { $0.formatted() } ?? "--") · You \(item.reference.steps.formatted())")
+                        Text("100 Hz \(item.reference.liveSteps.map { $0.formatted() } ?? "--") · all-day \(item.pulse.map { $0.formatted() } ?? "--") (\(item.difference.map(StepsData.percent) ?? "--")) · you \(item.reference.steps.formatted())")
                             .textStyle(.caption)
                             .foregroundStyle(DS.Colors.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: DS.Space.s)
-                    Text(item.difference.map(StepsData.percent) ?? "--")
+                    Text((live ?? item.difference).map(StepsData.percent) ?? "--")
                         .textStyle(.bodyStrong)
                         .monospacedDigit()
-                        .foregroundStyle(item.difference.map { verdict($0, limit: 0.05).color } ?? DS.Colors.secondary)
+                        .foregroundStyle((live ?? item.difference).map { verdict($0, limit: 0.05).color } ?? DS.Colors.secondary)
                     Button("Remove") { removing = references.first { $0.id == item.id } }
                         .textStyle(.caption)
                         .foregroundStyle(DS.Colors.secondary)
@@ -204,7 +255,7 @@ struct StepTestView: View {
                 }
                 .frame(minHeight: 60)
             }
-            Text("Each test is checked with what Pulse learned from your other tests and Apple Watch days, not from itself.")
+            Text("The 100 Hz count is the band's own count of the walk. The all-day estimate is checked with what Pulse learned from your other tests and Apple Watch days, not from this one.")
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -219,8 +270,10 @@ struct StepTestView: View {
     }
 
     private func reset() {
+        band.stopMotionStream()
         startedAt = 0
         stoppedAt = 0
+        liveCount = -1
         pulse = nil
         counted = 500
     }

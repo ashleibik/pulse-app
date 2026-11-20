@@ -172,7 +172,7 @@ private func readAll(_ data: Data, size: Int = 4096) throws -> (PulseBackup.Cont
     contents.header.profile?.stepGoal = 9_000
     contents.header.profile?.waistCm = 84
     contents.stepReferences = [
-        Steps.Reference(kind: .stepTest, start: date(100), end: date(400), steps: 500, createdAt: date(401)),
+        Steps.Reference(kind: .stepTest, start: date(100), end: date(400), steps: 500, createdAt: date(401), liveSteps: 494),
         Steps.Reference(kind: .appleWatchDay, start: date(0), end: date(86_400), steps: 8_412, createdAt: date(90_000)),
     ]
     var data = Data()

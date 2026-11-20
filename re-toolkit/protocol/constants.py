@@ -95,6 +95,7 @@ class Cmd(IntEnum):
     GET_BATTERY_LEVEL = 0x1A
     REBOOT = 0x1D
     POWER_CYCLE = 0x20
+    SEND_R10_R11_REALTIME = 0x3F    # 100 Hz motion + optical stream (type 0x2B): 01 on / 00 off. [NOOP] captures
     SET_READ_POINTER = 0x21
     GET_DATA_RANGE = 0x22
     GET_HELLO_HARVARD = 0x23
@@ -148,6 +149,7 @@ STATEFUL_COMMANDS = frozenset({
     Cmd.SEND_HISTORICAL_DATA,      # start history download
     Cmd.HISTORICAL_DATA_RESULT,    # ack a batch. The band may then free that flash space
     Cmd.ABORT_HISTORICAL,          # stop a history download
+    Cmd.SEND_R10_R11_REALTIME,     # a data stream; stays on across reconnects, so it is turned off on every connect
 })
 
 ALLOWED_COMMANDS = READ_ONLY_COMMANDS | STATEFUL_COMMANDS

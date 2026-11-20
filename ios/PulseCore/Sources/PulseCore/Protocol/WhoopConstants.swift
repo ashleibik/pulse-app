@@ -54,6 +54,8 @@ public enum Whoop {
         case forceTrim = 0x19
         case getBatteryLevel = 0x1A
         case reboot = 0x1D
+        /// SEND_R10_R11_REALTIME: the 100 Hz motion and optical stream (packet type 0x2B), `01` on / `00` off.
+        case sendR10R11Realtime = 0x3F
         case powerCycle = 0x20
         case setReadPointer = 0x21
         case getDataRange = 0x22
@@ -107,6 +109,10 @@ public enum Whoop {
     public static let statefulCommands: Set<Cmd> = [
         .toggleRealtimeHr, .setGenericHrProfile, .setClock, .sendHistoricalData, .historicalDataResult,
         .abortHistorical,
+        // A data stream, nothing is written or erased. NOOP saw it in device captures and turns it off on every
+        // connect: it stays on across reconnects and, left on, floods Bluetooth and the band's memory. So does Pulse,
+        // and it only turns it on for a step test (docs/METRICS.md §15).
+        .sendR10R11Realtime,
     ]
     /// Everything else, including opcodes nobody has documented, cannot be built. There is deliberately
     /// no override: adding a command means editing this list in a reviewed commit.

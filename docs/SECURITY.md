@@ -18,7 +18,8 @@ Items marked ⚠ are open.
 ## What is in place
 
 ### Band
-- **Command allowlist.** The app and the Python toolkit can only build 17 known-safe commands.
+- **Command allowlist.** The app and the Python toolkit can only build 18 known-safe commands. The newest, the 100 Hz
+  motion stream (0x3F), writes and erases nothing; it is turned off on every connect and on only during a step test.
   Erase, reboot, power-cycle and firmware commands are not on the list, so no code path can send
   them (`Whoop.buildCommand` throws; tested in both languages).
 - **Checksums on everything received.** Frames with a bad CRC are counted and dropped, never used.

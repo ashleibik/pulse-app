@@ -50,7 +50,7 @@ struct SessionHarness {
                 queue += session.didPersist(token: token, recordCount: records.count)
             case .info(let info): lastInfo = info
             case .progress(let p): progressReports += 1; fractions.append(p.fraction)
-            case .liveHeartRate: break
+            case .liveHeartRate, .rawMotion: break
             case .finished(let records): finishedRecords = records
             case .failed(let message): failure = message
             case .log: logLines += 1
@@ -71,8 +71,10 @@ struct SessionHarness {
     #expect(h.session.phase == .finished)
     #expect(h.lastInfo?.batteryPercent == 76.5)
     #expect(h.lastInfo?.clockWasSet == true)                    // set on every connect
-    #expect(h.writes.prefix(8) == ["TOGGLE_REALTIME_HR off", "GET_BATTERY_LEVEL", "REPORT_VERSION_INFO", "GET_CLOCK",
-                                   "GET_DATA_RANGE", "SET_CLOCK", "GET_CLOCK (check)", "SEND_HISTORICAL_DATA"])
+    #expect(h.writes.prefix(9) == ["TOGGLE_REALTIME_HR off", "SEND_R10_R11_REALTIME off", "GET_BATTERY_LEVEL",
+                                   "REPORT_VERSION_INFO", "GET_CLOCK", "GET_DATA_RANGE", "SET_CLOCK", "GET_CLOCK (check)",
+                                   "SEND_HISTORICAL_DATA"])
+    #expect(h.band.rawStreamOn == false)                        // a stream left on by a cut-short step test stops
     #expect(h.lastInfo?.bandClockSource == "GET_CLOCK")
     #expect(h.lastInfo?.clockOffsetSeconds.map { abs($0) < 2 } == true)   // read back after setting
     #expect(h.band.realtimeOn == false)

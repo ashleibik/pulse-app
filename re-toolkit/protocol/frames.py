@@ -232,6 +232,14 @@ def cmd_realtime_hr(on: bool, seq: int) -> bytes:
     return build_command(Cmd.TOGGLE_REALTIME_HR, bytes([1 if on else 0]), seq)
 
 
+def cmd_raw_stream(on: bool, seq: int) -> bytes:
+    """
+    Start/stop the 100 Hz motion and optical stream (REALTIME_RAW, 0x2B) on the DATA characteristic.
+    [NOOP] device captures: the state persists across reconnects, so always turn it off when done.
+    """
+    return build_command(Cmd.SEND_R10_R11_REALTIME, bytes([1 if on else 0]), seq)
+
+
 def cmd_report_version(seq: int) -> bytes:
     return build_command(Cmd.REPORT_VERSION_INFO, b"", seq)
 
