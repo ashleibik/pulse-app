@@ -76,6 +76,72 @@ public enum Bedtime {
     }
 }
 
+// MARK: - Sleep planner
+
+/// When to go to bed for a chosen wake-up time and goal (docs/METRICS.md §6).
+public enum SleepPlanner {
+    /// How much of tonight's sleep need to aim for. The three goals of WHOOP's Sleep Planner.
+    public enum Goal: String, CaseIterable, Sendable {
+        case peak, perform, getBy
+
+        public var title: String {
+            switch self {
+            case .peak: "Peak"
+            case .perform: "Perform"
+            case .getBy: "Get by"
+            }
+        }
+
+        /// Share of tonight's need.
+        public var share: Double {
+            switch self {
+            case .peak: 1.0
+            case .perform: 0.85
+            case .getBy: 0.70
+            }
+        }
+    }
+
+    public struct Plan: Equatable, Sendable {
+        public var goal: Goal
+        public var bedtime: Date
+        public var wake: Date
+        /// Sleep to aim for: the goal's share of tonight's need.
+        public var sleepMinutes: Int
+        public var inBedMinutes: Int
+        /// The share of time in bed you are usually asleep. nil before Pulse knows a night (then in bed = asleep).
+        public var efficiency: Double?
+    }
+
+    /// The usual wake-up time (minutes after midnight) of the last 7 nights. nil with fewer than 3.
+    public static func usualWake(sleeps: [SleepSession], calendar: Calendar) -> Int? {
+        let nights = SleepConsistency.recentNights(sleeps)
+        guard nights.count >= 3 else { return nil }
+        return Int(SleepConsistency.typicalTime(nights.map { SleepConsistency.minuteOfDay($0.end, calendar) }).rounded()) % 1440
+    }
+
+    /// Your average sleep efficiency over the last 7 nights, kept between 75% and 100% (as `Bedtime`). nil without a night.
+    public static func efficiency(sleeps: [SleepSession]) -> Double? {
+        let nights = SleepConsistency.recentNights(sleeps)
+        guard !nights.isEmpty else { return nil }
+        return Stats.clamp(Stats.mean(nights.map(\.efficiency)), 0.75, 1.0)
+    }
+
+    /// The plan for the next time `wakeMinuteOfDay` comes round. nil without a wake time (none chosen and no usual one yet).
+    /// - Parameter needMinutes: tonight's sleep need, after naps.
+    public static func plan(needMinutes: Double, goal: Goal, wakeMinuteOfDay: Int?, sleeps: [SleepSession], now: Date,
+                            calendar: Calendar) -> Plan? {
+        guard let wakeMinute = wakeMinuteOfDay ?? usualWake(sleeps: sleeps, calendar: calendar) else { return nil }
+        var wake = calendar.startOfDay(for: now).addingTimeInterval(Double(wakeMinute) * 60)
+        if wake <= now { wake = calendar.date(byAdding: .day, value: 1, to: wake) ?? wake.addingTimeInterval(86_400) }
+        let sleep = (needMinutes * goal.share).rounded()
+        let efficiency = efficiency(sleeps: sleeps)
+        let inBed = (sleep / (efficiency ?? 1)).rounded()
+        return Plan(goal: goal, bedtime: wake.addingTimeInterval(-inBed * 60), wake: wake, sleepMinutes: Int(sleep),
+                    inBedMinutes: Int(inBed), efficiency: efficiency)
+    }
+}
+
 // MARK: - Respiratory rate
 
 /// Breaths per minute, estimated from the beat-to-beat intervals. Breathing makes the heart speed

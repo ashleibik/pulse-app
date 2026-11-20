@@ -149,13 +149,39 @@ private func readAll(_ data: Data, size: Int = 4096) throws -> (PulseBackup.Cont
 }
 
 @Test func aFormatOneBackupStillReads() throws {
-    // Written before the wear sensor's readings were added.
+    // Written before the wear sensor's readings and the step references were added.
     let text = String(decoding: try file(minutes: [minute(0)]), as: UTF8.self)
         .replacingOccurrences(of: "\"wear_sensor\":[],\n", with: "")
+        .replacingOccurrences(of: "\"step_references\":[],\n", with: "")
         .replacingOccurrences(of: "\"formatVersion\":\(PulseBackup.formatVersion)", with: "\"formatVersion\":1")
-    #expect(!text.contains("wear_sensor"))
+    #expect(!text.contains("wear_sensor") && !text.contains("step_references"))
     let read = try readAll(Data(text.utf8))
-    #expect(read.0.wearSensor.isEmpty && read.1.count == 1)
+    #expect(read.0.wearSensor.isEmpty && read.0.stepReferences.isEmpty && read.1.count == 1)
+}
+
+@Test func aFormatTwoBackupStillReads() throws {
+    let text = String(decoding: try file(minutes: [minute(0)]), as: UTF8.self)
+        .replacingOccurrences(of: "\"step_references\":[],\n", with: "")
+        .replacingOccurrences(of: "\"formatVersion\":\(PulseBackup.formatVersion)", with: "\"formatVersion\":2")
+    let read = try readAll(Data(text.utf8))
+    #expect(read.0.stepReferences.isEmpty && read.0.header.profile?.stepGoal == nil && read.1.count == 1)
+}
+
+@Test func theStepTestsAndAppleWatchDaysMakeTheRoundTrip() throws {
+    var contents = fixture
+    contents.header.profile?.stepGoal = 9_000
+    contents.header.profile?.waistCm = 84
+    contents.stepReferences = [
+        Steps.Reference(kind: .stepTest, start: date(100), end: date(400), steps: 500, createdAt: date(401)),
+        Steps.Reference(kind: .appleWatchDay, start: date(0), end: date(86_400), steps: 8_412, createdAt: date(90_000)),
+    ]
+    var data = Data()
+    var writer = try PulseBackup.Writer(contents: contents) { data.append($0) }
+    try writer.append([minute(0)])
+    try writer.finish()
+    let read = try readAll(data).0
+    #expect(read.stepReferences == contents.stepReferences)
+    #expect(read.header.profile?.stepGoal == 9_000 && read.header.profile?.waistCm == 84)
 }
 
 // MARK: - Merging

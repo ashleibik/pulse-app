@@ -24,6 +24,9 @@ struct SleepView: View {
     @State private var explainedPhase: SleepPhaseSelection?
     @State private var editing: SleepEditTarget?
     @State private var addingNap = false
+    /// The Sleep planner's wake time (minutes after midnight, -1 = your usual one) and goal.
+    @AppStorage(Notifier.plannerWakeKey) private var plannerWake = -1
+    @AppStorage(Notifier.plannerGoalKey) private var plannerGoal = SleepPlanner.Goal.peak.rawValue
 
     private var sleeps: [SleepRecord] { allSleeps.filter { !$0.isNap } }
 
@@ -131,14 +134,84 @@ struct SleepView: View {
                           format: { String(format: "%.1f", $0) }, unit: "/ min",
                           caption: breathing == nil ? "needs beat-to-beat data" : "breaths while asleep")
             }
-            if let bedtime = Notifier.bedtime(context: context) {
-                Hairline()
-                ValueRow(label: "Bedtime tonight", value: bedtime.formatted(date: .omitted, time: .shortened), symbol: "bed.double")
+            if nightIndex == 0 {
+                plannerCard.riseIn(4)
             }
             if let summary {
                 needBreakdown(for: summary, night: night).riseIn(4)
             }
         }
+    }
+
+    // MARK: - Sleep planner
+
+    private var goal: SleepPlanner.Goal { SleepPlanner.Goal(rawValue: plannerGoal) ?? .peak }
+    private var usualWake: Int? { SleepPlanner.usualWake(sleeps: allSleeps.map(\.value), calendar: .current) }
+
+    /// The wake-up time as a time of day for the picker: the one you chose, else your usual one, else 7:00.
+    private var wakeTime: Binding<Date> {
+        Binding(
+            get: {
+                let minutes = plannerWake >= 0 ? plannerWake : (usualWake ?? 7 * 60)
+                return Calendar.current.startOfDay(for: .now).addingTimeInterval(Double(minutes) * 60)
+            },
+            set: { date in
+                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                plannerWake = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+                Notifier.refresh(context: context)
+            })
+    }
+
+    /// When to go to bed tonight for a wake-up time and a goal (DESIGN.md §4b-10).
+    private var plannerCard: some View {
+        let plan = Notifier.plan(context: context)
+        let need = Notifier.tonightsNeed(context: context)
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Sleep planner", trailing: "Tonight")
+            PillPicker(options: SleepPlanner.Goal.allCases, label: { $0.title },
+                       selection: Binding(get: { goal }, set: { plannerGoal = $0.rawValue; Notifier.refresh(context: context) }))
+            HStack(spacing: DS.Space.m) {
+                Text("Wake up")
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.primary)
+                Spacer(minLength: DS.Space.s)
+                DatePicker("Wake up", selection: wakeTime, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+                    .tint(DS.Colors.accent)
+            }
+            .frame(minHeight: 52)
+            if plannerWake >= 0, usualWake != nil {
+                Button("Use my usual wake-up time") {
+                    plannerWake = -1
+                    Notifier.refresh(context: context)
+                }
+                .buttonStyle(.secondaryPill)
+            }
+            if let plan, let need {
+                Hairline()
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text("Be in bed by \(plan.bedtime.formatted(date: .omitted, time: .shortened))")
+                        .textStyle(.heading)
+                        .foregroundStyle(DS.Colors.accent)
+                    Text("\(PulseFormat.duration(minutes: plan.sleepMinutes)) of sleep: \(Int((goal.share * 100).rounded()))% of tonight's \(PulseFormat.duration(minutes: Int(need.rounded()))) need.")
+                        .textStyle(.body)
+                        .foregroundStyle(DS.Colors.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(plan.efficiency.map { "Plus \(plan.inBedMinutes - plan.sleepMinutes) minutes for the time you usually lie awake (you're asleep \(Int(($0 * 100).rounded()))% of your time in bed)." }
+                         ?? "Once Pulse knows a night, it adds the time you usually lie awake.")
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+            } else {
+                Text("Pick a wake-up time. After 3 nights Pulse also knows your usual one.")
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .monoCard()
     }
 
     /// The answer: how long you slept, and how that compares with what you needed.
@@ -277,6 +350,26 @@ struct SleepView: View {
                         .accessibilityLabel("\(phase.title), \(PulseFormat.duration(minutes: totals[phase] ?? 0))")
                         .accessibilityHint("Explains this part of your night")
                     }
+                }
+
+                // Deep + REM: what WHOOP calls restorative sleep (docs/METRICS.md §12).
+                if let restorative = RestorativeSleep.make(totals: totals) {
+                    Hairline()
+                    HStack(spacing: DS.Space.s) {
+                        Text("Restorative")
+                            .textStyle(.body)
+                            .foregroundStyle(DS.Colors.primary)
+                        Text("deep + REM")
+                            .textStyle(.caption)
+                            .foregroundStyle(DS.Colors.secondary)
+                        Spacer(minLength: DS.Space.s)
+                        Text("\(PulseFormat.duration(minutes: restorative.minutes)) · \(Int((restorative.share * 100).rounded()))%")
+                            .textStyle(.bodyStrong)
+                            .monospacedDigit()
+                            .foregroundStyle(DS.Colors.primary)
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityElement(children: .combine)
                 }
             }
         }

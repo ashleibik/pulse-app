@@ -7,6 +7,7 @@ import PulseCore
 ///   header (settings · ‹ TODAY › · band battery)
 ///   three rings: Sleep % · Recovery % · Strain
 ///   Health monitor · Stress monitor
+///   calories · steps
 ///   MY DAY (+): daily outlook, journal, today's activities (sleep, workouts), add / start activity
 ///   live heart rate
 ///
@@ -17,6 +18,7 @@ struct TodayView: View {
     @Query private var profiles: [ProfileRecord]
     @Query(sort: \SleepRecord.end, order: .reverse) private var sleepRecords: [SleepRecord]
     @Query private var journal: [JournalRecord]
+    @Query private var stepReferences: [StepReferenceRecord]
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
@@ -42,6 +44,9 @@ struct TodayView: View {
     @State private var soFar: TodaySoFar?
     /// The selected day's estimated calories (nil = no band data that day, or the profile is incomplete).
     @State private var calories: DailyCalories.Estimate?
+    /// The selected day's estimated steps (nil = no band data that day), and the personal factor behind them.
+    @State private var steps: Steps.Day?
+    @State private var stepFactor: Steps.Factor = .none
     /// Respiratory rate of the selected night and the 30 nights before (for the health monitor).
     @State private var respiratory: (today: Double?, history: [Double]) = (nil, [])
     /// The live heart-rate card is streaming (only while this screen is open).
@@ -97,7 +102,7 @@ struct TodayView: View {
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
             }
-            .task(id: "\(loader.revision)-\(loader.rawDataReady)-\(selectedDay.timeIntervalSince1970)-\(String(describing: calorieBody))") { load() }
+            .task(id: "\(loader.revision)-\(loader.rawDataReady)-\(selectedDay.timeIntervalSince1970)-\(String(describing: calorieBody))-\(stepReferences.count)") { load() }
             .onChange(of: scenePhase) { _, phase in if phase != .active { setLive(false) } }
             .onDisappear { setLive(false) }
             .sensoryFeedback(.impact(weight: .light), trigger: taps)
@@ -130,6 +135,7 @@ struct TodayView: View {
             rings.riseIn(1)
             monitors.riseIn(2)
             caloriesCard.riseIn(2)
+            stepsCard.riseIn(2)
             myDay.riseIn(3)
             if days.isEmpty { firstNightCard.riseIn(4) }
             liveCard.riseIn(4)
@@ -239,6 +245,52 @@ struct TodayView: View {
                         .textStyle(.caption)
                         .foregroundStyle(DS.Colors.secondary)
                 }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .monoCard(padding: DS.Space.m)
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Steps
+
+    private var stepGoal: Int { profiles.first?.stepGoal ?? 10_000 }
+
+    /// An estimate, labelled as one, against the daily goal.
+    private var stepsCard: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            HStack(spacing: 6) {
+                Image(systemName: "figure.walk")
+                Text("STEPS")
+                Spacer()
+                Text("Estimated").textStyle(.caption).foregroundStyle(DS.Colors.secondary)
+            }
+            .textStyle(.label)
+            .foregroundStyle(DS.Colors.primary)
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                Text(steps.map { $0.total.formatted() } ?? "--")
+                    .textStyle(.title)
+                    .foregroundStyle(DS.Colors.primary)
+                    .contentTransition(.numericText())
+                Text("of \(stepGoal.formatted())")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+            ProgressMeter(fraction: Double(steps?.total ?? 0) / Double(max(1, stepGoal)))
+                .padding(.vertical, DS.Space.xs)
+            if steps == nil {
+                Text("No band data for this day")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            } else if let steps, steps.isPartial {
+                Text("Counts the \(PulseFormat.duration(minutes: steps.measuredMinutes)) your band measured")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+            if !stepFactor.isCalibrated {
+                Text("Not checked yet. Settings > Steps")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -476,8 +528,14 @@ struct TodayView: View {
                                    restingHeartRate: days.first { calendar.isDate($0.date, inSameDayAs: selectedDay) }
                                        .flatMap { $0.restingHeartRate ?? $0.baselineRestingHeartRate })
         }
-        stress = StressMonitor.day(minutes: minutes, sleeps: sleepRecords.map(\.value), workouts: workouts.map(\.value),
+        let sleeps = sleepRecords.map(\.value)
+        stress = StressMonitor.day(minutes: minutes, sleeps: sleeps, workouts: workouts.map(\.value),
                                    now: .now, calendar: calendar)
+        let summaries = Array(days)
+        stepFactor = Steps.factor(StepsData.checked(stepReferences.map(\.value), sleeps: sleeps, days: summaries,
+                                                    maxHeartRate: profile.maxHeartRate, context: context))
+        steps = StepsData.day(selectedDay, sleeps: sleeps, days: summaries, maxHeartRate: profile.maxHeartRate,
+                              factor: stepFactor, context: context)
         // Respiratory rate needs the beat-to-beat data of each night: the selected one and up to 30 before.
         let tonight = mainSleep
         let from = calendar.date(byAdding: .day, value: -30, to: selectedDay) ?? selectedDay

@@ -231,6 +231,13 @@ uses the need before naps, and a nap's heart rate and HRV are never used for rec
 *Source of the idea:* sleep debt accumulates (Van Dongen et al., *Sleep* 2003; 26(2):117–126).
 *Our choice:* the coefficients. They're simple and explainable, not fitted.
 
+**Sleep planner.** For a wake-up time (the one chosen, else the usual one: the circular mean of the last 7 nights' wake-ups, from 3
+nights) and a goal, `sleep = goal × tonight's need` (after naps) and `time in bed = sleep ÷ efficiency`, where efficiency is the mean of
+the last 7 nights, kept between 75% and 100% (1 before the first night). Bedtime = wake-up − time in bed. Goals: Peak 100%, Perform
+85%, Get by 70%, the three goals of WHOOP's Sleep Planner. NOOP only has a wind-down nudge (a fixed sleep need before a set wake time),
+so this is Pulse's own; with Peak and the usual wake-up it gives the same bedtime as before. The bedtime reminder fires 30 minutes
+before it.
+
 ## 7. Recovery (0–100%)
 
 Needs tonight's HRV and resting HR, and **≥ 4 previous nights** in the baseline (the previous 14 days with data).
@@ -347,6 +354,12 @@ the most likely path through the night is chosen (Viterbi, with NOOP's transitio
 *Accuracy:* NOOP scored this stager against sleep-lab results for 31 people (PhysioNet sleep-accel): four-stage kappa 0.36 and REM F1 0.575.
 These are rough estimates. Pulse's port has not been compared with a sleep lab or with WHOOP's own stages.
 
+**Restorative sleep** = deep + REM, as minutes and as a share of the time asleep. Its level uses NOOP's restorative sub-score (the Rest
+composite in `AnalyticsEngine.swift`): `credit = min(1, share ÷ 0.50) × deepFactor`, with `deepFactor = 0.5 + 0.5 × min(1, deep share ÷ 0.13)`,
+so a night with almost no deep sleep keeps at most half the credit. NOOP notes healthy adults sit at about 40 to 50%. *Our choice:* the
+three steps over the credit: optimal from 0.8 (40% with enough deep), sufficient from 0.6, poor below. It is shown next to the sleep
+performance and is not part of its score, so Sleep % doesn't change. The owner's night of 2026-11-17/18: 3h 35m, 39%, sufficient.
+
 ## 13. Wear sensor
 
 The band writes readable status lines (CONSOLE_LOGS). Pulse reads three of them: `TIGHTNESS V1: ... loose count = N, loose flag = 0 or 1`,
@@ -387,6 +400,67 @@ high, whatever the heart rates are.
 **Limits:** the score is relative to the day itself, so even a relaxed day has its higher hours, and scores can shift as the day goes on.
 Caffeine, heat, a big meal or illness look the same as stress. NOOP's stress score is not a clinical measure, and this one has not been
 compared with WHOOP's stress monitor.
+
+## 15. Steps
+
+**What the band gives.** A WHOOP 4.0 sends no step count. Its history (record version 24, about one record a second) holds one 3-axis
+motion reading per second in g (two copies of the same vector), next to heart rate and beat intervals; NOOP's decoder of the same record
+agrees. A step takes about half a second, so one reading a second can't see each footfall. On 2026-11-19 none of 23,160 readings passed
+1.71 g, so the stored reading is smoothed. Pulse keeps, per second, `activity` (§4: the larger of |size − 1 g| and the turn of the
+reading's direction, × 500, up to 255) and the wrist's turn in tenths of a degree (`WristAngle`). NOOP's counter needs the step counter
+that only the WHOOP 5.0 and MG keep, and its WHOOP 4.0 estimate is all of the day's motion times a factor fitted to a phone's step
+count, which counts typing and driving too and which NOOP itself says over-reads on active days. So Pulse finds the walking itself:
+
+1. **A second moves** when it is worn, its activity is at least 40 (about 0.08 g, or a 4.6° turn), and the wrist turned at least 3°
+   that second, or the activity is 150 or more.
+2. **A second is walking** when, of the worn seconds within 5 seconds either side (at least 8), at least 60% move and at least half
+   reach 80. The owner's walking minutes on 2026-11-18 had a median of 117 to 234; sitting stayed under 15 with a few spikes.
+3. **A walk** is a run of walking seconds with pauses of up to 3 seconds, lasting at least 12 seconds, or 20 inside a sleep.
+4. **Running:** a walking second where at least half the window is at 150 or more and the window's mean heart rate is at least
+   `resting + 0.55 × (max − resting)` (resting 60 when unknown). Movement alone can't tell: walking around at home reached 150 in 63% of
+   its seconds, at 86 bpm. The first minute of a run, before the heart rate climbs, counts as walking.
+5. **Cadence:** 1.8 steps a second walking (108 a minute) and 2.7 running (162), before the personal factor.
+6. **NOOP's sleep-aware counter** (`NoopSteps`, ported line for line): the steps become a cumulative counter, one reading per worn second
+   with the second's class (still, walk, run). Outside a sleep, and in its awake minutes (§4 step 10), every step counts. Asleep, only a
+   coherent walk counts: at least 5 readings over at least 4 seconds with at least 6 steps, no gap over 3 seconds.
+7. **A day** is counted hour by hour (each hour starts from the reading before it), and its total is the sum of the hours. With under 90%
+   of the day so far measured, the day says how long the band measured, as calories do.
+
+**The personal factor.** The owner's references: a step test (walk, count the steps by hand, Pulse compares the same minutes) and Apple
+Watch day totals, typed in. A reference teaches Pulse when the band measured at least 90% of its time and both sides counted at least
+100 steps. From 3 references, NOOP's fit (`StepsEstimateEngine.calibrate`): the median of reference ÷ Pulse, each reference weighted by
+Pulse's count, with NOOP's confidence. With 1 or 2, their plain median. With none, 1. The factor stays between 0.5 and 2, so one wrong
+entry can't make the count absurd. *Our choice:* NOOP withholds steps until 3 days are fitted; Pulse shows its count from the start,
+because it is already in steps, and labels it an estimate.
+
+**Checking.** Each reference is compared with what Pulse would have said without it: its factor learned from the other references
+only. The error is (Pulse − reference) ÷ reference, and the average leaves out partial days. Targets set by the owner: within 5% on a
+500-step test and within 10% of the Apple Watch per day.
+
+**Status:** tested only on simulated wrists (`WristSimulator`: the arm swings once every two steps, each step jolts the wrist, stride
+timing wanders by 3%, one reading a second) and on the owner's backup of 2026-11-17/18. Simulated, after one step test: within 4.7% on a
+500-step walk at 1.6 to 2.1 steps a second; 0 steps for an hour of typing or of sleep; up to 64 an hour on a rough-road drive and up to
+43 an hour talking with the hands. On the backup: 0 steps in the night, at most 30 at the computer (21:30 to 00:30), and a walk found
+at 11:27 to 11:39. Not yet compared with a real step test or the Apple Watch. Minutes saved before the wrist's turn was stored use the
+older activity value, which reads lower.
+
+## 16. VO₂ max
+
+NOOP's estimate (`FitnessAgeEngine.swift`, `docs/FITNESS_AGE.md`, and the Uth fallback in `WorkoutDetector.swift`), without an exercise test:
+
+1. **The week:** the 7 days ending today. The resting heart rate is the median of the week's nightly values (§3), and a number needs at
+   least 4 of the 7 nights.
+2. **With age, sex and waist entered**, Nes et al. 2011 (HUNT, waist variant):
+   men `100.27 − 0.296 age + 0.226 PA − 0.369 waist − 0.155 RHR`, women `74.74 − 0.247 age + 0.198 PA − 0.259 waist − 0.114 RHR`, ± its
+   standard error of 5.70 (men) or 5.14 (women) ml/kg/min. Unspecified sex uses the men's model, as NOOP does.
+3. **PA** is NOOP's HUNT activity index, rebuilt from the week (0 to 15 = frequency × intensity × duration): days with a workout
+   (0, 1, 2, 3 to 4, 5+ → 0, 0.5, 1, 2.5, 5), the share of the workouts' zone time in zones 4 and 5 (under 15%, under 50%, more → 1, 2, 3),
+   and the average workout minutes per active day (under 15, 30, 60, more → 0.10, 0.38, 0.75, 1). *Our choice:* NOOP has this zone path
+   and a strain path; Pulse uses the zone path, because NOOP's strain path expects its own 0 to 100 strain, not Pulse's 0 to 21.
+4. **Otherwise**, Uth et al. 2004: `15.3 × max heart rate ÷ resting heart rate`, with the profile's max heart rate.
+
+It is a non-exercise estimate with a large error, so the app shows it as an estimate and a trend over weeks. It has not been compared
+with a lab test or with WHOOP.
 
 ### Bugs the truth tests caught while building v1
 1. One HR threshold for the whole month split nights where resting HR ran a few beats high → per-noon-block threshold.

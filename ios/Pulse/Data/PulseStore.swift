@@ -7,6 +7,7 @@ enum PulseStore {
     static let schema = Schema([
         MinuteRecord.self, SleepRecord.self, WorkoutRecord.self, DaySummaryRecord.self,
         BandRecord.self, ProfileRecord.self, PacketRecord.self, JournalRecord.self, SleepCorrectionRecord.self,
+        StepReferenceRecord.self,
     ])
 
     static func makeContainer(inMemory: Bool = false) -> ModelContainer {

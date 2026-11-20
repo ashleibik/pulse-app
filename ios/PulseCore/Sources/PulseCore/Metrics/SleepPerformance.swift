@@ -49,6 +49,35 @@ public struct SleepPerformance: Sendable, Equatable {
     }
 }
 
+/// Restorative sleep: deep + REM, the stages the body and brain recover in (docs/METRICS.md §12). Shown next to the
+/// sleep performance, not part of its score. The credit is NOOP's restorative sub-score (`NoopRestorative`).
+public struct RestorativeSleep: Sendable, Equatable {
+    /// Deep + REM.
+    public let minutes: Int
+    /// (deep + REM) ÷ asleep, 0...1.
+    public let share: Double
+    /// 0...1: the share against 50%, scaled down (to half at most) when deep is under 13% of the sleep.
+    public let credit: Double
+
+    /// Pulse's three steps over NOOP's credit: optimal from 0.8 (40% restorative with enough deep), sufficient from 0.6.
+    public var level: SleepPerformance.Level { credit >= 0.8 ? .optimal : credit >= 0.6 ? .sufficient : .poor }
+
+    /// nil without minutes asleep.
+    public static func make(deepMinutes: Int, remMinutes: Int, asleepMinutes: Int) -> RestorativeSleep? {
+        guard asleepMinutes > 0 else { return nil }
+        let restorative = deepMinutes + remMinutes
+        let credit = NoopRestorative.score(restorativeSeconds: Double(restorative * 60), deepSeconds: Double(deepMinutes * 60),
+                                           tstSeconds: Double(asleepMinutes * 60))
+        return RestorativeSleep(minutes: restorative, share: Double(restorative) / Double(asleepMinutes), credit: credit)
+    }
+
+    /// From a night's stage totals (`SleepTimeline.totals`).
+    public static func make(totals: [SleepPhase: Int]) -> RestorativeSleep? {
+        let deep = totals[.deep] ?? 0, rem = totals[.rem] ?? 0
+        return make(deepMinutes: deep, remMinutes: rem, asleepMinutes: deep + rem + (totals[.light] ?? 0))
+    }
+}
+
 /// "Within your range": is today's value inside your usual night-to-night spread?
 public enum HealthMonitor {
     /// - Parameters:

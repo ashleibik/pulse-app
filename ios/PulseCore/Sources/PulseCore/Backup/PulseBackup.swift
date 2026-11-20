@@ -14,6 +14,7 @@ import Foundation
 ///     "sleeps":[...],
 ///     "sleep_corrections":[...],
 ///     "wear_sensor":[...],
+///     "step_references":[...],
 ///     "minutes":[
 ///     {...},
 ///     {...}
@@ -25,8 +26,8 @@ import Foundation
 /// anything, and importing the same file twice changes nothing. Days and sleeps are in the file so
 /// it is a complete record, but on import they are recalculated from the raw minutes.
 public enum PulseBackup {
-    /// 2 added `wear_sensor`. A file of format 1 still reads.
-    public static let formatVersion = 2
+    /// 2 added `wear_sensor`, 3 added `step_references` and the step goal. Files of format 1 and 2 still read.
+    public static let formatVersion = 3
 
     public struct Profile: Codable, Sendable, Equatable {
         public var birthYear: Int?
@@ -35,15 +36,20 @@ public enum PulseBackup {
         public var sex: BiologicalSex
         public var weightKg: Double?
         public var heightCm: Double?
+        /// nil in files from before format 3.
+        public var stepGoal: Int?
+        public var waistCm: Double?
 
         public init(birthYear: Int?, maxHeartRateOverride: Int?, sleepGoalMinutes: Int, sex: BiologicalSex,
-                    weightKg: Double? = nil, heightCm: Double? = nil) {
+                    weightKg: Double? = nil, heightCm: Double? = nil, stepGoal: Int? = nil, waistCm: Double? = nil) {
             self.birthYear = birthYear
             self.maxHeartRateOverride = maxHeartRateOverride
             self.sleepGoalMinutes = sleepGoalMinutes
             self.sex = sex
             self.weightKg = weightKg
             self.heightCm = heightCm
+            self.stepGoal = stepGoal
+            self.waistCm = waistCm
         }
     }
 
@@ -98,10 +104,12 @@ public enum PulseBackup {
         public var sleepCorrections: [SleepCorrection]
         /// What the band said about how it sat on the wrist (docs/METRICS.md §13). For checking a night or a workout.
         public var wearSensor: [WearSensor.Observation]
+        /// The owner's step tests and Apple Watch days (docs/METRICS.md §15).
+        public var stepReferences: [Steps.Reference]
 
         public init(header: Header, workouts: [WorkoutEntry], journal: [JournalDay],
                     days: [DailySummary], sleeps: [SleepSession], sleepCorrections: [SleepCorrection] = [],
-                    wearSensor: [WearSensor.Observation] = []) {
+                    wearSensor: [WearSensor.Observation] = [], stepReferences: [Steps.Reference] = []) {
             self.header = header
             self.workouts = workouts
             self.journal = journal
@@ -109,6 +117,7 @@ public enum PulseBackup {
             self.sleeps = sleeps
             self.sleepCorrections = sleepCorrections
             self.wearSensor = wearSensor
+            self.stepReferences = stepReferences
         }
     }
 
@@ -182,6 +191,7 @@ public enum PulseBackup {
             start.append(try field("sleeps", contents.sleeps))
             start.append(try field("sleep_corrections", contents.sleepCorrections))
             start.append(try field("wear_sensor", contents.wearSensor))
+            start.append(try field("step_references", contents.stepReferences))
             start.append(Data("\"minutes\":[\n".utf8))
             try sink(start)
         }
@@ -240,12 +250,18 @@ public enum PulseBackup {
                 read.wearSensor = try Self.value(line, prefix: Self.wearSensorPrefix)
                 next = try lines.next()
             }
+            // Format 3 adds the step tests and Apple Watch days.
+            if let line = next, line.hasPrefix(Self.stepReferencesPrefix) {
+                read.stepReferences = try Self.value(line, prefix: Self.stepReferencesPrefix)
+                next = try lines.next()
+            }
             guard next == "\"minutes\":[" else { throw Failure.damaged }
             contents = read
             self.lines = lines
         }
 
         private static let wearSensorPrefix = "\"wear_sensor\":"
+        private static let stepReferencesPrefix = "\"step_references\":"
 
         private static func field<T: Decodable>(_ key: String, _ lines: LineSource) throws -> T {
             guard let line = try lines.next() else { throw Failure.damaged }

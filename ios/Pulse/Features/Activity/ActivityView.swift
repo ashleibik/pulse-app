@@ -8,6 +8,8 @@ struct ActivityView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @Query(sort: \WorkoutRecord.start, order: .reverse) private var workouts: [WorkoutRecord]
     @Query private var profiles: [ProfileRecord]
+    @Query private var sleepRecords: [SleepRecord]
+    @Query private var stepReferences: [StepReferenceRecord]
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
@@ -19,6 +21,11 @@ struct ActivityView: View {
     @State private var showLive = false
     /// Estimated active calories so far today. nil = not enough details to estimate.
     @State private var activeCalories: Int?
+    /// Today's estimated steps. nil = no band data today.
+    @State private var steps: Steps.Day?
+    /// This week's VO₂ max estimate. nil = fewer than 4 nights of resting heart rate.
+    @State private var vo2: VO2Max.Estimate?
+    @State private var restingNights = 0
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -28,6 +35,8 @@ struct ActivityView: View {
                         strain(today).riseIn(0)
                         zones.riseIn(1)
                     }
+                    stepsByHour.riseIn(1)
+                    fitness.riseIn(2)
                     ForEach(suggestions) { WalkSuggestionCard(workout: $0).riseIn(2) }
                     workoutList.riseIn(2)
                 }
@@ -59,7 +68,7 @@ struct ActivityView: View {
                     }
                 }
             }
-            .task(id: "\(loader.rawDataReady)-\(loader.revision)-\(days.first?.strain ?? 0)") { loadZones() }
+            .task(id: "\(loader.rawDataReady)-\(loader.revision)-\(days.first?.strain ?? 0)-\(stepReferences.count)") { loadZones() }
             .task {
                 // Only the screenshot job sets this: open the hardest workout straight away.
                 if LaunchOptions.route == "workout", path.isEmpty,
@@ -80,6 +89,89 @@ struct ActivityView: View {
         activeCalories = profiles.first?.calorieBody().flatMap { body in
             DailyCalories.estimate(minutes: minutes, body: body, dayStart: start, end: .now, maxHeartRate: maxHR,
                                    restingHeartRate: resting)?.active
+        }
+        let sleeps = sleepRecords.map(\.value)
+        let summaries = Array(days)
+        let factor = Steps.factor(StepsData.checked(stepReferences.map(\.value), sleeps: sleeps, days: summaries,
+                                                    maxHeartRate: maxHR, context: context))
+        steps = StepsData.day(start, sleeps: sleeps, days: summaries, maxHeartRate: maxHR, factor: factor, context: context)
+        let profile = profiles.first
+        let week = Calendar.current.date(byAdding: .day, value: -6, to: start) ?? start
+        restingNights = days.filter { $0.date >= week && $0.restingHeartRate != nil }.count
+        vo2 = VO2Max.estimate(days: days.map(\.value), workouts: workouts.map(\.value), on: .now, calendar: .current,
+                              maxHeartRate: maxHR, age: profile?.age(), sex: profile?.sex ?? .unspecified,
+                              waistCm: profile?.waistCm)
+    }
+
+    /// VO₂ max from the week's resting heart rate (DESIGN.md §4b-9). An estimate, and labelled as one.
+    private var fitness: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            SectionTitle(title: "VO₂ max", trailing: "Estimated")
+            if let vo2 {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                    Text("\(Int(vo2.value.rounded()))")
+                        .textStyle(.title)
+                        .foregroundStyle(DS.Colors.primary)
+                    Text(vo2.standardError.map { "± \(Int($0.rounded())) ml/kg/min" } ?? "ml/kg/min")
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                }
+                Text(vo2.method == .nonExercise
+                     ? "From your age, waist, this week's workouts and your resting heart rate (\(Int(vo2.restingHeartRate.rounded())) bpm over \(vo2.nights) nights)."
+                     : "From your max heart rate and your resting heart rate (\(Int(vo2.restingHeartRate.rounded())) bpm over \(vo2.nights) nights). Add your waist in Settings to include your activity.")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("A trend to watch over weeks, not a lab test.")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+            } else {
+                Text("Needs a resting heart rate from \(VO2Max.fewestNights) of the last 7 nights. You have \(restingNights).")
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .monoCard()
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Today's steps, hour by hour (DESIGN.md §4b-8).
+    private var stepsByHour: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Steps", trailing: "Estimated")
+            if let steps {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                    Text(steps.total.formatted())
+                        .textStyle(.title)
+                        .foregroundStyle(DS.Colors.primary)
+                    Text("today").textStyle(.caption).foregroundStyle(DS.Colors.secondary)
+                }
+                Text("Steps by hour")
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                DayBarsChart(bars: hourBars(steps.hourly), height: 110,
+                             summary: "Steps by hour today, \(steps.total) in all")
+            } else {
+                Text("No band data today yet.")
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+        }
+        .monoCard()
+    }
+
+    /// One bar per hour up to now; every third hour labelled.
+    private func hourBars(_ hourly: [Int]) -> [DayBarsChart.Bar] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: .now)
+        let current = calendar.dateComponents([.hour], from: start, to: .now).hour ?? 0
+        return hourly.prefix(current + 1).enumerated().map { index, count in
+            let hour = calendar.date(byAdding: .hour, value: index, to: start) ?? start
+            return DayBarsChart.Bar(id: "\(index)", label: index % 3 == 0 ? hour.formatted(.dateTime.hour()) : "",
+                                    value: Double(count), isHighlighted: index == current,
+                                    spokenName: "\(hour.formatted(.dateTime.hour())), \(count) steps")
         }
     }
 

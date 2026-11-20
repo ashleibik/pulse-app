@@ -39,8 +39,9 @@ actor BackupStore {
         let days = try modelContext.fetch(FetchDescriptor<DaySummaryRecord>(sortBy: [SortDescriptor(\.date)])).map(\.value)
         let sleeps = try modelContext.fetch(FetchDescriptor<SleepRecord>(sortBy: [SortDescriptor(\.start)])).map(\.value)
         let corrections = try modelContext.fetch(FetchDescriptor<SleepCorrectionRecord>()).map(\.value)
+        let stepReferences = try modelContext.fetch(FetchDescriptor<StepReferenceRecord>(sortBy: [SortDescriptor(\.start)])).map(\.value)
         let contents = PulseBackup.Contents(header: header, workouts: workouts, journal: journal, days: days, sleeps: sleeps,
-                                            sleepCorrections: corrections, wearSensor: wearSensor)
+                                            sleepCorrections: corrections, wearSensor: wearSensor, stepReferences: stepReferences)
 
         var writer = try PulseBackup.Writer(contents: contents) { try handle.write(contentsOf: $0) }
         var after = Date.distantPast
@@ -101,6 +102,10 @@ actor BackupStore {
         let knownCorrections = Set(try modelContext.fetch(FetchDescriptor<SleepCorrectionRecord>()).map(\.id))
         for correction in reader.contents.sleepCorrections where !knownCorrections.contains(correction.id) {
             modelContext.insert(SleepCorrectionRecord(correction))
+        }
+        let knownReferences = Set(try modelContext.fetch(FetchDescriptor<StepReferenceRecord>()).map(\.id))
+        for reference in reader.contents.stepReferences where !knownReferences.contains(reference.id) {
+            modelContext.insert(StepReferenceRecord(reference))
         }
         try modelContext.save()
 
@@ -175,7 +180,8 @@ extension ProfileRecord {
     /// The profile as it goes into a backup.
     var backup: PulseBackup.Profile {
         PulseBackup.Profile(birthYear: birthYear, maxHeartRateOverride: maxHeartRateOverride,
-                            sleepGoalMinutes: sleepGoalMinutes, sex: sex, weightKg: weightKg, heightCm: heightCm)
+                            sleepGoalMinutes: sleepGoalMinutes, sex: sex, weightKg: weightKg, heightCm: heightCm, stepGoal: stepGoal,
+                            waistCm: waistCm)
     }
 
     func restore(_ profile: PulseBackup.Profile) {
@@ -185,5 +191,7 @@ extension ProfileRecord {
         sex = profile.sex
         weightKg = profile.weightKg
         heightCm = profile.heightCm
+        if let goal = profile.stepGoal { stepGoal = goal }
+        if let waist = profile.waistCm { waistCm = waist }
     }
 }

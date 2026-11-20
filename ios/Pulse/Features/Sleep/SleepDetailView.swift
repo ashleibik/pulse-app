@@ -82,6 +82,10 @@ struct SleepDetailView: View {
                 Hairline()
                 LevelRow(symbol: "waveform.path", title: "High sleep stress", value: p.sleepStress.map(percent) ?? "--",
                          level: p.sleepStress.map(SleepPerformance.stressLevel))
+                Hairline()
+                let restorative = RestorativeSleep.make(totals: SleepTimeline.totals(segments))
+                LevelRow(symbol: "sparkles", title: "Restorative sleep", value: restorative.map { percent($0.share * 100) } ?? "--",
+                         level: restorative?.level)
                 LevelLegend().padding(.top, DS.Space.s)
             }
             .monoCard(padding: DS.Space.m)
@@ -136,6 +140,16 @@ struct SleepDetailView: View {
                         }
                     }
                     .frame(height: 10)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            if let restorative = RestorativeSleep.make(totals: totals) {
+                HStack {
+                    Text("RESTORATIVE (DEEP + REM)").textStyle(.label).foregroundStyle(DS.Colors.primary)
+                    Spacer()
+                    Text("\(PulseFormat.clock(minutes: restorative.minutes)) · \(percent(restorative.share * 100))")
+                        .textStyle(.bodyStrong)
+                        .foregroundStyle(DS.Colors.primary)
                 }
                 .accessibilityElement(children: .combine)
             }

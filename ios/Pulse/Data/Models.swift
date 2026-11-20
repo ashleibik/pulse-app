@@ -257,6 +257,10 @@ final class ProfileRecord {
     /// For the calorie estimate. nil = not entered (no estimate is shown).
     var weightKg: Double?
     var heightCm: Double?
+    /// Daily step goal (Settings > Steps).
+    var stepGoal: Int = 10_000
+    /// Optional. With it, VO₂ max uses the Nes model instead of heart rates alone (docs/METRICS.md §16).
+    var waistCm: Double?
 
     init(sleepGoalMinutes: Int = 480) {
         self.sleepGoalMinutes = sleepGoalMinutes
@@ -277,6 +281,11 @@ final class ProfileRecord {
         return 190
     }
 
+    /// Years this calendar year, from the birth year. nil when not entered.
+    func age(now: Date = .now, calendar: Calendar = .current) -> Double? {
+        birthYear.map { Double(calendar.component(.year, from: now) - $0) }
+    }
+
     var metricsProfile: MetricsProfile {
         MetricsProfile(maxHeartRate: estimatedMaxHeartRate(), sex: sex, sleepGoalMinutes: Double(sleepGoalMinutes))
     }
@@ -286,6 +295,32 @@ final class ProfileRecord {
         guard let weightKg, let heightCm, let birthYear, sex != .unspecified else { return nil }
         return DailyCalories.Body(weightKg: weightKg, heightCm: heightCm,
                                   age: Double(calendar.component(.year, from: now) - birthYear), sex: sex)
+    }
+}
+
+/// A count the step estimate is checked against: a step test counted by hand, or an Apple Watch day total
+/// (docs/METRICS.md §15). The user's own entries, so "Delete all band data" keeps them.
+@Model
+final class StepReferenceRecord {
+    @Attribute(.unique) var id: UUID
+    var kindRaw: String
+    var start: Date
+    var end: Date
+    var steps: Int
+    var createdAt: Date
+
+    init(_ r: Steps.Reference) {
+        id = r.id
+        kindRaw = r.kind.rawValue
+        start = r.start
+        end = r.end
+        steps = r.steps
+        createdAt = r.createdAt
+    }
+
+    var value: Steps.Reference {
+        Steps.Reference(id: id, kind: Steps.Reference.Kind(rawValue: kindRaw) ?? .stepTest, start: start, end: end, steps: steps,
+                        createdAt: createdAt)
     }
 }
 

@@ -74,7 +74,7 @@ All styles follow Dynamic Type.
 Top to bottom: header (settings · "‹ TODAY ›" day switcher · band battery) → three rings
 (Sleep %, Recovery %, Strain) → two monitor cards (Health: "within range n/n metrics";
 Stress: level + value + time) → calories card (`title` number, labelled "Estimated", resting +
-active underneath, then one `caption` with the time measured when the band covered under 90% of the day; asks for the missing profile details instead of guessing) → "MY DAY" with a + button → daily outlook row (opens Coach) →
+active underneath, then one `caption` with the time measured when the band covered under 90% of the day; asks for the missing profile details instead of guessing) → steps card (§4b-8) → "MY DAY" with a + button → daily outlook row (opens Coach) →
 today's activities card (sleep and workouts as rows with their times; Add / Start activity) →
 live heart rate. The rings use `sleepTint`, the recovery zone colour, and `strainTint`.
 Tapping a ring opens its page: a big ring + score, a card of rows (each with a three-step
@@ -127,7 +127,9 @@ stages are estimates, not a sleep-lab measurement.
 "Your night" is one connected step chart, 160 pt tall: each stage is a block 12 pt high on its row, and a 1.5 pt `tertiary` line joins
 one stage to the next. The time axis shows when the sleep started and ended, with minutes, and whole hours between them (every 2 hours
 on a night over 4 hours), leaving out an hour that would crowd either end. Under the chart, a 2 × 2 grid holds the four stages with
-their times: Deep and Light, then REM and Awake.
+their times: Deep and Light, then REM and Awake. Under the grid, after a hairline, one "Restorative" row ("deep + REM" in `caption`,
+then the time and share). The Sleep page adds a "Restorative sleep" row with its three-step level under "High sleep stress", and a
+"RESTORATIVE (DEEP + REM)" line under the phases.
 
 ## 4b-7. Naps
 
@@ -136,6 +138,43 @@ Under the night chart, the Sleep tab has a "Naps" card (`monoCard`): each nap af
 secondary pill. "Add nap" is a sheet like "Edit sleep": "Fell asleep" and "Woke up" rows and a "Save nap" primary pill. A nap
 lasts 10 minutes to 3 hours, can't be in the future and can't overlap another sleep. Today's activities list each nap as its own
 "NAP" row, and "Why you needed" shows a "Naps" row when naps lowered the need.
+
+## 4b-8. Steps
+
+Today has a "STEPS" card under the calories card (`monoCard`): "Estimated" on the right of the label, the count in `title`, "of 10,000"
+(the goal) in `caption`, a progress bar toward the goal (`accent` fill on a `border` track, full at the goal), and the same `caption`
+as calories when the band measured under 90% of the day. With no band data the count is `--`. Before any step test or Apple Watch day,
+one `caption` says "Not checked yet. Settings > Steps".
+
+The Activity tab has a "Steps" card under heart rate zones: today's count, then "Steps by hour" bars (`DayBarsChart`, the current
+hour highlighted, every third hour labelled).
+
+Settings has a "Steps" section: a "Daily goal" row with minus / plus (1,000 steps a click, 2,000 to 30,000), a "Calibration" row
+("Not checked yet", "From 2 step tests", "From 3 Apple Watch days", ...), and two secondary pills: "Step test" and "Compare with Apple Watch".
+
+"Step test" is a sheet: one `body` paragraph (walk at your usual pace, count 500 steps, tap Stop), a big timer in `title` while it
+runs, and a Start / Stop primary pill. After Stop it waits for the band's data ("Waiting for the band…" with the reason), then shows
+Pulse's count and yours side by side, the difference in percent (`warn` past 5%, a word next to it too), an editable "You counted" row
+(default 500), and "Save" (primary) / "Discard" (secondary). Saved tests are listed under it with their date, both counts and the
+difference. "Compare with Apple Watch" is a sheet: a day picker and a steps field with "Add day", then each day with Pulse, Apple
+Watch and the difference, and at the top the average difference. Each test and day has a "Remove" button (ask once). Each difference
+is checked without that entry (docs/METRICS.md §15), and both sheets say so in one `caption`.
+
+## 4b-9. VO₂ max
+
+The Activity tab has a "VO₂ max" card under Steps (`monoCard`, "Estimated" on the right of the title): the value in `title` with
+"ml/kg/min" (and "± 6" when the model gives an error) in `caption`, one `caption` saying what it came from (resting heart rate and over
+how many nights; with the waist, also age and this week's workouts; without it, "Add your waist in Settings to include your activity"),
+and "A trend to watch over weeks, not a lab test." With fewer than 4 of the last 7 nights it says how many nights it needs and has.
+Settings > Profile has an optional "Waist" row (cm).
+
+## 4b-10. Sleep planner
+
+On the Sleep tab, for last night only, a "Sleep planner" card (`monoCard`, "Tonight" on the right of the title) replaces the old
+"Bedtime tonight" row: a `PillPicker` with Peak, Perform and Get by, a "Wake up" row with a time picker (your usual wake-up time until
+you pick one, then a secondary pill "Use my usual wake-up time"), and after a hairline "Be in bed by 10:55 PM" in `heading` (`accent`),
+one `body` line with the sleep to aim for and the share of tonight's need, and one `caption` with the minutes added for the time you
+usually lie awake. Without a wake-up time it asks for one. The bedtime reminder uses the same wake-up time and goal.
 
 ## 4c. Home Screen widget
 

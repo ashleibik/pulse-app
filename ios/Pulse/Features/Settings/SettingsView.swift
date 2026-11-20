@@ -33,6 +33,7 @@ struct SettingsView: View {
                     ProfileSection(profile: profile) {
                         Task { await loader.recompute(context: context) }
                     }
+                    StepsSection(profile: profile)
                 }
 
                 bandSection
@@ -279,6 +280,64 @@ private struct SettingsSection<Content: View>: View {
     }
 }
 
+/// Step goal, how the estimate is calibrated, and the two ways to check it (DESIGN.md §4b-8).
+private struct StepsSection: View {
+    @Bindable var profile: ProfileRecord
+    @Environment(\.modelContext) private var context
+    @Query private var references: [StepReferenceRecord]
+    @Query private var sleepRecords: [SleepRecord]
+    @Query private var days: [DaySummaryRecord]
+    @State private var factor: Steps.Factor = .none
+    @State private var showTest = false
+    @State private var showWatch = false
+
+    var body: some View {
+        SettingsSection("Steps", footer: "A WHOOP 4.0 doesn't count steps, so Pulse estimates them from how your wrist moves. A step test and your Apple Watch's daily totals tune the estimate to you and show how close it is.") {
+            goalRow
+            Hairline()
+            ValueRow(label: "Calibration", value: StepsData.calibrationText(factor), emphasized: factor.isCalibrated)
+            Hairline()
+            Button("Step test") { showTest = true }
+                .buttonStyle(.secondaryPill)
+                .padding(.top, DS.Space.m)
+            Button("Compare with Apple Watch") { showWatch = true }
+                .buttonStyle(.secondaryPill)
+                .padding(.top, DS.Space.s)
+        }
+        .sheet(isPresented: $showTest) { StepTestView() }
+        .sheet(isPresented: $showWatch) { WatchStepsView() }
+        .task(id: references.count) {
+            factor = Steps.factor(StepsData.checked(references.map(\.value), sleeps: sleepRecords.map(\.value), days: Array(days),
+                                                    maxHeartRate: profile.estimatedMaxHeartRate(), context: context))
+        }
+    }
+
+    /// Daily goal with minus / plus buttons (1,000 steps a click, 2,000 to 30,000).
+    private var goalRow: some View {
+        HStack(spacing: DS.Space.s) {
+            Text("Daily goal")
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+            Spacer(minLength: DS.Space.s)
+            Text(profile.stepGoal.formatted())
+                .textStyle(.bodyStrong)
+                .monospacedDigit()
+                .foregroundStyle(DS.Colors.primary)
+                .padding(.trailing, DS.Space.xs)
+            IconButton(systemName: "minus", label: "Lower step goal") {
+                profile.stepGoal = max(2_000, profile.stepGoal - 1_000)
+            }
+            .disabled(profile.stepGoal <= 2_000)
+            IconButton(systemName: "plus", label: "Raise step goal") {
+                profile.stepGoal = min(30_000, profile.stepGoal + 1_000)
+            }
+            .disabled(profile.stepGoal >= 30_000)
+        }
+        .frame(minHeight: 60)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// Edits the profile in place (@Bindable writes straight to SwiftData, which autosaves).
 private struct ProfileSection: View {
     @Bindable var profile: ProfileRecord
@@ -290,7 +349,7 @@ private struct ProfileSection: View {
     private static let years: [Int] = Array(((currentYear - 90)...(currentYear - 13)).reversed())
 
     var body: some View {
-        SettingsSection("Profile", footer: "Used only for the formulas: max heart rate is estimated from age (208 − 0.7 × age), sex picks the strain coefficients, the goal is your baseline sleep need, and weight and height feed the calorie estimate. Stays on this iPhone.") {
+        SettingsSection("Profile", footer: "Used only for the formulas: max heart rate is estimated from age (208 − 0.7 × age), sex picks the strain coefficients, the goal is your baseline sleep need, weight and height feed the calorie estimate, and your waist (optional) lets the VO₂ max estimate use your activity too. Stays on this iPhone.") {
             pickerRow("Birth year") {
                 Picker("Birth year", selection: Binding(
                     get: { profile.birthYear ?? 0 },
@@ -325,6 +384,15 @@ private struct ProfileSection: View {
                     set: { profile.heightCm = $0 == 0 ? nil : Double($0) })) {
                     Text("Not set").tag(0)
                     ForEach(Array(120...230), id: \.self) { Text("\($0) cm").tag($0) }
+                }
+            }
+            Hairline()
+            pickerRow("Waist") {
+                Picker("Waist", selection: Binding(
+                    get: { Int(profile.waistCm?.rounded() ?? 0) },
+                    set: { profile.waistCm = $0 == 0 ? nil : Double($0) })) {
+                    Text("Not set").tag(0)
+                    ForEach(Array(50...160), id: \.self) { Text("\($0) cm").tag($0) }
                 }
             }
             Hairline()
