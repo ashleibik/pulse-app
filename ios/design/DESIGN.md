@@ -129,6 +129,14 @@ one stage to the next. The time axis shows when the sleep started and ended, wit
 on a night over 4 hours), leaving out an hour that would crowd either end. Under the chart, a 2 × 2 grid holds the four stages with
 their times: Deep and Light, then REM and Awake.
 
+## 4b-7. Naps
+
+Under the night chart, the Sleep tab has a "Naps" card (`monoCard`): each nap after that night with its times and minutes asleep
+(tap one to edit it), one `caption` saying naps lower the next night's sleep need and don't change recovery, and an "Add nap"
+secondary pill. "Add nap" is a sheet like "Edit sleep": "Fell asleep" and "Woke up" rows and a "Save nap" primary pill. A nap
+lasts 10 minutes to 3 hours, can't be in the future and can't overlap another sleep. Today's activities list each nap as its own
+"NAP" row, and "Why you needed" shows a "Naps" row when naps lowered the need.
+
 ## 4c. Home Screen widget
 
 Last night at a glance: recovery ring (zone colour + the word), sleep score and sleep time. Small

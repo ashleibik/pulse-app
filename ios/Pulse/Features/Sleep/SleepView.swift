@@ -23,6 +23,7 @@ struct SleepView: View {
     /// The phase whose explanation sheet is open.
     @State private var explainedPhase: SleepPhaseSelection?
     @State private var editing: SleepEditTarget?
+    @State private var addingNap = false
 
     private var sleeps: [SleepRecord] { allSleeps.filter { !$0.isNap } }
 
@@ -51,6 +52,9 @@ struct SleepView: View {
         .sensoryFeedback(.selection, trigger: selectedSegment)
         .onChange(of: nightIndex) { _, _ in selectedSegment = nil }
         .sheet(item: $editing) { SleepEditView(target: $0) }
+        .sheet(isPresented: $addingNap) {
+            AddNapView(otherSleeps: allSleeps.map { DateInterval(start: $0.start, end: max($0.start, $0.end)) })
+        }
         .sheet(item: $explainedPhase) { item in
             let totals = SleepTimeline.totals(segments)
             SleepPhaseInfoView(phase: item.phase, minutes: totals[item.phase] ?? 0,
@@ -103,6 +107,7 @@ struct SleepView: View {
                 SleepReviewCard(sleep: night).riseIn(1)
             }
             timeline(night).riseIn(1)
+            napsCard(after: night).riseIn(2)
             heart.riseIn(2)
             HStack(alignment: .top, spacing: DS.Space.m) {
                 StatBlock(symbol: "bed.double", label: "Efficiency",
@@ -131,7 +136,7 @@ struct SleepView: View {
                 ValueRow(label: "Bedtime tonight", value: bedtime.formatted(date: .omitted, time: .shortened), symbol: "bed.double")
             }
             if let summary {
-                needBreakdown(for: summary).riseIn(4)
+                needBreakdown(for: summary, night: night).riseIn(4)
             }
         }
     }
@@ -308,16 +313,21 @@ struct SleepView: View {
     }
 
     /// "Why did I need 8h 30m?" Rebuilt from yesterday's numbers with the same formula as the engine.
-    private func needBreakdown(for summary: DaySummaryRecord) -> some View {
+    private func needBreakdown(for summary: DaySummaryRecord, night: SleepRecord) -> some View {
         let previous = days.first {
             Calendar.current.isDate($0.date, inSameDayAs: summary.date.addingTimeInterval(-86_400))
         }
+        // The naps between the night before and this one.
+        let nightBefore = sleeps.first { $0.end <= night.start }
+        let napped = Recovery.napMinutes(allSleeps.map(\.value), after: nightBefore?.end ?? night.start.addingTimeInterval(-86_400),
+                                         upTo: night.start)
         let breakdown = SleepNeedBreakdown(
             goal: Double(profiles.first?.sleepGoalMinutes ?? 480),
             previousStrain: previous?.strain,
             previousNeed: previous.map { Double($0.sleepNeedMinutes) },
-            previousAsleep: previous?.sleepMinutes.map { Double($0) })
-        let capped = breakdown.goal + breakdown.strainExtra + breakdown.debtExtra > breakdown.total + 0.5
+            previousAsleep: previous?.sleepMinutes.map { Double($0) },
+            napMinutes: Double(napped))
+        let capped = breakdown.isCapped
         return VStack(alignment: .leading, spacing: 0) {
             SectionTitle(title: "Why you needed \(PulseFormat.duration(minutes: Int(breakdown.total.rounded())))")
                 .padding(.bottom, DS.Space.s)
@@ -328,6 +338,10 @@ struct SleepView: View {
             Hairline()
             ValueRow(label: "Recent sleep debt", value: minutesText(breakdown.debtExtra, sign: "+"),
                      emphasized: breakdown.debtExtra > 0)
+            if breakdown.napCredit > 0 {
+                Hairline()
+                ValueRow(label: "Naps", value: minutesText(breakdown.napCredit, sign: "−"), emphasized: true)
+            }
             if capped {
                 Text("Capped at 10 hours.")
                     .textStyle(.caption)
@@ -335,6 +349,57 @@ struct SleepView: View {
                     .padding(.top, DS.Space.s)
             }
         }
+    }
+
+    /// The naps after a night, up to the next night: they lower the next night's sleep need (DESIGN.md §4b-7).
+    private func napsCard(after night: SleepRecord) -> some View {
+        let nextNight = sleeps.last { $0.start >= night.end }
+        let naps = allSleeps
+            .filter { nap in nap.isNap && nap.start >= night.end && (nextNight.map { nap.end <= $0.start } ?? true) }
+            .sorted { $0.start < $1.start }
+        let total = naps.reduce(0) { $0 + $1.asleepMinutes }
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
+            SectionTitle(title: "Naps", trailing: naps.isEmpty ? nil : PulseFormat.duration(minutes: total))
+            if naps.isEmpty {
+                Text("No naps after this night.")
+                    .textStyle(.body)
+                    .foregroundStyle(DS.Colors.secondary)
+            }
+            ForEach(naps) { nap in
+                Button { editing = SleepEditTarget(start: nap.start, end: nap.end) } label: {
+                    HStack(spacing: DS.Space.m) {
+                        Image(systemName: "moon.zzz")
+                            .foregroundStyle(DS.Colors.sleepTint)
+                            .accessibilityHidden(true)
+                        Text("\(nap.start.formatted(date: .omitted, time: .shortened)) – \(nap.end.formatted(date: .omitted, time: .shortened))")
+                            .textStyle(.body)
+                            .foregroundStyle(DS.Colors.primary)
+                        Spacer(minLength: DS.Space.s)
+                        Text(PulseFormat.duration(minutes: nap.asleepMinutes))
+                            .textStyle(.bodyStrong)
+                            .monospacedDigit()
+                            .foregroundStyle(DS.Colors.primary)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(DS.Colors.tertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(.pressable)
+                .accessibilityLabel("Nap from \(nap.start.formatted(date: .omitted, time: .shortened)), \(PulseFormat.duration(minutes: nap.asleepMinutes)) asleep")
+                .accessibilityHint("Edit this nap")
+            }
+            Text("Naps lower your next night's sleep need. They don't change recovery.")
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { addingNap = true } label: {
+                Label("Add nap", systemImage: "plus").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.secondaryPill)
+        }
+        .monoCard()
     }
 
     // MARK: - Helpers

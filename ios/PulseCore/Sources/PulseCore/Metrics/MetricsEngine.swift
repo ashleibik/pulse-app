@@ -34,7 +34,8 @@ public enum MetricsEngine {
     /// 5: minutes with no band data are unknown instead of awake, personal learning waits for 3 nights,
     ///    unsure sleeps ask "Is this right?", and new minutes measure motion from the wrist angle.
     /// 6: breathing, restful sleep, zones, calories and workout detection ported from OpenStrap and NOOP.
-    public static let algorithmVersion = 6
+    /// 7: wake-ups of 3 minutes or more, daytime naps from 20 minutes, and naps lower the next night's sleep need.
+    public static let algorithmVersion = 7
     /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v2.json).
     /// The confirmation stage on top of them is Swift only.
     public static let sharedFormulaVersion = 2
@@ -98,15 +99,26 @@ public enum MetricsEngine {
     /// Returns the sleeps and one flag per minute of the timeline: asleep inside a sleep.
     static func described(_ sessions: [SleepDetector.Session], timeline tl: Timeline) -> (sessions: [SleepDetector.Session], asleep: [Bool]) {
         var asleep = [Bool](repeating: false, count: tl.count)
+        let observed = tl.hr.map { $0 != nil }
+        var unmeasured = Set<Int>()
         for session in sessions {
             let range = session.start..<session.end
+            guard range.contains(where: { observed[$0] }) else {
+                // Only the user can add a sleep with no band data, so it counts as asleep for its whole length.
+                unmeasured.insert(session.start)
+                for i in range { asleep[i] = true }
+                continue
+            }
             let phases = SleepTimeline.phases(hr: Array(tl.hr[range]), movement: Array(tl.movement[range]))
             for (offset, phase) in phases.enumerated() {
                 asleep[session.start + offset] = phase != nil && phase != .awake
             }
         }
-        let observed = tl.hr.map { $0 != nil }
-        return (sessions.map { SleepDetector.session(start: $0.start, end: $0.end, asleep: asleep, observed: observed) }, asleep)
+        let counted = sessions.map { session in
+            SleepDetector.session(start: session.start, end: session.end, asleep: asleep,
+                                  observed: unmeasured.contains(session.start) ? nil : observed)
+        }
+        return (counted, asleep)
     }
 
     public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
@@ -127,13 +139,15 @@ public enum MetricsEngine {
         // 1-2. Sleep: the chance of being asleep per minute, then the sleeps in it (docs/METRICS.md §4).
         let model = SleepModel.run(timeline: tl, calendar: calendar, corrections: corrections, cache: &sleepCache)
         let observed = tl.hr.map { $0 != nil }
-        let (detected, candidates) = SleepModel.sessions(probability: model.probability, observed: observed)
+        let usual = SleepModel.usualSleepHours(timeline: tl, calendar: calendar, learned: model.learned)
+        let (detected, candidates) = SleepModel.sessions(probability: model.probability, observed: observed, usualSleep: usual)
         let finished = detected
             .filter { session in
                 SleepDetector.isFinished(session, asleep: candidates, hr: tl.hr, activity: tl.movement,
                                          minutesSinceEnd: now.timeIntervalSince(tl.date(session.end)) / 60)
             }
-        let (found, asleep) = described(applying(corrections, to: finished, timeline: tl, asleep: candidates), timeline: tl)
+        let (counted, asleep) = described(applying(corrections, to: finished, timeline: tl, asleep: candidates), timeline: tl)
+        let found = SleepModel.markingNaps(counted, usualSleep: usual)
         let sleeps = found.map { s -> SleepSession in
             // Deterministic ID from the start time: re-running the engine updates, not duplicates.
             var idSource = SeededRandom(seed: UInt64(bitPattern: Int64(tl.date(s.start).timeIntervalSince1970)))
@@ -160,6 +174,8 @@ public enum MetricsEngine {
         var previousStrain: Double?
         var previousNeed: Double?
         var previousAsleep: Double?
+        /// Naps that end after this minute still count toward the next night's need.
+        var napsCountedUpTo = 0
 
         while day <= lastDay {
             let next = calendar.date(byAdding: .day, value: 1, to: day)!
@@ -184,13 +200,19 @@ public enum MetricsEngine {
             let baseHRV = window.compactMap(\.hrv)
             let baseRHR = window.compactMap(\.rhr)
 
-            let need = Recovery.sleepNeed(goal: profile.sleepGoalMinutes, previousStrain: previousStrain,
-                                          previousNeed: previousNeed, previousAsleep: previousAsleep)
+            let lo = max(0, tl.index(day)), hi = min(tl.count, tl.index(next))
+
+            // Sleep need. Naps since the last main sleep lower it, but recovery uses the need before naps (§6).
+            let napsUntil = main?.start ?? hi
+            let napped = found.filter { $0.isNap && $0.end > napsCountedUpTo && $0.end <= napsUntil }.reduce(0) { $0 + $1.asleep }
+            napsCountedUpTo = max(napsCountedUpTo, main?.end ?? napsUntil)
+            let fullNeed = Recovery.sleepNeed(goal: profile.sleepGoalMinutes, previousStrain: previousStrain,
+                                              previousNeed: previousNeed, previousAsleep: previousAsleep)
+            let need = Recovery.needAfterNaps(fullNeed, napMinutes: Double(napped))
             let score = Recovery.score(hrv: hrv, rhr: rhr, sleepMinutes: asleepMinutes.map { Double($0) },
-                                       need: need, baselineHRV: baseHRV, baselineRHR: baseRHR)
+                                       need: fullNeed, baselineHRV: baseHRV, baselineRHR: baseRHR)
 
             // Day strain from every minute of the calendar day.
-            let lo = max(0, tl.index(day)), hi = min(tl.count, tl.index(next))
             let dayHR = lo < hi ? Array(tl.hr[lo..<hi]) : []
             let restForStrain = rhr ?? (baseRHR.isEmpty ? 60 : Stats.mean(baseRHR))
             let strain = Strain.fromTRIMP(Strain.trimp(dayHR, resting: restForStrain,

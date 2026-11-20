@@ -142,13 +142,21 @@ latest week only. An edit recalculates its own week and, if that changes what wa
 6. A minute is **asleep** when P ≥ 0.5.
 7. **Sessions:** runs of ≥ 15 asleep minutes are merged when they are ≤ 30 minutes apart, or ≤ 120 minutes apart with at
    least 25% asleep between them. A quiet spell under 30 minutes that is followed by 10+ minutes awake doesn't start the sleep.
-   Up to 30 minutes after the end, a further 5 asleep minutes extend the sleep. A sleep lasts at least 45 minutes, and a span
-   under 180 minutes is a **nap**.
+   Up to 30 minutes after the end, a further 5 asleep minutes extend the sleep. A sleep needs at least 45 minutes asleep.
+   Outside the hours the person usually sleeps (step 12's usual hours: a typical chance of being asleep of at least 50%, moved
+   toward their own nights once 3 are known), 20 minutes asleep are enough, so a daytime nap is found on its own. Inside those
+   hours the 45 minutes stay, so a restless night doesn't break into short "naps".
+   A sleep is a **nap** when its span is under 180 minutes, or under 6 hours when most of its span is outside the usual hours
+   and a main sleep ended at most 18 hours before it started. Everything else is a main sleep, so the first sleep after a night
+   up still counts as the night.
+   *Our choice:* 20 minutes, the owner's rule. The 6-hour daytime rule: the owner's afternoon nap of 2026-11-19 ran from about
+   15:00 to 18:20, longer than 3 hours, and must not become a second night. WHOOP calls every sleep other than the main one a nap.
 8. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
 9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (`A > 2.5`, or HR 10+ bpm
    above the sleep's), or the band was off the wrist for an hour, or 6 hours have passed without newer data.
 10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. An awake stretch
-    shorter than 3 minutes between asleep minutes counts as asleep, so only longer ones are wake-ups. The other minutes are
+    shorter than 3 minutes between asleep minutes counts as asleep, so only longer ones are wake-ups. A sleep with no band data
+    at all, which only the user can add (for example a nap logged by hand), counts as asleep for its whole length. The other minutes are
     asleep, and §12 splits them into deep, REM and light. Asleep time, awake time and wake-ups all come from
     this one rule, so deep + REM + light = asleep and asleep + awake + unknown = the length of the sleep. Efficiency is asleep ÷
     (asleep + awake).
@@ -157,7 +165,8 @@ latest week only. An edit recalculates its own week and, if that changes what wa
 11. **Missing data.** A sleep starts and ends on measured minutes and needs 45 of them asleep. A gap of up to 3 hours with
     sleep on both sides stays inside the sleep as unknown. A longer gap splits it.
 12. **Asking the owner.** A sleep shows "Is this right?" when at least 15% of it has no data, when at least 15% of its measured
-    minutes have a P(asleep) between 0.2 and 0.8, or when most of it falls outside the hours the owner usually sleeps. "Yes" labels
+    minutes have a P(asleep) between 0.2 and 0.8, or when most of a sleep that isn't a nap falls outside the hours the owner usually
+   sleeps (a nap is outside them by definition). "Yes" labels
     the sleep's minutes asleep, "Fix times" labels them by the new times, and "Not asleep" labels them awake. These labels are
     the edits of step 5. *Our choice:* all three limits.
 
@@ -214,6 +223,10 @@ Day strain uses all minutes of the calendar day. restingHR = that morning's rest
 
 `need = goal (default 480) + 6 × max(0, yesterday's strain − 10) + 0.5 × max(0, yesterday's need − yesterday's sleep)`,
 capped at 600.
+
+**Naps** lower the next night's need: the minutes asleep in naps between one main sleep and the next are taken off,
+`need − naps`, down to 0. That lower need is what the app shows and what tomorrow's debt is measured against. Recovery (§7)
+uses the need before naps, and a nap's heart rate and HRV are never used for recovery or its baseline.
 
 *Source of the idea:* sleep debt accumulates (Van Dongen et al., *Sleep* 2003; 26(2):117–126).
 *Our choice:* the coefficients. They're simple and explainable, not fitted.

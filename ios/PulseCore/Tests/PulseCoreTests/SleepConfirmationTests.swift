@@ -99,9 +99,10 @@ private func night(_ from: Double, _ to: Double) -> [MinuteSample] {
     #expect(sleep.disturbances >= 2 && !sleep.isNap)
 }
 
-@Test func stillnessShorterThanTheOnsetDoesNotStartASleep() {
-    let rest = stretch(14, 14.5) { _ in (50, 1) }                  // 30 minutes
-    #expect(sleeps(daytime(9, 14) + rest + daytime(14.5, 18), now: time(18)).isEmpty)
+@Test func stillnessShorterThanANapIsNotSleep() {
+    // A daytime nap needs 20 minutes asleep (NapTests). Fifteen calm minutes are not one.
+    let rest = stretch(14, 14.25) { _ in (50, 1) }
+    #expect(sleeps(daytime(9, 14) + rest + daytime(14.25, 18), now: time(18)).isEmpty)
 }
 
 @Test func beingStillWithAnAwakeHeartRateIsNotSleep() {

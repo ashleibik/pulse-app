@@ -35,6 +35,7 @@ struct TodayView: View {
     @State private var showAdd = false
     @State private var showLiveWorkout = false
     @State private var openedWorkout: WorkoutRecord?
+    @State private var editingNap: SleepEditTarget?
     @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
     /// Today's stress picture and numbers so far (from today's raw minutes).
     @State private var stress: StressMonitor.Day?
@@ -90,6 +91,7 @@ struct TodayView: View {
             .sheet(isPresented: $showStress) { StressView(day: stress).presentationDetents([.medium, .large]) }
             .sheet(isPresented: $showJournal) { JournalView() }
             .sheet(isPresented: $showAdd) { AddWorkoutView() }
+            .sheet(item: $editingNap) { SleepEditView(target: $0) }
             .fullScreenCover(isPresented: $showLiveWorkout) { LiveWorkoutView() }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
@@ -294,6 +296,7 @@ struct TodayView: View {
     /// Sleep and workouts of the day, each with its times. Add / start below.
     private var activities: some View {
         let dayWorkouts = workouts.filter { calendar.isDate($0.start, inSameDayAs: selectedDay) }
+        let dayNaps = sleepRecords.filter { $0.isNap && calendar.isDate($0.end, inSameDayAs: selectedDay) }.sorted { $0.start < $1.start }
         return VStack(alignment: .leading, spacing: DS.Space.s) {
             Text(isToday ? "TODAY'S ACTIVITIES" : "ACTIVITIES")
                 .textStyle(.label)
@@ -306,6 +309,13 @@ struct TodayView: View {
                 }
                 .buttonStyle(.pressable)
             }
+            ForEach(dayNaps) { nap in
+                Button { open { editingNap = SleepEditTarget(start: nap.start, end: nap.end) } } label: {
+                    activityRow(symbol: "moon.zzz", value: PulseFormat.clock(minutes: nap.asleepMinutes),
+                                title: "NAP", start: nap.start, end: nap.end, tint: DS.Colors.sleepTint)
+                }
+                .buttonStyle(.pressable)
+            }
             ForEach(dayWorkouts) { workout in
                 Button { open { openedWorkout = workout } } label: {
                     activityRow(symbol: workout.kind.symbolName.outlineSymbol, value: PulseFormat.strain(workout.strain),
@@ -314,7 +324,7 @@ struct TodayView: View {
                 }
                 .buttonStyle(.pressable)
             }
-            if mainSleep == nil && dayWorkouts.isEmpty {
+            if mainSleep == nil && dayWorkouts.isEmpty && dayNaps.isEmpty {
                 Text(isToday ? "Nothing yet today. Sleep and workouts show up here by themselves." : "Nothing recorded.")
                     .textStyle(.body)
                     .foregroundStyle(DS.Colors.secondary)

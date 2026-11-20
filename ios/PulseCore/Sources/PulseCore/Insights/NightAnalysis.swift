@@ -209,14 +209,20 @@ public enum HeartRateZones {
 
 // MARK: - Sleep need breakdown
 
-/// The pieces of tonight's sleep need, for "why do I need 8h 30m?". Same formula as Recovery.sleepNeed.
+/// The pieces of tonight's sleep need, for "why do I need 8h 30m?". Same formulas as `Recovery.sleepNeed`
+/// and `Recovery.needAfterNaps`.
 public struct SleepNeedBreakdown: Sendable, Equatable {
     public let goal: Double
     public let strainExtra: Double
     public let debtExtra: Double
-    public let total: Double     // capped at 600 minutes
+    /// Minutes asleep in naps since the last night, taken off the need.
+    public let napCredit: Double
+    /// After naps. Before them it is capped at 600 minutes.
+    public let total: Double
+    /// true = the 600-minute cap cut the need.
+    public let isCapped: Bool
 
-    public init(goal: Double, previousStrain: Double?, previousNeed: Double?, previousAsleep: Double?) {
+    public init(goal: Double, previousStrain: Double?, previousNeed: Double?, previousAsleep: Double?, napMinutes: Double = 0) {
         self.goal = goal
         strainExtra = previousStrain.map { 6.0 * max(0.0, $0 - 10.0) } ?? 0
         if let n = previousNeed, let a = previousAsleep {
@@ -224,7 +230,10 @@ public struct SleepNeedBreakdown: Sendable, Equatable {
         } else {
             debtExtra = 0
         }
-        total = Recovery.sleepNeed(goal: goal, previousStrain: previousStrain,
-                                   previousNeed: previousNeed, previousAsleep: previousAsleep)
+        let beforeNaps = Recovery.sleepNeed(goal: goal, previousStrain: previousStrain,
+                                            previousNeed: previousNeed, previousAsleep: previousAsleep)
+        isCapped = goal + strainExtra + debtExtra > beforeNaps + 0.5
+        total = Recovery.needAfterNaps(beforeNaps, napMinutes: napMinutes)
+        napCredit = beforeNaps - total
     }
 }

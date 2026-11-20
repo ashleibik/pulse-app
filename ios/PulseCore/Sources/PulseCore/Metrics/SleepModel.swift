@@ -192,6 +192,22 @@ public enum SleepModel {
 
     // MARK: - Time of day
 
+    /// True when this minute of the day falls in the hours the person usually sleeps: the typical hours at first,
+    /// then moved toward their own nights once `nightsBeforeLearning` are known.
+    static func isUsualSleepTime(minuteOfDay clock: Int, learned: Learned) -> Bool {
+        let typical = usualSleepChance(minuteOfDay: clock)
+        guard learned.nights >= nightsBeforeLearning else { return typical >= 0.5 }
+        return (3 * typical + learned.asleepCounts[clock]) / (3 + learned.nights) >= 0.5
+    }
+
+    /// `isUsualSleepTime` for every minute of a timeline.
+    static func usualSleepHours(timeline tl: MetricsEngine.Timeline, calendar: Calendar, learned: Learned) -> [Bool] {
+        let parts = calendar.dateComponents([.hour, .minute], from: tl.start)
+        let first = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        let byClock = (0..<1440).map { isUsualSleepTime(minuteOfDay: $0, learned: learned) }
+        return (0..<tl.count).map { byClock[(first + $0) % 1440] }
+    }
+
     /// Typical chance of being asleep at each minute of the day, before the person's own nights are known.
     static func usualSleepChance(minuteOfDay: Int) -> Double {
         let hours = Double(minuteOfDay) / 60
@@ -523,21 +539,48 @@ public enum SleepModel {
         if Double(span - measured.count) >= reviewShare * Double(span) { return .missingData }
         let unclear = measured.filter { probability[$0] > 0.2 && probability[$0] < 0.8 }.count
         if Double(unclear) >= reviewShare * Double(measured.count) { return .unclear }
-        let personal = learned.nights >= nightsBeforeLearning
+        // A nap is outside the usual hours by definition.
+        guard !session.isNap else { return nil }
         let usual = measured.filter { minute in
-            let clock = (firstMinuteOfDay + minute - session.start) % 1440
-            let typical = usualSleepChance(minuteOfDay: clock)
-            guard personal else { return typical >= 0.5 }
-            return (3 * typical + learned.asleepCounts[clock]) / (3 + learned.nights) >= 0.5
+            isUsualSleepTime(minuteOfDay: (firstMinuteOfDay + minute - session.start) % 1440, learned: learned)
         }.count
         return usual * 2 < measured.count ? .unusualTime : nil
     }
 
-    /// The sleeps in a run of probabilities: at least 45 minutes long, and wake-ups of up to 30 minutes stay
-    /// inside. Falling asleep takes 15 settled minutes, so a quiet moment at a desk doesn't start the night
-    /// early. Near the end, 5 minutes are enough to count as dozing off again before getting up.
-    /// A sleep starts and ends on minutes the band really measured, and needs 45 of them asleep.
-    static func sessions(probability: [Double], observed: [Bool]) -> (sessions: [SleepDetector.Session], asleep: [Bool]) {
+    /// Minutes asleep a sleep needs. Mostly outside the usual sleep hours, a nap of `napMinimum` is enough.
+    static let sleepMinimum = 45
+    static let napMinimum = 20
+
+    /// A sleep shorter than this is a nap at any time of day.
+    static let napLimit = 180
+    /// Mostly outside the usual sleep hours, a sleep shorter than this is still a nap, once the night is behind.
+    static let daytimeNapLimit = 360
+    /// "The night is behind": a main sleep ended at most this many minutes before the daytime sleep starts.
+    static let napAfterMainSleep = 18 * 60
+
+    /// Marks the naps (docs/METRICS.md §4, step 7). A sleep is a nap when it lasts under `napLimit`, or under
+    /// `daytimeNapLimit` when most of it falls outside the usual sleep hours and a main sleep ended in the
+    /// `napAfterMainSleep` before it. So a long afternoon nap stays a nap, and the first sleep after a night up is the night.
+    static func markingNaps(_ sessions: [SleepDetector.Session], usualSleep: [Bool]) -> [SleepDetector.Session] {
+        var lastMainEnd: Int?
+        return sessions.sorted { $0.start < $1.start }.map { session in
+            var marked = session
+            let span = session.end - session.start
+            let outside = (session.start..<session.end).filter { $0 < usualSleep.count && !usualSleep[$0] }.count
+            let nightBehind = lastMainEnd.map { session.start - $0 <= napAfterMainSleep } ?? false
+            marked.isNap = span < napLimit || (span < daytimeNapLimit && outside * 2 > span && nightBehind)
+            if !marked.isNap { lastMainEnd = max(lastMainEnd ?? session.end, session.end) }
+            return marked
+        }
+    }
+
+    /// The sleeps in a run of probabilities: wake-ups of up to 30 minutes stay inside. Falling asleep takes 15 settled
+    /// minutes, so a quiet moment at a desk doesn't start the night early. Near the end, 5 minutes are enough to count
+    /// as dozing off again before getting up. A sleep starts and ends on minutes the band really measured, and needs
+    /// `sleepMinimum` of them asleep, or `napMinimum` when most of them fall outside the usual sleep hours.
+    /// - Parameter usualSleep: one flag per minute, true in the hours the person usually sleeps. nil = always 45 minutes.
+    static func sessions(probability: [Double], observed: [Bool],
+                         usualSleep: [Bool]? = nil) -> (sessions: [SleepDetector.Session], asleep: [Bool]) {
         var inSleep = probability.map { $0 >= 0.5 }
         var gap = 0
         while gap < observed.count {
@@ -548,7 +591,7 @@ public enum SleepModel {
             gap = gapEnd
         }
         let asleep = inSleep.indices.map { inSleep[$0] && observed[$0] }
-        let found = SleepDetector.sessions(inSleep, minSeed: 15, maxGap: 30, minSession: 45)
+        let found = SleepDetector.sessions(inSleep, minSeed: 15, maxGap: 30, minSession: usualSleep == nil ? sleepMinimum : napMinimum)
         let extended = found.enumerated().compactMap { index, session -> SleepDetector.Session? in
             let limit = index + 1 < found.count ? found[index + 1].start : asleep.count
             var end = session.end
@@ -570,7 +613,9 @@ public enum SleepModel {
                 onset = next
             }
             let measured = (onset..<end).filter { asleep[$0] }
-            guard measured.count >= 45, let first = measured.first, let last = measured.last else { return nil }
+            let daytime = usualSleep.map { usual in measured.filter { !usual[$0] }.count * 2 > measured.count } ?? false
+            guard measured.count >= (daytime ? napMinimum : sleepMinimum),
+                  let first = measured.first, let last = measured.last else { return nil }
             return SleepDetector.session(start: first, end: last + 1, asleep: asleep, observed: observed)
         }
         return (extended, asleep)

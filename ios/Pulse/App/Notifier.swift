@@ -71,9 +71,13 @@ enum Notifier {
         descriptor.fetchLimit = 1
         guard let today = try? context.fetch(descriptor).first else { return nil }
         let goal = Double(ProfileStore.current(in: context).sleepGoalMinutes)
-        let need = Recovery.sleepNeed(goal: goal, previousStrain: today.strain,
-                                      previousNeed: Double(today.sleepNeedMinutes),
-                                      previousAsleep: today.sleepMinutes.map { Double($0) })
+        // Naps since last night lower tonight's need.
+        let lastNight = sleeps.filter { !$0.isNap }.max { $0.end < $1.end }
+        let napped = Recovery.napMinutes(sleeps, after: lastNight?.end ?? Calendar.current.startOfDay(for: .now), upTo: .now)
+        let need = Recovery.needAfterNaps(Recovery.sleepNeed(goal: goal, previousStrain: today.strain,
+                                                             previousNeed: Double(today.sleepNeedMinutes),
+                                                             previousAsleep: today.sleepMinutes.map { Double($0) }),
+                                          napMinutes: Double(napped))
         return Bedtime.recommended(sleeps: sleeps, needMinutes: need, now: .now, calendar: .current)
     }
 }

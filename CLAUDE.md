@@ -29,6 +29,10 @@ The owner develops on Windows, has no Mac, and installs by sideloading (moving t
 - **Sleep is a learned probability per minute (2026-11-18).** `SleepModel` combines movement, heart rate against the owner's
   awake level, clean beats, HRV and time of day, and learns from their nights and edits. Breathing and skin temperature are
   left out until the data supports them. Keep the replay of the real night in `RealNightReplayTests` passing.
+- **Follow NOOP by default (2026-11-19).** Where NOOP has a method, port its code exactly and check the port against NOOP's
+  original code (as `NoopSleepStagerTests` does). Depart from it only when NOOP's own data says that part is untested or wrong,
+  when the band's data differs from what NOOP assumes, or when the owner's real nights show a clear mistake. Write each
+  departure and its reason in `docs/METRICS.md`. Settle doubts by comparing with the owner's Apple Watch, not by guessing.
 
 ## Third-party code
 

@@ -54,6 +54,16 @@ public enum Recovery {
         return min(need, 600.0)
     }
 
+    /// The need after naps: what they slept is taken off, down to 0. Swift only, on top of the shared formula (docs/METRICS.md §6).
+    public static func needAfterNaps(_ need: Double, napMinutes: Double) -> Double {
+        max(0, need - max(0, napMinutes))
+    }
+
+    /// Minutes asleep in the naps that ended after `after` and no later than `upTo`.
+    public static func napMinutes(_ sleeps: [SleepSession], after: Date, upTo: Date) -> Int {
+        sleeps.filter { $0.isNap && $0.end > after && $0.end <= upTo }.reduce(0) { $0 + $1.asleepMinutes }
+    }
+
     /// 0-100 recovery score, or nil if there's no HRV/RHR tonight or fewer than 4 baseline nights.
     public static func score(hrv: Double?, rhr: Double?, sleepMinutes: Double?, need: Double,
                              baselineHRV: [Double], baselineRHR: [Double]) -> Double? {
