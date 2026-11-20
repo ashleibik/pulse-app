@@ -159,7 +159,12 @@ enum OpenStrapPedometer {
     static func livePedometer(_ x: [Double], _ y: [Double], _ z: [Double], sampleRateHz: Double = fs) -> Result {
         let n = min(x.count, min(y.count, z.count))
         if n < window || sampleRateHz <= 0 { return .none }
-        let mag = (0..<n).map { (x[$0] * x[$0] + y[$0] * y[$0] + z[$0] * z[$0]).squareRoot() }
+        var mag = [Double]()
+        mag.reserveCapacity(n)
+        for i in 0..<n {
+            let sum: Double = x[i] * x[i] + y[i] * y[i] + z[i] * z[i]
+            mag.append(sum.squareRoot())
+        }
         let steps = pedometer(mag, sampleRateHz: sampleRateHz)
         let durationS = Double(n) / sampleRateHz
         if steps <= 0 { return Result(steps: 0, durationS: durationS, cadenceSpm: 0, peakToPeakG: 0, confidence: 0) }
