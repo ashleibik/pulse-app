@@ -18,7 +18,8 @@ Items marked ⚠ are open.
 ## What is in place
 
 ### Band
-- **Command allowlist.** The app and the Python toolkit can only build 17 known-safe commands.
+- **Command allowlist.** The app and the Python toolkit can only build 18 known-safe commands. The newest, the 100 Hz
+  motion stream (0x3F), writes and erases nothing; it is turned off on every connect and on only during a step test.
   Erase, reboot, power-cycle and firmware commands are not on the list, so no code path can send
   them (`Whoop.buildCommand` throws; tested in both languages).
 - **Checksums on everything received.** Frames with a bad CRC are counted and dropped, never used.
@@ -32,7 +33,6 @@ Items marked ⚠ are open.
   The password is sent once to sign in and never stored.
 - **No logging of health data**: the app has no `print` / log statements (checked by scan).
 - **HTTPS only**: the cloud URL must start with `https://`; the app has no plain-http address.
-- **Apple Health is write-only**, and simulated data is never written (rule + test).
 - **The debug packet log** is memory-only, capped at 400 lines, hidden behind 7 taps.
 
 ### Cloud (your own Supabase project)

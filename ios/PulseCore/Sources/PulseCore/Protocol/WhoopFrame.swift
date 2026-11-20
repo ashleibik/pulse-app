@@ -159,6 +159,9 @@ extension Whoop {
         public static func hrBroadcast(on: Bool, seq: UInt8) -> [UInt8] { allowed(.setGenericHrProfile, [on ? 1 : 0], seq) }
         /// ~1 Hz REALTIME_DATA packets on/off.
         public static func realtimeHR(on: Bool, seq: UInt8) -> [UInt8] { allowed(.toggleRealtimeHr, [on ? 1 : 0], seq) }
+        /// The 100 Hz motion (and optical) stream, packet type 0x2B, on/off. It stays on across reconnects:
+        /// every connect turns it off, and only a step test turns it on.
+        public static func rawStream(on: Bool, seq: UInt8) -> [UInt8] { allowed(.sendR10R11Realtime, [on ? 1 : 0], seq) }
         public static func reportVersion(seq: UInt8) -> [UInt8] { allowed(.reportVersionInfo, [], seq) }
         public static func getBattery(seq: UInt8) -> [UInt8] { allowed(.getBatteryLevel, [], seq) }
         /// [OS] sends an empty body; frames are padded to 4 bytes, so `00` gives the same bytes on the wire.

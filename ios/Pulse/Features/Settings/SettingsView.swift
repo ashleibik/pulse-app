@@ -9,12 +9,13 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
-    @Environment(HealthExporter.self) private var health
     @Query private var profiles: [ProfileRecord]
     @Query private var bands: [BandRecord]
+    @Query private var sleepCorrections: [SleepCorrectionRecord]
+    @State private var showMotionCheck = false
     @State private var remindersOn = UserDefaults.standard.bool(forKey: "remindersEnabled")
-    /// The export file, once it has been written.
-    @State private var exportURL: URL?
+    /// What the last backup export or import did.
+    @State private var backupMessage: String?
     @State private var confirmForget = false
     @State private var confirmDelete = false
     @State private var showPairing = false
@@ -32,33 +33,10 @@ struct SettingsView: View {
                     ProfileSection(profile: profile) {
                         Task { await loader.recompute(context: context) }
                     }
+                    StepsSection(profile: profile)
                 }
 
                 bandSection
-
-                SettingsSection("Apple Health", footer: healthFooter) {
-                    ValueRow(label: "Export", value: health.isEnabled ? "On" : "Off",
-                             symbol: "heart.text.square", emphasized: health.isEnabled)
-                    Hairline()
-                    HStack(spacing: DS.Space.s) {
-                        Button(health.isEnabled ? "Turn off" : "Turn on") {
-                            if health.isEnabled {
-                                health.disable()
-                            } else {
-                                Task { await health.enable(context: context) }
-                            }
-                        }
-                        .buttonStyle(.secondaryPill)
-                        if health.isEnabled {
-                            Button("Export all") {
-                                Task { await health.export(context: context, everything: true) }
-                            }
-                            .buttonStyle(.secondaryPill)
-                        }
-                    }
-                    .disabled(health.status == .working || !health.isAvailable)
-                    .padding(.top, DS.Space.m)
-                }
 
                 CloudSettingsView()
 
@@ -81,13 +59,13 @@ struct SettingsView: View {
                     .padding(.top, DS.Space.m)
                 }
 
-                SettingsSection("Your data", footer: "The export is one readable file with your days, nights, workouts and journal. Raw heartbeats are not included.") {
-                    if let exportURL {
-                        ShareLink(item: exportURL) { Text("Share the export file") }
+                SettingsSection("Your data", footer: backupMessage ?? "Export all data is your backup. The file is one JSON file with all your band data, workouts, journal and profile. Use it to move Pulse to a new install. Importing adds to what is here and never deletes anything.") {
+                    BackupButtons(message: $backupMessage)
+                    if !sleepCorrections.isEmpty {
+                        Button("Undo my sleep edits (\(sleepCorrections.count))") { undoSleepEdits() }
                             .buttonStyle(.secondaryPill)
-                    } else {
-                        Button("Export my data") { export() }
-                            .buttonStyle(.secondaryPill)
+                            .disabled(loader.isBusy)
+                            .padding(.top, DS.Space.s)
                     }
                     Button("Delete all band data") { confirmDelete = true }
                         .buttonStyle(.secondaryPill)
@@ -150,6 +128,7 @@ struct SettingsView: View {
                             titleVisibility: .visible) {
             Button("Delete everything") {
                 try? PulseStore.deleteAllHealthData(in: context)
+                WearSensorStore.shared.clear()
                 loader.dataChanged()
             }
         } message: {
@@ -157,18 +136,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showPairing) { PairingView() }
         .sheet(isPresented: $showLog) { BandLogView() }
+        .sheet(isPresented: $showMotionCheck) { MotionCheckView() }
         .task {
             if profiles.isEmpty { _ = ProfileStore.current(in: context) }
-        }
-    }
-
-    /// What happened last, or what the export does.
-    private var healthFooter: String {
-        switch health.status {
-        case .working: "Exporting…"
-        case .done(let message): message
-        case .failed(let message): message
-        case .idle: "Saves sleep, resting heart rate and workouts to Apple Health. Pulse never reads from Apple Health."
         }
     }
 
@@ -176,11 +146,26 @@ struct SettingsView: View {
     @ViewBuilder
     private var bandSection: some View {
         if let record = bands.first {
-            SettingsSection("Band", footer: "Pulse talks to the band directly over Bluetooth and never to WHOOP's servers.") {
+            SettingsSection("Band", footer: "Pulse stays connected and pulls new data by itself every few minutes. These tools are for troubleshooting. Pulse talks to the band directly over Bluetooth and never to WHOOP's servers.") {
                 ValueRow(label: "Name", value: record.name)
+                Hairline()
+                ValueRow(label: "Connection", value: band.statusLine, emphasized: band.isConnected)
+                Hairline()
+                ValueRow(label: "Firmware", value: record.firmwareVersion ?? "Unknown",
+                         emphasized: record.firmwareVersion != nil)
                 Hairline()
                 ValueRow(label: "Battery", value: record.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "Unknown",
                          emphasized: record.batteryPercent != nil)
+                Hairline()
+                ValueRow(label: "Wear sensor", value: WearSensorStore.shared.rowText,
+                         emphasized: WearSensorStore.shared.status.label == "No errors")
+                if WearSensorStore.shared.status.hasError {
+                    Text("The band reports an error from its wear sensor. Heart rate comes from a separate optical sensor.")
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, DS.Space.s)
+                }
                 Hairline()
                 ValueRow(label: "Last sync",
                          value: record.lastHistorySyncAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never",
@@ -189,19 +174,27 @@ struct SettingsView: View {
                 dataStartRow
                 Hairline()
                 HStack(spacing: DS.Space.s) {
-                    Button("Sync now") {
-                        band.syncNow(context: context)
-                        showPairing = true
-                    }
-                    .buttonStyle(.secondaryPill)
-                    .disabled(band.isBusy)
+                    // Works in place: the Connection row above shows how it goes.
+                    Button("Sync now") { band.syncNow(context: context) }
+                        .buttonStyle(.secondaryPill)
+                        .disabled(band.stage == .syncing)
                     Button("Forget") { confirmForget = true }
                         .buttonStyle(.secondaryPill)
-                        .disabled(band.isBusy)
+                        .disabled(band.stage == .syncing)
                 }
                 .padding(.top, DS.Space.m)
+                // One manual sync below the low-battery threshold. Automatic syncs still pause.
+                if case .paused = band.stage {
+                    Button("Sync anyway") { band.syncNow(context: context, overrideLowBattery: true) }
+                        .buttonStyle(.secondaryPill)
+                        .padding(.top, DS.Space.s)
+                }
                 // Every packet of the last sync, exportable as a text file (for debugging).
                 Button("Sync log") { showLog = true }
+                    .buttonStyle(.secondaryPill)
+                    .padding(.top, DS.Space.s)
+                // Do the band's motion readings change when you move?
+                Button("Motion check") { showMotionCheck = true }
                     .buttonStyle(.secondaryPill)
                     .padding(.top, DS.Space.s)
             }
@@ -216,18 +209,11 @@ struct SettingsView: View {
         }
     }
 
-    /// Writes the export file to a temporary folder, ready for the share sheet.
-    private func export() {
-        let days = ((try? context.fetch(FetchDescriptor<DaySummaryRecord>())) ?? []).map(\.value)
-        let sleeps = ((try? context.fetch(FetchDescriptor<SleepRecord>())) ?? []).map(\.value)
-        let workouts = ((try? context.fetch(FetchDescriptor<WorkoutRecord>())) ?? []).map(\.value)
-        var journal: [Date: Set<Habit>] = [:]
-        for record in (try? context.fetch(FetchDescriptor<JournalRecord>())) ?? [] { journal[record.day] = record.habits }
-        guard let data = try? DataExport.json(days: days, sleeps: sleeps, workouts: workouts, journal: journal,
-                                              calendar: .current, now: .now) else { return }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-export.json")
-        try? data.write(to: url, options: .atomic)
-        exportURL = url
+    /// Back to what Pulse detected by itself.
+    private func undoSleepEdits() {
+        for record in sleepCorrections { context.delete(record) }
+        try? context.save()
+        Task { await loader.recompute(context: context) }
     }
 
     private var appVersion: String {
@@ -294,6 +280,64 @@ private struct SettingsSection<Content: View>: View {
     }
 }
 
+/// Step goal, how the estimate is calibrated, and the two ways to check it (DESIGN.md §4b-8).
+private struct StepsSection: View {
+    @Bindable var profile: ProfileRecord
+    @Environment(\.modelContext) private var context
+    @Query private var references: [StepReferenceRecord]
+    @Query private var sleepRecords: [SleepRecord]
+    @Query private var days: [DaySummaryRecord]
+    @State private var factor: Steps.Factor = .none
+    @State private var showTest = false
+    @State private var showWatch = false
+
+    var body: some View {
+        SettingsSection("Steps", footer: "A WHOOP 4.0 doesn't count steps, so Pulse estimates them from how your wrist moves. A step test and your Apple Watch's daily totals tune the estimate to you and show how close it is.") {
+            goalRow
+            Hairline()
+            ValueRow(label: "Calibration", value: StepsData.calibrationText(factor), emphasized: factor.isCalibrated)
+            Hairline()
+            Button("Step test") { showTest = true }
+                .buttonStyle(.secondaryPill)
+                .padding(.top, DS.Space.m)
+            Button("Compare with Apple Watch") { showWatch = true }
+                .buttonStyle(.secondaryPill)
+                .padding(.top, DS.Space.s)
+        }
+        .sheet(isPresented: $showTest) { StepTestView() }
+        .sheet(isPresented: $showWatch) { WatchStepsView() }
+        .task(id: references.count) {
+            factor = Steps.factor(StepsData.checked(references.map(\.value), sleeps: sleepRecords.map(\.value), days: Array(days),
+                                                    maxHeartRate: profile.estimatedMaxHeartRate(), context: context))
+        }
+    }
+
+    /// Daily goal with minus / plus buttons (1,000 steps a click, 2,000 to 30,000).
+    private var goalRow: some View {
+        HStack(spacing: DS.Space.s) {
+            Text("Daily goal")
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+            Spacer(minLength: DS.Space.s)
+            Text(profile.stepGoal.formatted())
+                .textStyle(.bodyStrong)
+                .monospacedDigit()
+                .foregroundStyle(DS.Colors.primary)
+                .padding(.trailing, DS.Space.xs)
+            IconButton(systemName: "minus", label: "Lower step goal") {
+                profile.stepGoal = max(2_000, profile.stepGoal - 1_000)
+            }
+            .disabled(profile.stepGoal <= 2_000)
+            IconButton(systemName: "plus", label: "Raise step goal") {
+                profile.stepGoal = min(30_000, profile.stepGoal + 1_000)
+            }
+            .disabled(profile.stepGoal >= 30_000)
+        }
+        .frame(minHeight: 60)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// Edits the profile in place (@Bindable writes straight to SwiftData, which autosaves).
 private struct ProfileSection: View {
     @Bindable var profile: ProfileRecord
@@ -305,7 +349,7 @@ private struct ProfileSection: View {
     private static let years: [Int] = Array(((currentYear - 90)...(currentYear - 13)).reversed())
 
     var body: some View {
-        SettingsSection("Profile", footer: "Used only for the formulas: max heart rate is estimated from age (208 − 0.7 × age), sex picks the strain coefficients, and the goal is your baseline sleep need. Stays on this iPhone.") {
+        SettingsSection("Profile", footer: "Used only for the formulas: max heart rate is estimated from age (208 − 0.7 × age), sex picks the strain coefficients, the goal is your baseline sleep need, weight and height feed the calorie estimate, and your waist (optional) lets the VO₂ max estimate use your activity too. Stays on this iPhone.") {
             pickerRow("Birth year") {
                 Picker("Birth year", selection: Binding(
                     get: { profile.birthYear ?? 0 },
@@ -322,6 +366,33 @@ private struct ProfileSection: View {
                     Text("Not specified").tag(BiologicalSex.unspecified)
                     Text("Female").tag(BiologicalSex.female)
                     Text("Male").tag(BiologicalSex.male)
+                }
+            }
+            Hairline()
+            pickerRow("Weight") {
+                Picker("Weight", selection: Binding(
+                    get: { Int(profile.weightKg?.rounded() ?? 0) },
+                    set: { profile.weightKg = $0 == 0 ? nil : Double($0) })) {
+                    Text("Not set").tag(0)
+                    ForEach(Array(30...250), id: \.self) { Text("\($0) kg").tag($0) }
+                }
+            }
+            Hairline()
+            pickerRow("Height") {
+                Picker("Height", selection: Binding(
+                    get: { Int(profile.heightCm?.rounded() ?? 0) },
+                    set: { profile.heightCm = $0 == 0 ? nil : Double($0) })) {
+                    Text("Not set").tag(0)
+                    ForEach(Array(120...230), id: \.self) { Text("\($0) cm").tag($0) }
+                }
+            }
+            Hairline()
+            pickerRow("Waist") {
+                Picker("Waist", selection: Binding(
+                    get: { Int(profile.waistCm?.rounded() ?? 0) },
+                    set: { profile.waistCm = $0 == 0 ? nil : Double($0) })) {
+                    Text("Not set").tag(0)
+                    ForEach(Array(50...160), id: \.self) { Text("\($0) cm").tag($0) }
                 }
             }
             Hairline()

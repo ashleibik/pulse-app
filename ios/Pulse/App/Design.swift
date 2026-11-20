@@ -34,6 +34,11 @@ enum DS {
         /// Low recovery ("Rest"), things that pulled a score down.
         static let alert = Color(hex: 0xFF5C5C)
 
+        /// The Sleep ring and sleep data (Today's three rings: sleep / recovery / strain).
+        static let sleepTint = Color(hex: 0x8AB4E8)
+        /// The Strain ring and strain data.
+        static let strainTint = Color(hex: 0x3D9BFF)
+
         /// Kept so older call sites compile: text on a primary button.
         static let onPrimary = onAccent
 
@@ -90,6 +95,8 @@ enum DS {
         static let xxl: CGFloat = 48
         /// Left/right padding of every screen.
         static let side: CGFloat = 24
+        /// The space at the end of a tab screen, so its last content scrolls clear of the tab bar.
+        static let tabBarClearance: CGFloat = 96
     }
 
     enum Radius {

@@ -22,11 +22,23 @@ public struct MetricsResult: Sendable {
 ///
 /// Steps (docs/METRICS.md):
 ///   1. lay the minutes on a gap-aware timeline (missing minutes = not worn)
-///   2. detect sleep (Cole-Kripke + HR gate) and group into sessions
+///   2. estimate the chance of being asleep per minute (SleepModel), group into sessions, keep the
+///      finished ones, and apply what the user corrected
 ///   3. for each calendar day: main sleep -> resting HR + overnight HRV
 ///   4. baseline = previous 14 days; sleep need; recovery; day strain; plain-language explanation
 public enum MetricsEngine {
-    public static let algorithmVersion = 1
+    /// 2: sleeps must be confirmed and finished (docs/METRICS.md §4, steps 6-9).
+    /// 3: calibrated on a real night: movement without the band's resting offset, short wake-ups stay
+    ///    inside a sleep, cleaner beats for HRV, and one definition of the awake minutes of a sleep.
+    /// 4: sleep is a probability per minute from several signals, learned from the person's own nights and edits.
+    /// 5: minutes with no band data are unknown instead of awake, personal learning waits for 3 nights,
+    ///    unsure sleeps ask "Is this right?", and new minutes measure motion from the wrist angle.
+    /// 6: breathing, restful sleep, zones, calories and workout detection ported from OpenStrap and NOOP.
+    /// 7: wake-ups of 3 minutes or more, daytime naps from 20 minutes, and naps lower the next night's sleep need.
+    public static let algorithmVersion = 7
+    /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v2.json).
+    /// The confirmation stage on top of them is Swift only.
+    public static let sharedFormulaVersion = 2
     public static let baselineDays = 14
 
     /// Minute-by-minute arrays with no gaps.
@@ -34,6 +46,8 @@ public enum MetricsEngine {
         var start: Date
         var hr: [Double?]
         var activity: [Double?]
+        /// `MinuteSample.movement`: what sleep detection judges, because `activity` holds a resting offset.
+        var movement: [Double?]
         var rr: [[Double]]
         var source: DataSource
 
@@ -49,6 +63,7 @@ public enum MetricsEngine {
         var t = Timeline(start: first.start,
                          hr: Array(repeating: nil, count: count),
                          activity: Array(repeating: nil, count: count),
+                         movement: Array(repeating: nil, count: count),
                          rr: Array(repeating: [], count: count),
                          source: sorted.allSatisfy { $0.source == .simulated } ? .simulated : last.source)
         for m in sorted where m.isWorn {
@@ -56,28 +71,94 @@ public enum MetricsEngine {
             guard i >= 0 && i < count else { continue }
             t.hr[i] = m.averageHeartRate
             t.activity[i] = m.averageActivity
+            t.movement[i] = m.movement
             t.rr[i] = m.rrIntervalsMs.map { Double($0) }
         }
         return t
     }
 
-    public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
-                           calendar: Calendar, now: Date) -> MetricsResult {
-        guard let tl = timeline(minutes) else { return MetricsResult(sleeps: [], days: []) }
+    /// The user's corrections, oldest first, on top of what was detected. A time the user left as it
+    /// was follows the detection, so better detection can still move it; a time they changed stays.
+    static func applying(_ corrections: [SleepCorrection], to detected: [SleepDetector.Session], timeline tl: Timeline,
+                         asleep: [Bool]) -> [SleepDetector.Session] {
+        var sessions = detected
+        for correction in corrections.sorted(by: { $0.createdAt < $1.createdAt }) {
+            let matching = sessions.filter { correction.applies(toStart: tl.date($0.start), end: tl.date($0.end)) }
+            sessions.removeAll { correction.applies(toStart: tl.date($0.start), end: tl.date($0.end)) }
+            guard var start = correction.start, var end = correction.end else { continue }
+            if start == correction.detectedStart, let first = matching.first { start = tl.date(first.start) }
+            if end == correction.detectedEnd, let last = matching.last { end = tl.date(last.end) }
+            let from = max(0, tl.index(start)), to = min(tl.count, tl.index(end))
+            guard from < to else { continue }
+            sessions.append(SleepDetector.session(start: from, end: to, asleep: asleep))
+        }
+        return sessions.sorted { $0.start < $1.start }
+    }
 
-        // 1-2. Sleep. HR threshold per 24 h block starting at local noon (docs/METRICS.md §4).
-        let startMidnight = calendar.startOfDay(for: tl.start)
-        var anchor = calendar.date(byAdding: .hour, value: 12, to: startMidnight)!
-        if anchor > tl.start { anchor = calendar.date(byAdding: .day, value: -1, to: anchor)! }
-        let blocks = (0..<tl.count).map { Int((tl.date($0).timeIntervalSince(anchor) / 86_400).rounded(.down)) }
-        let asleep = SleepDetector.classify(hr: tl.hr, activity: tl.activity, blocks: blocks)
-        let found = SleepDetector.sessions(asleep)
+    /// Counts each sleep's minutes from its phases, so its totals match what the Sleep screens show.
+    /// Returns the sleeps and one flag per minute of the timeline: asleep inside a sleep.
+    static func described(_ sessions: [SleepDetector.Session], timeline tl: Timeline) -> (sessions: [SleepDetector.Session], asleep: [Bool]) {
+        var asleep = [Bool](repeating: false, count: tl.count)
+        let observed = tl.hr.map { $0 != nil }
+        var unmeasured = Set<Int>()
+        for session in sessions {
+            let range = session.start..<session.end
+            guard range.contains(where: { observed[$0] }) else {
+                // Only the user can add a sleep with no band data, so it counts as asleep for its whole length.
+                unmeasured.insert(session.start)
+                for i in range { asleep[i] = true }
+                continue
+            }
+            let phases = SleepTimeline.phases(hr: Array(tl.hr[range]), movement: Array(tl.movement[range]))
+            for (offset, phase) in phases.enumerated() {
+                asleep[session.start + offset] = phase != nil && phase != .awake
+            }
+        }
+        let counted = sessions.map { session in
+            SleepDetector.session(start: session.start, end: session.end, asleep: asleep,
+                                  observed: unmeasured.contains(session.start) ? nil : observed)
+        }
+        return (counted, asleep)
+    }
+
+    public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
+                           calendar: Calendar, now: Date, corrections: [SleepCorrection] = []) -> MetricsResult {
+        var cache = SleepModelCache()
+        return run(minutes: minutes, profile: profile, calendar: calendar, now: now, corrections: corrections, sleepCache: &cache)
+    }
+
+    /// - Parameter sleepCache: what the last run worked out. Weeks whose data didn't change are reused from it.
+    public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
+                           calendar: Calendar, now: Date, corrections: [SleepCorrection] = [],
+                           sleepCache: inout SleepModelCache) -> MetricsResult {
+        guard let tl = timeline(minutes) else {
+            sleepCache = SleepModelCache()
+            return MetricsResult(sleeps: [], days: [])
+        }
+
+        // 1-2. Sleep: the chance of being asleep per minute, then the sleeps in it (docs/METRICS.md §4).
+        let model = SleepModel.run(timeline: tl, calendar: calendar, corrections: corrections, cache: &sleepCache)
+        let observed = tl.hr.map { $0 != nil }
+        let usual = SleepModel.usualSleepHours(timeline: tl, calendar: calendar, learned: model.learned)
+        let (detected, candidates) = SleepModel.sessions(probability: model.probability, observed: observed, usualSleep: usual)
+        let finished = detected
+            .filter { session in
+                SleepDetector.isFinished(session, asleep: candidates, hr: tl.hr, activity: tl.movement,
+                                         minutesSinceEnd: now.timeIntervalSince(tl.date(session.end)) / 60)
+            }
+        let (counted, asleep) = described(applying(corrections, to: finished, timeline: tl, asleep: candidates), timeline: tl)
+        let found = SleepModel.markingNaps(counted, usualSleep: usual)
         let sleeps = found.map { s -> SleepSession in
             // Deterministic ID from the start time: re-running the engine updates, not duplicates.
             var idSource = SeededRandom(seed: UInt64(bitPattern: Int64(tl.date(s.start).timeIntervalSince1970)))
+            let answered = corrections.contains { $0.answers(start: tl.date(s.start), end: tl.date(s.end)) }
+            let parts = calendar.dateComponents([.hour, .minute], from: tl.date(s.start))
+            let reason = answered ? nil : SleepModel.reviewReason(s, probability: model.probability, observed: observed,
+                                                                  firstMinuteOfDay: (parts.hour ?? 0) * 60 + (parts.minute ?? 0),
+                                                                  learned: model.learned)
             return SleepSession(id: idSource.uuid(), start: tl.date(s.start), end: tl.date(s.end),
                                 asleepMinutes: s.asleep, awakeMinutes: s.awake, disturbances: s.disturbances,
-                                isNap: s.isNap, source: tl.source)
+                                isNap: s.isNap, source: tl.source, reviewReason: reason)
         }
 
         // 3-4. Days. If data starts late in the evening, that day is incomplete: start the next day.
@@ -93,6 +174,8 @@ public enum MetricsEngine {
         var previousStrain: Double?
         var previousNeed: Double?
         var previousAsleep: Double?
+        /// Naps that end after this minute still count toward the next night's need.
+        var napsCountedUpTo = 0
 
         while day <= lastDay {
             let next = calendar.date(byAdding: .day, value: 1, to: day)!
@@ -117,13 +200,19 @@ public enum MetricsEngine {
             let baseHRV = window.compactMap(\.hrv)
             let baseRHR = window.compactMap(\.rhr)
 
-            let need = Recovery.sleepNeed(goal: profile.sleepGoalMinutes, previousStrain: previousStrain,
-                                          previousNeed: previousNeed, previousAsleep: previousAsleep)
+            let lo = max(0, tl.index(day)), hi = min(tl.count, tl.index(next))
+
+            // Sleep need. Naps since the last main sleep lower it, but recovery uses the need before naps (§6).
+            let napsUntil = main?.start ?? hi
+            let napped = found.filter { $0.isNap && $0.end > napsCountedUpTo && $0.end <= napsUntil }.reduce(0) { $0 + $1.asleep }
+            napsCountedUpTo = max(napsCountedUpTo, main?.end ?? napsUntil)
+            let fullNeed = Recovery.sleepNeed(goal: profile.sleepGoalMinutes, previousStrain: previousStrain,
+                                              previousNeed: previousNeed, previousAsleep: previousAsleep)
+            let need = Recovery.needAfterNaps(fullNeed, napMinutes: Double(napped))
             let score = Recovery.score(hrv: hrv, rhr: rhr, sleepMinutes: asleepMinutes.map { Double($0) },
-                                       need: need, baselineHRV: baseHRV, baselineRHR: baseRHR)
+                                       need: fullNeed, baselineHRV: baseHRV, baselineRHR: baseRHR)
 
             // Day strain from every minute of the calendar day.
-            let lo = max(0, tl.index(day)), hi = min(tl.count, tl.index(next))
             let dayHR = lo < hi ? Array(tl.hr[lo..<hi]) : []
             let restForStrain = rhr ?? (baseRHR.isEmpty ? 60 : Stats.mean(baseRHR))
             let strain = Strain.fromTRIMP(Strain.trimp(dayHR, resting: restForStrain,

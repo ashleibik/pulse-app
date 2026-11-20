@@ -14,6 +14,8 @@ Sources:
 - **[BW]** bWanShiTong, reverse-engineering-whoop-post (real captures). https://github.com/bWanShiTong/reverse-engineering-whoop-post
 - **[OS]** OpenStrap protocol (Dart, AGPL-3.0): `constants.dart`, `framing.dart`, `crc.dart`, `commands.dart`, `control.dart`, `live.dart`, `band.dart`. https://github.com/OpenStrap/protocol
 - **[CM]** christianmeurer, whoop-reader (Python, MIT). https://github.com/christianmeurer/whoop-reader
+- **[NOOP]** ryanbr/noop docs (`PROTOCOL_COMMANDS.md`, `PROTOCOL_SENSORS.md`, `PROTOCOL_WHOOP4.md`) at commit 2a1de76, with
+  WHOOP 4 device captures. https://github.com/ryanbr/noop
 
 > **License note:** OpenStrap is AGPL-3.0. We use it as a **reference for facts** (opcode numbers, byte offsets),
 > which aren't copyrightable, and **write all code ourselves**. That keeps this repo's license our choice.
@@ -81,11 +83,11 @@ parameter sets are brute-forcing artifacts.
 | 0x23 | COMMAND | phone → band (CMD_TO) | ✅ |
 | 0x24 | COMMAND_RESPONSE | CMD_FROM | 🟡 |
 | 0x28 | REALTIME_DATA (HR + RR) | DATA | 🟢 |
-| 0x2B | REALTIME_RAW | DATA | 🟡 |
+| 0x2B | REALTIME_RAW: 100 Hz motion (inner length 1,920) or optical (1,924), while 0x3F is on. See §8b | DATA | 🟡 [NOOP] captures |
 | 0x2F | HISTORICAL_DATA (1 Hz record) | DATA | 🟢 |
 | 0x30 | EVENT | EVENTS | 🟢 |
 | 0x31 | METADATA (history markers) | DATA | 🟢 |
-| 0x32 | CONSOLE_LOGS | ? | 🟡 |
+| 0x32 | CONSOLE_LOGS | Readable firmware status lines, for example `TIGHTNESS V1: ... loose flag = 1`. Seen on the owner's band: inner `[4:8]` unix time, `[10:12]` size, `[12]` = 1, then 50 text bytes that continue in the next packet (lines are cut mid-word), then 0 | 🟡 |
 | 0x33 / 0x34 | REALTIME_IMU / HISTORICAL_IMU | DATA | 🟡 |
 
 ## 4. Commands (`inner[2]` when type = 0x23)
@@ -113,6 +115,7 @@ Builders are in `protocol/frames.py`. **Allowlist** in `protocol/constants.py`: 
 | 0x16 | SEND_HISTORICAL_DATA | `00` | 🟢 |
 | 0x17 | HISTORICAL_DATA_RESULT (ack) | `01` + 8-byte token (§7) | 🟢 layout [BW]+[OS], token contents 🔴 see §7 |
 | 0x14 | ABORT_HISTORICAL | | 🟡 |
+| 0x3F | SEND_R10_R11_REALTIME (100 Hz motion + optical stream, type 0x2B) | `01` on / `00` off | 🟡 [NOOP]: seen in WHOOP 4 device captures, 2.1 packets/s → 0 when off. The state **stays on across reconnects** and, left on, floods Bluetooth and the band's memory. Pulse turns it off on every connect and on only during a step test (15 minutes at most) |
 
 ### Refused (not on the allowlist)
 `0x0F` forget bonds · `0x19` force trim (**erases data**) · `0x1D` reboot · `0x20` power cycle · `0x21` set read pointer ·
@@ -190,6 +193,16 @@ The band reportedly stores **~2 weeks** of ~1 Hz data.
 🔴 **Do history records contain RR intervals?** Unknown, and it's **the most important open question**: no RR in
 history means overnight HRV only works while the phone is connected. The parser tries the R10 layout
 (count at `[18]`, i16 ms from `[19]`) and reports it as `rr_ms_unverified`. Confirm with `decode_helper`.
+
+## 8b. Realtime raw motion (type 0x2B) 🟡 [NOOP]
+
+Sent about once a second while 0x3F is on, alternating with an optical packet. The motion variant has inner length
+1,920 (payload 1,917, declared length 1,924): `[11:15]` u32 unix seconds · `[15:17]` sub-seconds · `[17]` heart rate ·
+`[18]` RR count, i16 RR from `[19]` · `[85:285]`, `[285:485]`, `[485:685]` accelerometer x, y, z as 100 × i16 LE each
+(100 Hz) · `[688:888]`, `[888:1088]`, `[1088:1288]` gyroscope x, y, z. Scale 1/4096 g per count (NOOP: matched a
+gravity sphere fit; also OpenStrap's convention) and 2000/32768 °/s for the gyroscope. The optical variant has inner
+length 1,924. NOOP documents both for firmware 41.17.6.0; the owner's band reports 41.11.7.0, so the first real step
+test confirms or refutes it (the sync log prints the median size of the readings: about 1 g if the scale is right).
 
 ## 9. Events (type 0x30) 🟡 [OS]
 

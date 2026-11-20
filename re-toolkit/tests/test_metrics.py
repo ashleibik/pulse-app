@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from metrics.hrv import clean_rr, overnight_rmssd, resting_hr, rmssd
+from metrics.hrv import clean_beats, clean_rr, overnight_rmssd, resting_hr, rmssd
 from metrics.load import max_hr_tanaka, recovery, sleep_need, strain_from_trimp, trimp
 from metrics.sleep import classify, cole_kripke, sessions
 from metrics.stats import lower_percentile, median, sample_sd
@@ -141,3 +141,18 @@ def test_protocol_vectors_file_is_up_to_date():
     assert pv.OUT.exists(), "protocol vectors file missing"
     on_disk = json.loads(pv.OUT.read_text(encoding="utf-8"))
     assert on_disk == json.loads(json.dumps(pv.build_vectors()))
+
+
+def test_clean_beats_drops_filler_impossible_beats_and_big_jumps():
+    beats = [900.0] * 20
+    beats[3], beats[8], beats[12] = 500.0, 2400.0, 1500.0
+    clean = clean_beats(beats)
+    assert clean[3] is None and clean[8] is None and clean[12] is None
+    assert sum(b is not None for b in clean) == 17
+    step = clean_beats([800.0] * 6 + [980.0] * 6)
+    assert step[6] is None and step[5] == 800.0 and step[7] == 980.0
+
+
+def test_overnight_rmssd_never_pairs_beats_across_two_minutes():
+    minutes = [[900.0 + (i % 2) * 40.0] * 60 for i in range(15)]
+    assert overnight_rmssd(minutes, [True] * 15) == 0.0

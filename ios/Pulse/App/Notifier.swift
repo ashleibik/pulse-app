@@ -5,7 +5,7 @@ import PulseCore
 
 /// Reminders, as local notifications: they are created on the phone and need no server.
 ///
-///   - "Time to wind down": 30 minutes before tonight's recommended bedtime.
+///   - "Time to wind down": 30 minutes before tonight's bedtime from the Sleep planner.
 ///   - "Recovery is ready": after a band sync, with this morning's score.
 ///
 /// Off until the user turns them on in Settings (that is when iOS asks for permission).
@@ -64,16 +64,37 @@ enum Notifier {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: recoveryID, content: content, trigger: trigger))
     }
 
-    /// Tonight's recommended bedtime (PulseCore's Bedtime), or nil without enough nights.
-    static func bedtime(context: ModelContext) -> Date? {
+    /// The Sleep planner's choices (DESIGN.md §4b-10). A wake time of -1 = your usual one.
+    nonisolated static let plannerWakeKey = "plannerWakeMinutes"
+    nonisolated static let plannerGoalKey = "plannerGoal"
+
+    /// Tonight's sleep need in minutes, after naps since last night. nil before the first day.
+    static func tonightsNeed(context: ModelContext) -> Double? {
         let sleeps = ((try? context.fetch(FetchDescriptor<SleepRecord>())) ?? []).map(\.value)
         var descriptor = FetchDescriptor<DaySummaryRecord>(sortBy: [SortDescriptor(\.date, order: .reverse)])
         descriptor.fetchLimit = 1
         guard let today = try? context.fetch(descriptor).first else { return nil }
         let goal = Double(ProfileStore.current(in: context).sleepGoalMinutes)
-        let need = Recovery.sleepNeed(goal: goal, previousStrain: today.strain,
-                                      previousNeed: Double(today.sleepNeedMinutes),
-                                      previousAsleep: today.sleepMinutes.map { Double($0) })
-        return Bedtime.recommended(sleeps: sleeps, needMinutes: need, now: .now, calendar: .current)
+        // Naps since last night lower tonight's need.
+        let lastNight = sleeps.filter { !$0.isNap }.max { $0.end < $1.end }
+        let napped = Recovery.napMinutes(sleeps, after: lastNight?.end ?? Calendar.current.startOfDay(for: .now), upTo: .now)
+        return Recovery.needAfterNaps(Recovery.sleepNeed(goal: goal, previousStrain: today.strain,
+                                                         previousNeed: Double(today.sleepNeedMinutes),
+                                                         previousAsleep: today.sleepMinutes.map { Double($0) }),
+                                      napMinutes: Double(napped))
     }
+
+    /// Tonight's plan with the planner's saved wake time and goal. nil without a need or a wake time.
+    static func plan(context: ModelContext) -> SleepPlanner.Plan? {
+        guard let need = tonightsNeed(context: context) else { return nil }
+        let sleeps = ((try? context.fetch(FetchDescriptor<SleepRecord>())) ?? []).map(\.value)
+        let defaults = UserDefaults.standard
+        let wake = defaults.object(forKey: plannerWakeKey) as? Int
+        let goal = defaults.string(forKey: plannerGoalKey).flatMap(SleepPlanner.Goal.init(rawValue:)) ?? .peak
+        return SleepPlanner.plan(needMinutes: need, goal: goal, wakeMinuteOfDay: (wake ?? -1) >= 0 ? wake : nil,
+                                 sleeps: sleeps, now: .now, calendar: .current)
+    }
+
+    /// Tonight's bedtime from the Sleep planner, or nil without enough to plan with.
+    static func bedtime(context: ModelContext) -> Date? { plan(context: context)?.bedtime }
 }

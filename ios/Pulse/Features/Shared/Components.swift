@@ -32,7 +32,8 @@ struct ScreenHeader<Trailing: View>: View {
                 .textStyle(.bodyStrong)
                 .foregroundStyle(DS.Colors.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: true, vertical: false)   // the title never truncates
+                .layoutPriority(1)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: DS.Space.s)
             trailing
@@ -519,42 +520,68 @@ extension String {
 
 // MARK: - Status pill
 
-/// Says where the numbers come from, in words. Outline only, so it stays quiet.
+/// Syncing never shows (like WHOOP's app): the band battery when all is well, and a short warning
+/// only when something needs you (Bluetooth off, band not found for a long time, band battery low,
+/// a sync problem).
 struct StatusPill: View {
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
     @Query private var bands: [BandRecord]
 
     var body: some View {
-        HStack(spacing: 6) {
-            if loader.isBusy || band.isBusy {
-                ProgressView().controlSize(.mini)
-            }
-            Text(text)
-                .textStyle(.caption)
-                .foregroundStyle(DS.Colors.secondary)
+        // Re-checked every minute: "band not found" depends on how long it has been away.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            content(now: context.date)
         }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 28)
-        .overlay(Capsule().stroke(DS.Colors.border, lineWidth: 1))
-        .fixedSize()
-        .accessibilityElement(children: .combine)
     }
 
-    private var text: String {
-        if band.isBusy { return band.statusLine }
-        if case .failed = band.stage { return "Sync failed" }
-        if case .paused(let message) = band.stage { return message }
-        switch loader.state {
-        case .idle: return "Starting…"
-        case .recalculating: return "Recalculating…"
-        case .failed: return "Data error"
-        case .ready: break
+    @ViewBuilder
+    private func content(now: Date) -> some View {
+        let record = bands.first
+        if let warning = band.attention(record: record, now: now)?.text ?? (loader.state.isFailed ? "Data error" : nil) {
+            HStack(spacing: 6) {
+                Image(systemName: band.attention(record: record, now: now)?.symbol ?? "exclamationmark.triangle")
+                    .foregroundStyle(DS.Colors.warn)
+                Text(warning)
+                    .foregroundStyle(DS.Colors.primary)
+                    .lineLimit(1)
+            }
+            .textStyle(.caption)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 28)
+            .overlay(Capsule().stroke(DS.Colors.warn.opacity(0.6), lineWidth: 1))
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Band: \(warning)")
+        } else if let record, let battery = record.batteryPercent {
+            HStack(spacing: 4) {
+                Text("\(Int(battery.rounded()))%")
+                    .foregroundStyle(DS.Colors.secondary)
+                Image(systemName: record.isCharging ? "battery.100percent.bolt" : Self.batterySymbol(battery))
+                    .foregroundStyle(band.isConnected ? DS.Colors.accent : DS.Colors.tertiary)
+            }
+            .textStyle(.caption)
+            .frame(minHeight: 28)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Band battery \(Int(battery.rounded())) percent\(record.isCharging ? ", charging" : "")\(band.isConnected ? ", connected" : "")")
         }
-        guard let record = bands.first else { return "No band paired" }
-        let battery = (band.info.batteryPercent ?? record.batteryPercent).map { " · Band \(Int($0.rounded()))%" } ?? ""
-        guard let synced = record.lastHistorySyncAt else { return "Not synced yet" + battery }
-        return "Synced \(synced.formatted(date: .omitted, time: .shortened))" + battery
+    }
+
+    private static func batterySymbol(_ percent: Double) -> String {
+        switch percent {
+        case 88...: "battery.100percent"
+        case 63..<88: "battery.75percent"
+        case 38..<63: "battery.50percent"
+        case 13..<38: "battery.25percent"
+        default: "battery.0percent"
+        }
+    }
+}
+
+private extension DataLoader.State {
+    var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
     }
 }
 

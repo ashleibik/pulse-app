@@ -6,6 +6,15 @@ import PulseCore
 /// The screen only shows what `BandManager.stage` says; all the work happens there.
 /// Mono design (ios/design/DESIGN.md).
 struct PairingView: View {
+    /// "No new data since last sync" instead of "0m of data saved" (which read like an error).
+    static func savedText(_ records: Int) -> String {
+        switch records {
+        case 0: return "No new data since last sync."
+        case 1..<60: return "Under a minute of new data saved."
+        default: return "\(PulseFormat.duration(minutes: records / 60)) of new data saved."
+        }
+    }
+
     @State private var showLog = false
     @Environment(BandManager.self) private var band
     @Environment(\.modelContext) private var context
@@ -117,7 +126,7 @@ struct PairingView: View {
                         .foregroundStyle(DS.Colors.secondary)
                 } else {
                     HeroNumber(value: Double(band.recordsSaved) / 60) { PulseFormat.duration(minutes: Int($0.rounded())) }
-                    Text("of data saved so far.")
+                    Text(band.recordsSaved == 0 ? "Checking for new data…" : "of data saved so far.")
                         .textStyle(.body)
                         .foregroundStyle(DS.Colors.secondary)
                 }
@@ -135,7 +144,7 @@ struct PairingView: View {
 
         case .upToDate:
             step(symbol: "checkmark.circle", title: "Up to date",
-                 text: "\(PulseFormat.duration(minutes: band.recordsSaved / 60)) of data saved."
+                 text: Self.savedText(band.recordsSaved)
                     + (band.recordsCleared > 0 ? " \(band.recordsCleared) old records from before \(BandDataCutoff.date?.formatted(date: .abbreviated, time: .omitted) ?? "your pairing day") were cleared from the band and not saved." : "")
                     + " Your numbers are up to date.")
             bandFacts
@@ -337,6 +346,12 @@ struct BandLogView: View {
                     }
                     Button("Refresh") { reload() }
                         .buttonStyle(.secondaryPill)
+                }
+                if RawHistoryArchive.sizeBytes > 0 {
+                    ShareLink(item: RawHistoryArchive.url) {
+                        Text("Share raw history (\(RawHistoryArchive.sizeBytes / 1_000_000) MB)")
+                    }
+                    .buttonStyle(.secondaryPill)
                 }
                 Text("The log contains raw band data (your heart rate). It stays on this iPhone unless you share it.")
                     .textStyle(.caption)

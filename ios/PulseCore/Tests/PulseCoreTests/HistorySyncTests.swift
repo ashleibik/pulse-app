@@ -197,7 +197,11 @@ func samples(_ count: Int, start: UInt32 = 1_750_000_000) -> [SimulatedBand.Samp
     #expect(zip(rebuilt, window).allSatisfy { $0.heartRate == $1.heartRate })
 
     let end = night.end.addingTimeInterval(3 * 3600)
-    let direct = MetricsEngine.run(minutes: window, calendar: cal, now: end).sleeps.filter { !$0.isNap }
+    // The simulated band sends no beats, so the night it is compared with has none either.
+    let withoutBeats = window.map {
+        MinuteSample(start: $0.start, heartRate: $0.heartRate, rrIntervalsMs: [], activity: $0.activity, source: $0.source)
+    }
+    let direct = MetricsEngine.run(minutes: withoutBeats, calendar: cal, now: end).sleeps.filter { !$0.isNap }
     let viaBand = MetricsEngine.run(minutes: rebuilt, calendar: cal, now: end).sleeps.filter { !$0.isNap }
     #expect(direct.count == 1 && viaBand.count == 1)
     #expect(viaBand.first?.start == direct.first?.start && viaBand.first?.end == direct.first?.end)

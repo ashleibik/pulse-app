@@ -65,6 +65,8 @@ public struct HistorySync: Sendable {
 
     private var batch: [Whoop.HistoryRecord] = []
     private var batchDropped = 0
+    /// Of those, records with an impossible date: the band's clock was lost (e.g. it ran flat and rebooted).
+    private var batchUnsetClock = 0
     /// Oldest and newest record date of the open batch (kept or dropped), for the sync log.
     private var batchSpan: (first: UInt32, last: UInt32)?
     private var seq: Whoop.SeqCounter
@@ -90,7 +92,7 @@ public struct HistorySync: Sendable {
     public mutating func start(setClockTo unixTime: Double? = nil) -> [Action] {
         state = .receiving
         batch = []
-        batchDropped = 0
+        batchDropped = 0; batchUnsetClock = 0
         var actions: [Action] = []
         if let unixTime {
             actions.append(.send(Whoop.Command.setClock(seq: seq.next(), unixTime: unixTime), description: "SET_CLOCK"))
@@ -108,7 +110,12 @@ public struct HistorySync: Sendable {
                 lastRecordTime = record.timestamp
                 batchSpan = (batchSpan?.first ?? record.timestamp, record.timestamp)
             }
-            if keeps(record) { batch.append(record) } else { batchDropped += 1 }
+            if keeps(record) {
+                batch.append(record)
+            } else {
+                batchDropped += 1
+                if !Whoop.plausibleUnix(record.timestamp) { batchUnsetClock += 1 }
+            }
             return []
 
         case .metadata(let meta):
@@ -116,7 +123,7 @@ public struct HistorySync: Sendable {
             case .historyStart:
                 state = .receiving
                 batch = []
-                batchDropped = 0
+                batchDropped = 0; batchUnsetClock = 0
                 batchSpan = nil
                 return []
             case .historyEnd:
@@ -144,8 +151,10 @@ public struct HistorySync: Sendable {
         let tokenHex = Whoop.hex(token)
         let clock = meta.timestamp.map { " band clock \(Self.utc($0))" } ?? " band clock not set"
         let dropped = (batchDropped > 0 ? ", \(batchDropped) old dropped" : "")
+            + (batchUnsetClock > 0 ? " (\(batchUnsetClock) of them with an unset clock: the band lost its time, e.g. after running flat)" : "")
             + (batchSpan.map { ", dated \(Self.utc($0.first)) → \(Self.utc($0.last))" } ?? "")
         batchSpan = nil
+        batchUnsetClock = 0
         if let expected, expected != received {
             actions.append(.note("HISTORY_END announced \(expected), received \(received) records\(dropped), token \(tokenHex),\(clock) (count is advisory on WHOOP 4.0: saving anyway)"))
         } else {
@@ -154,7 +163,7 @@ public struct HistorySync: Sendable {
         lastToken = token
         recordsCleared += batchDropped
         let droppedNow = batchDropped
-        batchDropped = 0
+        batchDropped = 0; batchUnsetClock = 0
         let records = batch
         batch = []
         if records.isEmpty && droppedNow > 0 {
@@ -195,7 +204,7 @@ public struct HistorySync: Sendable {
         retries += 1
         let lost = batch.count
         batch = []
-        batchDropped = 0
+        batchDropped = 0; batchUnsetClock = 0
         if retries > maxRetries {
             return fail("The band stopped sending data (\(retries - 1) retries). Everything downloaded so far is saved; sync again to continue.")
         }

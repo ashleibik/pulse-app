@@ -4,6 +4,20 @@ import Foundation
 public enum HRV {
     public static let rrMinMs = 300.0
     public static let rrMaxMs = 2000.0
+    /// The band writes exactly this value when it has no beat to report (about 5% of a real night's beats).
+    public static let fillerRRMs = 500.0
+
+    /// Everything the band's beats go through before HRV: `cleanRR`, without the filler value, and
+    /// without a beat that jumps more than 20% from the clean beat right before it.
+    public static func cleanBeats(_ rr: [Double], tolerance: Double = 0.20) -> [Double?] {
+        var out = cleanRR(rr.map { $0 == fillerRRMs ? 0 : $0 }, tolerance: tolerance)
+        var previous: Double?
+        for i in out.indices {
+            if let beat = out[i], let before = previous, abs(beat - before) > tolerance * before { out[i] = nil }
+            previous = out[i]
+        }
+        return out
+    }
 
     /// Returns one entry per input beat: the beat, or nil if it was rejected as an artifact.
     /// Positions are kept so RMSSD only ever pairs beats that really were next to each other.
@@ -15,15 +29,26 @@ public enum HRV {
         let valid: [Double?] = rr.map { (rrMinMs...rrMaxMs).contains($0) ? $0 : nil }
         var out: [Double?] = []
         out.reserveCapacity(rr.count)
+        var neighbours: [Double] = []           // kept in order, and reused for every beat
+        neighbours.reserveCapacity(2 * halfWindow + 1)
         for (i, beat) in valid.enumerated() {
             guard let x = beat else {
                 out.append(nil)
                 continue
             }
-            let lo = max(0, i - halfWindow)
-            let hi = min(valid.count, i + halfWindow + 1)
-            let neighbours = valid[lo..<hi].compactMap { $0 }
-            let m = Stats.median(neighbours)
+            neighbours.removeAll(keepingCapacity: true)
+            for j in max(0, i - halfWindow)..<min(valid.count, i + halfWindow + 1) {
+                guard let value = valid[j] else { continue }
+                var k = neighbours.count
+                neighbours.append(value)
+                while k > 0, neighbours[k - 1] > value {
+                    neighbours[k] = neighbours[k - 1]
+                    k -= 1
+                }
+                neighbours[k] = value
+            }
+            let mid = neighbours.count / 2
+            let m = neighbours.count % 2 == 1 ? neighbours[mid] : (neighbours[mid - 1] + neighbours[mid]) / 2.0
             out.append(abs(x - m) <= tolerance * m ? x : nil)
         }
         return out
@@ -50,13 +75,20 @@ public enum HRV {
     ///   - asleep: one flag per minute (asleep AND band worn).
     public static func overnightRMSSD(minuteRR: [[Double]], asleep: [Bool],
                                       segmentMinutes: Int = 5, minSegments: Int = 3) -> Double? {
+        overnightMedian(minuteRR: minuteRR, asleep: asleep, segmentMinutes: segmentMinutes,
+                        minSegments: minSegments) { rmssd($0) }
+    }
+
+    private static func overnightMedian(minuteRR: [[Double]], asleep: [Bool], segmentMinutes: Int,
+                                        minSegments: Int, metric: ([Double?]) -> Double?) -> Double? {
         var values: [Double] = []
         var i = 0
         let n = minuteRR.count
         while i + segmentMinutes <= n {
             if asleep[i..<(i + segmentMinutes)].allSatisfy({ $0 }) {
-                let beats = minuteRR[i..<(i + segmentMinutes)].flatMap { $0 }
-                if let v = rmssd(cleanRR(beats)) { values.append(v) }
+                // Each minute is cleaned alone, and the nil between minutes stops a pair forming across them.
+                let beats = minuteRR[i..<(i + segmentMinutes)].flatMap { cleanBeats($0) + [nil] }
+                if let v = metric(beats) { values.append(v) }
                 i += segmentMinutes
             } else {
                 i += 1

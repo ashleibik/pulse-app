@@ -418,13 +418,19 @@ public struct FakeDataGenerator {
     mutating func buildSleeps(_ plans: [DayPlan]) -> [SleepSession] {
         var result: [SleepSession] = []
         for p in plans where p.night.end <= config.endDate {
-            let awake = p.night.awakenings.reduce(0) { $0 + $1.minutes }
+            let wakeUps = Self.wakeUps(p.night)
+            let awake = wakeUps.reduce(0) { $0 + $1.minutes }
             let inBed = Int(p.night.durationMinutes)
             result.append(SleepSession(id: rng.uuid(), start: p.night.start, end: p.night.end,
                                        asleepMinutes: inBed - awake, awakeMinutes: awake,
-                                       disturbances: p.night.awakenings.count, source: .simulated))
+                                       disturbances: wakeUps.count, source: .simulated))
         }
         return result
+    }
+
+    /// The awakenings that count as wake-ups. A shorter one counts as asleep (docs/METRICS.md §4, step 10).
+    static func wakeUps(_ night: NightPlan) -> [Awakening] {
+        night.awakenings.filter { $0.minutes >= SleepTimeline.shortestWake }
     }
 
     mutating func buildSummaries(_ plans: [DayPlan], workouts: [Workout]) -> [DailySummary] {
@@ -432,7 +438,7 @@ public struct FakeDataGenerator {
         for (i, p) in plans.enumerated() {
             let slept = p.night.end <= config.endDate
             let asleep = slept
-                ? Int(p.night.durationMinutes) - p.night.awakenings.reduce(0) { $0 + $1.minutes }
+                ? Int(p.night.durationMinutes) - Self.wakeUps(p.night).reduce(0) { $0 + $1.minutes }
                 : nil
 
             // Baseline = average of up to 14 previous nights (or tonight's, on day one).

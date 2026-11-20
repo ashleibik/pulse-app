@@ -15,7 +15,6 @@ with or endorsed by WHOOP, Inc. General wellness only, not medical advice.
 | Metrics (sleep, HRV, strain, recovery, workout detection) | Built | 90 Swift tests, same numbers as the Python reference |
 | iPhone app, every screen, light and dark | Built | Compiled and screenshotted on a cloud Mac on every push |
 | Pairing + history sync | Built | End to end with a **simulated band**. **Never run on a real band** |
-| Apple Health export | Written | Rules tested. **Never run on a real iPhone** |
 | Cloud: Claude connector, coach, Strava | Written | MCP logic tested. **Never deployed** |
 | TestFlight build | Written | **Never run** (needs an Apple Developer account) |
 
@@ -28,7 +27,7 @@ protocol questions: [re-toolkit/docs/PROTOCOL.md](re-toolkit/docs/PROTOCOL.md).
 |---|---|
 | `re-toolkit/` | Python reverse-engineering toolkit: protocol source of truth, sniffer, tests |
 | `ios/PulseCore/` | Pure Swift logic (protocol, metrics, insights). Builds and tests on Windows, Linux, macOS |
-| `ios/Pulse/` | The SwiftUI app (iOS 17+): screens, storage, Bluetooth, Apple Health, cloud client |
+| `ios/Pulse/` | The SwiftUI app (iOS 17+): screens, storage, Bluetooth, cloud client |
 | `ios/design/` | The "Mono" design system: black, white and grays only |
 | `supabase/` | Optional cloud: database rules, MCP server for Claude, coach, Strava upload |
 | `shared/test-vectors/` | Inputs + expected outputs that both the Python and the Swift code must reproduce |
@@ -57,7 +56,7 @@ WHOOP band --Bluetooth--> BandSession (decode, checksums, command allowlist)
                               v
                     MetricsEngine + WorkoutDetector (pure Swift, tested)
                               v
-        SwiftUI screens ----> Apple Health (sleep, resting HR, workouts; write only)
+        SwiftUI screens
                               |
                               v  summaries only, if you turn it on
         your Supabase project --> MCP server --> Claude        (read only)
@@ -72,7 +71,7 @@ WHOOP band --Bluetooth--> BandSession (decode, checksums, command allowlist)
 - **Raw data never leaves the phone.** The optional cloud gets summaries only.
 - **No secrets in the app or in git.** API keys live as server secrets; the app keeps its
   session in the iOS Keychain.
-- **Demo data is labelled everywhere** and is never written to Apple Health or Strava.
+- **Demo data is labelled everywhere** and is never sent to Strava.
 - **Strava data never reaches an AI** (Strava's terms forbid it): Pulse only uploads to Strava.
 
 Full review with open findings: [docs/SECURITY.md](docs/SECURITY.md).

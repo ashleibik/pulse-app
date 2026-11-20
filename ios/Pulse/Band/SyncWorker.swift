@@ -22,6 +22,8 @@ final class SyncWorker: @unchecked Sendable {
     private var trace: SyncTrace
     private var lastActivity = Date()
     private var reportedBadFrames = 0
+    /// Reads the band's wear-sensor status lines. It only looks at the bytes and never affects the sync.
+    private var wearScanner = WearSensor.Scanner()
 
     init(queue: DispatchQueue, link: BandLink, container: ModelContainer,
          toMain: @escaping @Sendable ([BandSession.Effect], Int) -> Void) {
@@ -52,6 +54,21 @@ final class SyncWorker: @unchecked Sendable {
             session = fresh
             lastActivity = Date()
             run(effects)
+        }
+    }
+
+    /// Still connected after a finished download: ask the band for what it recorded since.
+    /// `done` (called on the Bluetooth queue) gets false if the session can't pull right now.
+    func pullAgain(done: @escaping @Sendable (Bool) -> Void) {
+        queue.async { [self] in
+            guard var current = session else { return done(false) }
+            let effects = current.pullAgain()
+            session = current
+            guard !effects.isEmpty else { return done(false) }
+            lastActivity = Date()
+            trace.add("PULL: asking the band for new records (connection kept)", at: Date().timeIntervalSince1970)
+            run(effects)
+            done(true)
         }
     }
 
@@ -88,6 +105,16 @@ final class SyncWorker: @unchecked Sendable {
         }
     }
 
+    /// The 100 Hz motion stream on or off (the step test).
+    func setRawStream(_ on: Bool) {
+        queue.async { [self] in
+            guard var current = session else { return }
+            let effects = current.setRawStream(on)
+            session = current
+            run(effects)
+        }
+    }
+
     /// The connection is over: forget the session (a late save confirmation is then ignored).
     func end() {
         queue.async { [self] in session = nil }
@@ -97,6 +124,7 @@ final class SyncWorker: @unchecked Sendable {
 
     func receive(characteristic: String, bytes: [UInt8]) {
         lastActivity = Date()
+        noteWearSensor(in: bytes)
         guard var current = session else {
             trace.add("RX (no session) \(characteristic) len=\(bytes.count) \(Whoop.hex(bytes))", at: Date().timeIntervalSince1970)
             return
@@ -107,6 +135,14 @@ final class SyncWorker: @unchecked Sendable {
     }
 
     // MARK: - Internals (on `queue`)
+
+    private func noteWearSensor(in bytes: [UInt8]) {
+        let readings = wearScanner.scan(bytes)
+        guard !readings.isEmpty else { return }
+        let now = Date()
+        for reading in readings { trace.add("WEAR SENSOR \(reading.event)", at: now.timeIntervalSince1970) }
+        Task { @MainActor in WearSensorStore.shared.record(readings, receivedAt: now) }
+    }
 
     private func run(_ effects: [BandSession.Effect]) {
         var forMain: [BandSession.Effect] = []
@@ -133,13 +169,21 @@ final class SyncWorker: @unchecked Sendable {
     private func save(_ records: [Whoop.HistoryRecord], token: [UInt8]) {
         let importer = self.importer
         let started = Date()
+        trace.add(MotionCheck.traceLine(records), at: started.timeIntervalSince1970)
         Task.detached { [self] in
             do {
                 try await importer.save(records, source: .history)
                 let ms = Int(Date().timeIntervalSince(started) * 1000)
+                // Raw copy before the ack (the band frees the batch after it). Never blocks the sync.
+                let raw: String
+                switch RawHistoryArchive.append(records) {
+                case .kept: raw = ""
+                case .full: raw = " (raw copy: archive full, not kept)"
+                case .failed(let why): raw = " (raw copy failed: \(why))"
+                }
                 queue.async { [self] in
                     guard var current = session else { return }
-                    trace.add("SAVED \(records.count) records in \(ms) ms: sending ack", at: Date().timeIntervalSince1970)
+                    trace.add("SAVED \(records.count) records in \(ms) ms\(raw): sending ack", at: Date().timeIntervalSince1970)
                     lastActivity = Date()
                     let effects = current.didPersist(token: token, recordCount: records.count)
                     session = current

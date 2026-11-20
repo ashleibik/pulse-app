@@ -4,13 +4,19 @@ import SwiftData
 import UIKit
 import PulseCore
 
-/// Pairing and syncing, as the screens see it.
+/// The band connection, as the screens see it. Works like WHOOP's own app: you never think about
+/// syncing.
+///
+/// - The connection is kept. Once a band is paired, Pulse asks CoreBluetooth for it at launch and
+///   after every drop; iOS connects whenever the band is in range, also in the background, and can
+///   relaunch Pulse for it (state restoration, see BluetoothBandLink).
+/// - While connected, new records are pulled every `pullInterval`, right away when the app opens,
+///   and whenever the band wakes Pulse in the background (any event from it). A pull is short: a few
+///   commands, the new batches, done. Live heart rate streams only while a live screen asks for it.
+/// - The screens show cached data at once; new data slides in when a pull saved something.
 ///
 /// It connects three things that each do one job:
 ///   BandLink (bytes in / out)  <->  SyncWorker + BandSession (the protocol, off the main thread)  <->  the database
-///
-/// Packets never touch the main thread: BluetoothBandLink delivers them on its own queue, where
-/// SyncWorker parses, logs and saves them. This class only receives what a screen shows.
 ///
 /// The safety rule from Phase 5a still holds: a history batch with records to keep is acknowledged
 /// to the band only after `BandImporter.save` has returned, i.e. after the data is on disk.
@@ -21,36 +27,75 @@ final class BandManager {
     static let shared = BandManager()
 
     enum Stage: Equatable {
+        /// Not connected: waiting for the band (it connects by itself when in range).
         case idle
         /// Bluetooth can't be used right now. The text says why and what to do.
         case unavailable(String)
         case searching
         case connecting
+        /// A pull (download) is running.
         case syncing
+        /// Connected (or was), nothing left to pull.
         case upToDate
         /// Stopped on purpose (band battery too low). Not an error: it resumes after charging.
         case paused(String)
         case failed(String)
     }
 
+    /// What the status pill warns about. `nil` = all good (the pill stays quiet).
+    enum Attention: Equatable {
+        case bluetoothOff, bluetoothNotAllowed, bandNotFound, batteryLow(Int), syncProblem
+
+        var text: String {
+            switch self {
+            case .bluetoothOff: "Bluetooth off"
+            case .bluetoothNotAllowed: "Bluetooth not allowed"
+            case .bandNotFound: "Band not found"
+            case .batteryLow(let percent): "Band \(percent)%"
+            case .syncProblem: "Sync problem"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .bluetoothOff, .bluetoothNotAllowed: "antenna.radiowaves.left.and.right.slash"
+            case .bandNotFound: "questionmark.circle"
+            case .batteryLow: "battery.25percent"
+            case .syncProblem: "exclamationmark.triangle"
+            }
+        }
+    }
+
     private(set) var stage: Stage = .idle
     private(set) var found: [DiscoveredBand] = []
     private(set) var info = BandSession.Info()
+    /// Connected to the band right now.
+    private(set) var isConnected = false
+    /// A pull has been running a while (a big chunk, e.g. the night): the status pill shows a spinner.
+    /// Short pulls never show anything.
+    private(set) var showsSyncSpinner = false
     /// How far the current download is. Updated once per batch, not per packet.
     private(set) var progress = BandSession.Progress()
-    /// Seconds of band data saved in this sync (the band records about one sample per second).
+    /// Seconds of band data saved in this pull (the band records about one sample per second).
     var recordsSaved: Int { progress.recordsSaved }
     var batchesSaved: Int { progress.batchesSaved }
-    /// The previous owner's records thrown away in this sync (acked, never saved).
+    /// The previous owner's records thrown away in this pull (acked, never saved).
     var recordsCleared: Int { progress.recordsCleared }
     /// True while the band is still sending records from before your pairing day.
     var clearingOldData: Bool { progress.clearingOldData }
     /// Newest last. Only kept in memory, capped.
     private(set) var log: [BandSession.LogEntry] = []
     private(set) var badFrames = 0
-    /// The band's live heart rate while a live workout is open. `nil` = no live reading.
+    /// The band's live heart rate while a live screen asks for it. `nil` = no live reading.
     private(set) var liveHeartRate: Int?
     private var wantsLive = false
+    /// The 100 Hz motion stream's seconds while a step test runs (docs/METRICS.md §15).
+    private(set) var liveSteps = LiveSteps()
+    /// True while a step test wants the 100 Hz stream.
+    private(set) var isStreamingMotion = false
+    @ObservationIgnored private var motionStreamCap: Task<Void, Never>?
+    /// The stream turns itself off after this long, whatever happens to the step test.
+    static let motionStreamLimit: TimeInterval = 15 * 60
 
     /// Called after new data was saved and the metrics were recalculated.
     var onDataChanged: (() -> Void)?
@@ -59,43 +104,69 @@ final class BandManager {
     @ObservationIgnored private var worker: SyncWorker?
     /// Changes with every new link: late messages from an old connection are ignored.
     @ObservationIgnored private var generation = 0
-    /// True between "connected" and "done / disconnected".
+    /// True between "connected" and "disconnected" (a BandSession exists).
     @ObservationIgnored private var hasSession = false
-    /// "Sync anyway": this one manual sync ignores the low-battery pause. Reset by every new sync.
+    /// A connection request is open (CoreBluetooth keeps it until the band shows up).
+    @ObservationIgnored private var connectRequested = false
+    /// "Sync anyway": the next pull ignores the low-battery pause.
     @ObservationIgnored private var lowBatteryOverride = false
     @ObservationIgnored private var overrideLogged = false
     private var context: ModelContext?
     private var target: DiscoveredBand?
     private static let logLimit = 400
 
-    /// Watchdog: if the band sends nothing for this long during the download, ask again.
-    /// Generous on purpose: a first sync can have weeks of data and the band pauses between batches.
+    // MARK: - Timing
+
+    /// While connected, new records are pulled this often (and right away when the app opens).
+    static let pullInterval: TimeInterval = 5 * 60
+    /// How often to ask iOS for a background wake-up (iOS decides when, often less often).
+    static let backgroundInterval: TimeInterval = 15 * 60
+    /// The status pill says "Band not found" after this long without the band.
+    static let lostAfter: TimeInterval = 30 * 60
+    /// A pull still running after this long is a big chunk: only then a spinner appears.
+    static let spinnerAfter: Duration = .seconds(4)
+    /// Warn about the band battery below this (pulls pause below `lowBatteryPercent`).
+    static let batteryWarnPercent = 15.0
+    static let lowBatteryPercent = 5.0
+    /// After a low-battery pause the band is left alone this long, then asked again.
+    static let lowBatteryRetry: TimeInterval = 20 * 60
+    static let chargeMessage = "Charge your band to keep syncing"
+
+    /// Watchdog: if the band sends nothing for this long during a pull, ask again.
     private static let stallSeconds: TimeInterval = 25
     @ObservationIgnored private var watchdog: Task<Void, Never>?
     @ObservationIgnored private var syncStartedAt = Date.now
-
-    /// Short bursts, not a constant connection: a normal sync connects, downloads what's new
-    /// (usually a few seconds), and disconnects. Due every 20 minutes while the app is open, on
-    /// every app open, and when iOS wakes the app in the background.
-    static let syncInterval: TimeInterval = 20 * 60
-    /// Until the first complete download (the previous owner's backlog is still on the band), a
-    /// sync that stopped early is resumed after this pause instead of waiting 20 minutes.
-    static let backlogRetry: TimeInterval = 2 * 60
-    /// Below this the download is paused: a long drain must not run the band flat.
-    static let lowBatteryPercent = 5.0
-    static let chargeMessage = "Charge your band to keep syncing"
+    @ObservationIgnored private var lastPullAt: Date?
+    @ObservationIgnored private var pullNumber = 0
+    @ObservationIgnored private var pausedUntil: Date?
+    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
+    @ObservationIgnored private var reconnectFailures = 0
 
     private static func isLow(_ percent: Double?, charging: Bool?) -> Bool {
         guard let percent else { return false }
         return percent < lowBatteryPercent && charging != true
     }
-    /// When the last sync started (finished or not). Before, only a COMPLETE sync was remembered,
-    /// so an unfinished drain restarted on every app open and every background wake-up.
-    @ObservationIgnored private var lastAttemptAt: Date? = UserDefaults.standard.object(forKey: "lastSyncAttemptAt") as? Date
+
+    /// The newest battery reading in this connection (the stored one may be older).
+    @ObservationIgnored private var lastBatteryReading: Double?
+    /// Set once the battery was seen rising: it is on the charger.
+    @ObservationIgnored private var batteryRose = false
+
+    /// Is the band charging right now? The band's own report wins (CHARGING_ON / CHARGING_OFF events,
+    /// or the charging flag in its BATTERY_LEVEL event). Without one: a battery that went up by 1 %
+    /// or more since the last reading is on the charger. nil = unknown.
+    private func chargingState(_ newInfo: BandSession.Info, previousPercent: Double?) -> Bool? {
+        if let reported = newInfo.isCharging { return reported }
+        if !batteryRose, let now = newInfo.batteryPercent, let before = previousPercent, now >= before + 1 {
+            batteryRose = true
+            traceLine(String(format: "CHARGING (inferred): band battery rose from %.1f%% to %.1f%%", before, now))
+        }
+        return batteryRose ? true : nil
+    }
 
     var isBusy: Bool { stage == .searching || stage == .connecting || stage == .syncing }
 
-    /// "Clearing old band data… 45%", "Syncing… 80%", "Up to date". For the status pill and the sync screen.
+    /// "Clearing old band data… 45%", "Syncing… 80%", "Up to date". For the debug sheet.
     var statusLine: String {
         switch stage {
         case .searching: return "Searching…"
@@ -104,10 +175,26 @@ final class BandManager {
             let percent = progress.fraction.map { " \(Int(($0 * 100).rounded(.down)))%" } ?? ""
             return (clearingOldData ? "Clearing old band data…" : "Syncing…") + percent
         case .paused: return Self.chargeMessage
-        case .upToDate: return "Up to date"
+        case .upToDate: return isConnected ? "Connected, up to date" : "Up to date"
         case .failed: return "Sync failed"
-        case .idle, .unavailable: return "Not syncing"
+        case .idle: return "Waiting for the band"
+        case .unavailable: return "Bluetooth unavailable"
         }
+    }
+
+    /// The one thing the status pill should warn about, or nil when all is well.
+    func attention(record: BandRecord?, now: Date = .now) -> Attention? {
+        if case .unavailable(let why) = stage {
+            return why.contains("allowed") ? .bluetoothNotAllowed : .bluetoothOff
+        }
+        guard let record else { return nil }
+        if case .paused = stage { return .batteryLow(Int((record.batteryPercent ?? 0).rounded())) }
+        if let battery = record.batteryPercent, battery < Self.batteryWarnPercent, !record.isCharging {
+            return .batteryLow(Int(battery.rounded()))
+        }
+        if !isConnected, now.timeIntervalSince(record.lastSeenAt ?? .distantPast) > Self.lostAfter { return .bandNotFound }
+        if case .failed = stage { return .syncProblem }
+        return nil
     }
 
     /// Sync log detail: off = history packets summarized once per batch (small log).
@@ -115,11 +202,127 @@ final class BandManager {
         didSet { UserDefaults.standard.set(verboseLog, forKey: "syncLogVerbose") }
     }
 
-    // MARK: - What the screens call
+    // MARK: - Staying connected
+
+    /// App launch, including when iOS relaunches Pulse in the background for the band: if a band
+    /// is paired, ask for its connection (this also receives a connection restored by iOS).
+    func launch(context: ModelContext) {
+        self.context = context
+        keepConnected()
+    }
+
+    /// The app came to the front: connect if needed and pull right away (cached data is already on screen).
+    func appBecameActive(context: ModelContext) {
+        self.context = context
+        keepConnected()
+        pullIfDue(olderThan: 30)
+    }
+
+    /// Pull new records if the last pull is older than `olderThan` seconds. Cheap to call often.
+    func pullIfDue(olderThan interval: TimeInterval = pullInterval) {
+        guard isConnected, hasSession, !wantsLive, stage != .syncing else { return }
+        if let lastPullAt, Date.now.timeIntervalSince(lastPullAt) < interval { return }
+        pull()
+    }
+
+    /// Pull to refresh (Today) and "Sync now" (Settings > Band). Returns when the pull is done, or
+    /// after `timeout` seconds if the band isn't around.
+    func refresh(context: ModelContext, timeout: TimeInterval = 30) async {
+        syncNow(context: context)
+        let deadline = Date.now.addingTimeInterval(timeout)
+        try? await Task.sleep(for: .milliseconds(300))
+        while (stage == .syncing || stage == .connecting) && Date.now < deadline {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    /// Pull now, connecting first if needed (debug "Sync now", pull to refresh).
+    /// - Parameter overrideLowBattery: "Sync anyway": this one pull runs even below the
+    ///   low-battery threshold. Automatic pulls never pass true.
+    func syncNow(context: ModelContext, overrideLowBattery: Bool = false) {
+        self.context = context
+        lowBatteryOverride = overrideLowBattery
+        overrideLogged = false
+        if overrideLowBattery { pausedUntil = nil }
+        if isConnected && hasSession {
+            pull()
+        } else if Self.pairedBand(in: context) != nil {
+            stage = .connecting
+            keepConnected(force: true)
+            // The band may be away: don't leave the screens on "Connecting…" forever.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard let self, self.stage == .connecting, !self.isConnected else { return }
+                self.stage = .idle
+            }
+        }
+    }
+
+    /// Ask for the connection if there is a paired band and none yet.
+    private func keepConnected(force: Bool = false) {
+        guard let context, let record = Self.pairedBand(in: context) else { return }
+        if !force, let pausedUntil, Date.now < pausedUntil { return }
+        ensureLink(context: context)
+        guard !isConnected, !connectRequested || force else { return }
+        connectRequested = true
+        target = DiscoveredBand(id: record.peripheralID, name: record.name, signal: 0)
+        traceLine("Asking for \(record.name) \(record.peripheralID): connects whenever it is in range")
+        link?.connect(to: record.peripheralID)
+    }
+
+    private func scheduleReconnect(after seconds: TimeInterval) {
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            self?.keepConnected()
+        }
+    }
+
+    /// Start a pull on the open connection.
+    private func pull() {
+        guard isConnected, hasSession, stage != .syncing else { return }
+        if let pausedUntil, Date.now < pausedUntil, !lowBatteryOverride { return }
+        progress = BandSession.Progress()
+        lastPullAt = .now
+        syncStartedAt = .now
+        stage = .syncing
+        pullNumber += 1
+        armSpinner()
+        startWatchdog()
+        worker?.pullAgain { [weak self] started in
+            guard !started else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // The session can't pull (still busy or broken): start over with a fresh connection.
+                    guard let self, self.stage == .syncing else { return }
+                    self.traceLine("PULL not possible on this connection: reconnecting")
+                    self.stopWatchdog()
+                    self.stage = .idle
+                    self.endSession()
+                    self.link?.disconnect()
+                    self.scheduleReconnect(after: 2)
+                }
+            }
+        }
+    }
+
+    /// The spinner only appears if the pull is still running after a few seconds (a big chunk).
+    private func armSpinner() {
+        showsSyncSpinner = false
+        let number = pullNumber
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.spinnerAfter)
+            guard let self, self.pullNumber == number, self.stage == .syncing else { return }
+            self.showsSyncSpinner = true
+        }
+    }
+
+    // MARK: - Pairing and live heart rate
 
     /// Start looking for a band.
     func startPairing(context: ModelContext) {
-        prepare(context: context)
+        ensureLink(context: context)
         found = []
         stage = .searching
         traceLine("Searching for bands")
@@ -131,72 +334,85 @@ final class BandManager {
         stage = .connecting
         traceLine("Connecting to \(band.name) \(band.id) (signal \(band.signal) dBm)")
         link?.stopScanning()
+        connectRequested = true
         link?.connect(to: band.id)
     }
 
-    /// Sync again with the band that is already paired.
-    /// - Parameter overrideLowBattery: "Sync anyway" on the charge screen: this one sync runs even
-    ///   below the low-battery threshold. Automatic and background syncs never pass true.
-    func syncNow(context: ModelContext, overrideLowBattery: Bool = false) {
-        guard !isBusy, let record = Self.pairedBand(in: context) else { return }
-        prepare(context: context)
-        lowBatteryOverride = overrideLowBattery
-        overrideLogged = false
-        lastAttemptAt = .now
-        UserDefaults.standard.set(Date.now, forKey: "lastSyncAttemptAt")
-        target = DiscoveredBand(id: record.peripheralID, name: record.name, signal: 0)
-        stage = .connecting
-        traceLine("Sync: connecting to \(record.name) \(record.peripheralID)")
-        link?.connect(to: record.peripheralID)
-    }
-
-    func syncIfDue(context: ModelContext) {
-        guard !isBusy, !wantsLive, let record = Self.pairedBand(in: context) else { return }
-        // A band that was nearly empty last time: only look again every 20 minutes (maybe it's charged now).
-        let backlog = record.lastHistorySyncAt == nil && !Self.isLow(record.batteryPercent, charging: record.isCharging)
-        let gap = backlog ? Self.backlogRetry : Self.syncInterval
-        let last = [record.lastHistorySyncAt, lastAttemptAt].compactMap { $0 }.max()
-        if let last, Date.now.timeIntervalSince(last) < gap { return }
-        syncNow(context: context)
-    }
-
-    /// Live workout opened: connect (and sync) if needed, then ask the band to stream heart rate.
-    /// Without a paired band nothing happens and `liveHeartRate` stays nil.
+    /// A live screen opened: stream heart rate (connecting first if needed).
     func startLive(context: ModelContext) {
+        self.context = context
         wantsLive = true
         liveHeartRate = nil
-        if !isBusy { syncNow(context: context) }
+        if isConnected && hasSession && stage != .syncing {
+            worker?.setLive(true)
+        } else {
+            keepConnected(force: true)      // the stream starts after the first pull
+        }
     }
 
-    /// Live workout closed: stop the stream and let the band go.
+    /// The live screen closed: stop the stream. The connection stays.
     func stopLive() {
         guard wantsLive else { return }
         wantsLive = false
         liveHeartRate = nil
-        // Keep the session: a sync may still be running (it used to be cut off here).
         if hasSession { worker?.setLive(false) }
-        guard !isBusy else { return }   // a running sync disconnects by itself when it is done
-        // Give the "stream off" write a moment to reach the band, then let it go.
-        Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard let self, !self.wantsLive, !self.isBusy else { return }
-            self.endSession()
-            self.link?.disconnect()
+    }
+
+    /// A step test started: stream the band's 100 Hz motion. It stops by itself after `motionStreamLimit`, and every
+    /// new connection turns it off (BandSession.start), so a test cut short can't leave it running.
+    func startMotionStream(context: ModelContext) {
+        self.context = context
+        liveSteps = LiveSteps()
+        isStreamingMotion = true
+        traceLine("STEP TEST: asking for the 100 Hz motion stream")
+        if isConnected && hasSession {
+            worker?.setRawStream(true)
+        } else {
+            keepConnected(force: true)      // switched on after the first pull
+        }
+        motionStreamCap?.cancel()
+        motionStreamCap = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.motionStreamLimit))
+            guard !Task.isCancelled else { return }
+            self?.stopMotionStream()
         }
     }
 
+    /// The step test stopped: stream off. The seconds received stay in `liveSteps` until the next test.
+    func stopMotionStream() {
+        motionStreamCap?.cancel()
+        motionStreamCap = nil
+        guard isStreamingMotion else { return }
+        isStreamingMotion = false
+        let scale = liveSteps.medianG.map { String(format: "%.3f g", $0) } ?? "no readings"
+        traceLine("STEP TEST: stream off after \(liveSteps.seconds.count) seconds of motion (median size \(scale))")
+        if hasSession { worker?.setRawStream(false) }
+    }
+
+    /// Stop pairing (scan / connect to a new band). A paired band's connection is kept.
     func cancel() {
-        traceLine("Cancelled")
         link?.stopScanning()
+        if let context, Self.pairedBand(in: context) != nil {
+            if stage == .searching || stage == .connecting { stage = isConnected ? .upToDate : .idle }
+            return
+        }
+        traceLine("Cancelled")
         link?.disconnect()
         endSession()
         stopWatchdog()
+        connectRequested = false
         if isBusy { stage = .idle }
     }
 
     /// Forget the band. The data that was already downloaded stays on the phone.
     func forget(context: ModelContext) {
-        cancel()
+        reconnectTask?.cancel()
+        link?.stopScanning()
+        link?.disconnect()
+        endSession()
+        stopWatchdog()
+        connectRequested = false
+        isConnected = false
         for record in (try? context.fetch(FetchDescriptor<BandRecord>())) ?? [] { context.delete(record) }
         try? context.save()
         info = BandSession.Info()
@@ -222,7 +438,7 @@ final class BandManager {
         let header = """
         Pulse sync log
         app \(version), exported \(Date.now.formatted(date: .abbreviated, time: .standard)), log started \(started)
-        stage: \(stage), records saved: \(recordsSaved), batches: \(batchesSaved), old records dropped: \(recordsCleared), damaged frames: \(badFrames)
+        stage: \(stage), connected: \(isConnected), pulls: \(pullNumber), last pull: records saved \(recordsSaved), batches \(batchesSaved), old records dropped \(recordsCleared), damaged frames: \(badFrames)
         band: battery \(self.info.batteryPercent.map { "\($0)%" } ?? "?"), firmware \(self.info.firmware ?? "unknown") (raw \(self.info.firmwareRawHex ?? "?"))
         Contains raw band data (heart rate). Only share it with someone you trust.
         """
@@ -238,15 +454,10 @@ final class BandManager {
 
     // MARK: - Link events
 
-    private func prepare(context: ModelContext) {
-        link?.disconnect()
-        stopWatchdog()
-        endSession()
+    /// One link and one worker for the whole app run (the connection is kept).
+    private func ensureLink(context: ModelContext) {
         self.context = context
-        progress = BandSession.Progress()
-        lowBatteryOverride = false
-        badFrames = 0
-        log = []
+        guard link == nil else { return }
         generation += 1
         let current = generation
         let newLink = BluetoothBandLink()
@@ -275,10 +486,17 @@ final class BandManager {
         case .availability(let availability):
             traceLine("Bluetooth: \(availability)")
             switch availability {
-            case .ready: break
-            case .poweredOff: stage = .unavailable("Bluetooth is off. Turn it on in Control Centre, then try again.")
-            case .notAllowed: stage = .unavailable("Pulse isn't allowed to use Bluetooth. Allow it in Settings > Privacy & Security > Bluetooth.")
-            case .unsupported: stage = .unavailable("This device has no Bluetooth.")
+            case .ready:
+                if case .unavailable = stage { stage = .idle }
+                connectRequested = false        // requests don't survive Bluetooth being off
+                keepConnected()
+            case .poweredOff:
+                lostConnection()
+                stage = .unavailable("Bluetooth is off. Turn it on in Control Centre.")
+            case .notAllowed:
+                stage = .unavailable("Pulse isn't allowed to use Bluetooth. Allow it in Settings > Privacy & Security > Bluetooth.")
+            case .unsupported:
+                stage = .unavailable("This device has no Bluetooth.")
             }
 
         case .discovered(let band):
@@ -294,6 +512,10 @@ final class BandManager {
 
         case .connected:
             traceLine("Connected, notifications on")
+            isConnected = true
+            connectRequested = false
+            reconnectFailures = 0
+            reconnectTask?.cancel()
             startSession()
 
         case .notification:
@@ -302,17 +524,38 @@ final class BandManager {
         case .disconnected(let reason):
             traceLine("Disconnected: \(reason ?? "on purpose")")
             let wasSyncing = stage == .syncing
-            endSession()
-            liveHeartRate = nil
-            stopWatchdog()
-            if let reason, isBusy {
-                stage = .failed(reason)
-            } else if isBusy {
-                stage = .idle
+            let wasConnected = isConnected
+            lostConnection()
+            let paired = context.flatMap { Self.pairedBand(in: $0) }
+            guard let paired else {
+                // Pairing a new band went wrong: say so on the pairing screen.
+                if let reason, isBusy { stage = .failed(reason) } else if isBusy { stage = .idle }
+                return
             }
-            // The link dropped mid-download: what was saved is real data, so show it.
+            if wasConnected { paired.lastSeenAt = .now; try? context?.save() }
+            // Not an error for the screens: it reconnects by itself. Pause and failure keep their message.
+            switch stage {
+            case .paused, .failed, .unavailable: break
+            default: stage = .idle
+            }
             if wasSyncing && recordsSaved > 0 { recomputeSaved() }
+            if reason != nil {
+                // Out of range or a hiccup: ask again (CoreBluetooth then waits for the band).
+                // Back off if the request itself keeps failing.
+                reconnectFailures += 1
+                scheduleReconnect(after: min(300, 2 * pow(2, Double(min(reconnectFailures - 1, 8)))))
+            }
         }
+    }
+
+    /// Whatever ended the connection: forget the session and the stream.
+    private func lostConnection() {
+        isConnected = false
+        connectRequested = false
+        endSession()
+        liveHeartRate = nil
+        stopWatchdog()
+        showsSyncSpinner = false
     }
 
     private func startSession() {
@@ -327,11 +570,18 @@ final class BandManager {
         // A used band: everything before the day you first paired it is the previous owner's.
         BandDataCutoff.setOnFirstPairing()
         traceLine("Keeping only records from \(BandDataCutoff.date?.formatted(date: .abbreviated, time: .shortened) ?? "?") on; older ones are dropped unread and acked")
-        syncStartedAt = .now
         traceLine("Phone battery \(Self.phoneBattery())")
 
+        progress = BandSession.Progress()
+        lastBatteryReading = nil
+        batteryRose = false
+        badFrames = 0
         hasSession = true
         stage = .syncing
+        syncStartedAt = .now
+        lastPullAt = .now
+        pullNumber += 1
+        armSpinner()
         worker?.start(discardBefore: BandDataCutoff.unix, verboseLog: verboseLog)
         startWatchdog()
 
@@ -374,12 +624,17 @@ final class BandManager {
             switch effect {
             case .info(let newInfo):
                 info = newInfo
-                if let context, let record = Self.pairedBand(in: context) {
-                    record.batteryPercent = newInfo.batteryPercent
-                    record.isCharging = newInfo.isCharging ?? false
-                    record.firmwareVersion = newInfo.firmware
+                let record = context.flatMap { Self.pairedBand(in: $0) }
+                let charging = chargingState(newInfo, previousPercent: lastBatteryReading ?? record?.batteryPercent)
+                if let percent = newInfo.batteryPercent { lastBatteryReading = percent }
+                if let record {
+                    // Only what the band actually reported: an unknown value never wipes the last one.
+                    if let percent = newInfo.batteryPercent { record.batteryPercent = percent }
+                    if let charging { record.isCharging = charging }
+                    if let firmware = newInfo.firmware { record.firmwareVersion = firmware }
+                    record.lastSeenAt = .now
                 }
-                if stage == .syncing, Self.isLow(newInfo.batteryPercent, charging: newInfo.isCharging) {
+                if stage == .syncing, Self.isLow(newInfo.batteryPercent, charging: charging) {
                     if lowBatteryOverride {
                         if !overrideLogged {
                             overrideLogged = true
@@ -390,6 +645,8 @@ final class BandManager {
                         return
                     }
                 }
+                // The band woke Pulse (e.g. an event in the background): a chance to pull.
+                if stage != .syncing { pullIfDue() }
 
             case .progress(let newProgress):
                 progress = newProgress
@@ -397,16 +654,21 @@ final class BandManager {
             case .liveHeartRate(let bpm):
                 liveHeartRate = bpm
 
+            case .rawMotion(let motion):
+                if isStreamingMotion { liveSteps.add(motion) }
+
             case .finished:
                 stopWatchdog()
                 finish()
 
             case .failed(let message):
                 stopWatchdog()
+                showsSyncSpinner = false
                 stage = .failed(message)
                 endSession()
                 link?.disconnect()
                 if recordsSaved > 0 { recomputeSaved() }
+                scheduleReconnect(after: 60)        // a fresh connection, a fresh session
 
             case .log(let entry):
                 log.append(entry)
@@ -418,18 +680,21 @@ final class BandManager {
         }
     }
 
-    /// The band is nearly empty: stop cleanly. Nothing unsaved was acked, so whatever the band
-    /// still holds is simply sent again by the next sync (after charging).
+    /// The band is nearly empty: stop cleanly and leave it alone for a while. Nothing unsaved was
+    /// acked, so whatever the band still holds is simply sent again later (after charging).
     private func pauseForLowBattery(_ percent: Double) {
         traceLine("PAUSED: band battery \(Int(percent.rounded()))% is below \(Int(Self.lowBatteryPercent))% and not charging")
         stopWatchdog()
+        showsSyncSpinner = false
         stage = .paused(Self.chargeMessage)
+        pausedUntil = Date.now.addingTimeInterval(Self.lowBatteryRetry)
         endSession()
         link?.disconnect()
         if recordsSaved > 0 { recomputeSaved() }
+        scheduleReconnect(after: Self.lowBatteryRetry)
     }
 
-    /// For the sync log, to see what a sync costs.
+    /// For the sync log, to see what a pull costs.
     private static func phoneBattery() -> String {
         UIDevice.current.isBatteryMonitoringEnabled = true
         let level = UIDevice.current.batteryLevel
@@ -440,53 +705,61 @@ final class BandManager {
         worker?.addTrace(line)
     }
 
-    /// History is complete: recalculate every metric from the new raw data (once per sync, in the
-    /// background), then update the screens.
+    /// A pull is complete. If it saved anything, recalculate every metric (in the background),
+    /// then the screens update. The connection stays open for the next pull.
     private func finish() {
         guard let context else { return }
         progress.clearingOldData = false
-        traceLine("HISTORY_COMPLETE: \(recordsSaved) records in \(batchesSaved) batches, \(recordsCleared) old records dropped, connected \(Int(Date.now.timeIntervalSince(syncStartedAt))) s. Phone battery \(Self.phoneBattery()), band \(info.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "?"). Recalculating.")
+        lowBatteryOverride = false
+        pausedUntil = nil
+        let saved = recordsSaved
+        traceLine("PULL \(pullNumber) DONE: \(saved) records in \(batchesSaved) batches, \(recordsCleared) old records dropped, \(Int(Date.now.timeIntervalSince(syncStartedAt))) s. Phone battery \(Self.phoneBattery()), band \(info.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "?").\(saved > 0 ? " Recalculating." : "")")
+        if let record = Self.pairedBand(in: context) {
+            record.lastHistorySyncAt = .now
+            record.lastSeenAt = .now
+            try? context.save()
+        }
+        let afterwards = { [weak self] in
+            guard let self else { return }
+            self.showsSyncSpinner = false
+            // A live screen is waiting: switch the stream on now that the pull is done.
+            if self.wantsLive && self.hasSession { self.worker?.setLive(true) }
+            // A step test is running (the connection came back): the new session turned the 100 Hz stream off.
+            if self.isStreamingMotion && self.hasSession { self.worker?.setRawStream(true) }
+        }
+        guard saved > 0 else {
+            stage = .upToDate
+            afterwards()
+            return
+        }
         let container = context.container
         let profile = ProfileStore.current(in: context).metricsProfile
         let started = Date.now
         Task { [weak self] in
             do {
-                let output = try await MetricsRecomputer(modelContainer: container)
-                    .run(profile: profile, calendar: .current, now: .now, detectWorkouts: true)
+                let output = try await MetricsRecomputer.inBackground(container: container, profile: profile,
+                                                                      calendar: .current, now: .now, detectWorkouts: true)
                 let computed = Date.now
                 try PulseStore.apply(output, to: context)
                 self?.traceLine("RECOMPUTE: \(Int(computed.timeIntervalSince(started) * 1000)) ms in the background, \(Int(Date.now.timeIntervalSince(computed) * 1000)) ms writing results on the main thread")
-                if let record = Self.pairedBand(in: context) {
-                    record.lastHistorySyncAt = .now
-                    try? context.save()
-                }
-                self?.stage = .upToDate
+                if self?.stage == .syncing { self?.stage = .upToDate }
                 self?.onDataChanged?()
             } catch {
                 self?.stage = .failed("The data was saved, but the metrics could not be recalculated: \(error.localizedDescription)")
             }
-            guard let self else { return }
-            if self.wantsLive && self.hasSession {
-                // A live workout is waiting: keep the connection and switch the stream on.
-                self.worker?.setLive(true)
-            } else {
-                // Done: let the band go. The next sync is a short burst in 20 minutes.
-                self.endSession()
-                self.link?.disconnect()
-            }
+            afterwards()
         }
     }
 
-    /// The sync stopped early, but some batches are safely saved: show them anyway.
-    /// The stage stays `.failed` so the screen still says what went wrong.
+    /// The pull stopped early, but some batches are safely saved: show them anyway.
     private func recomputeSaved() {
         guard let context else { return }
-        traceLine("Recalculating with the \(recordsSaved) records saved before the sync stopped")
+        traceLine("Recalculating with the \(recordsSaved) records saved before the pull stopped")
         let container = context.container
         let profile = ProfileStore.current(in: context).metricsProfile
         Task { [weak self] in
-            guard let output = try? await MetricsRecomputer(modelContainer: container)
-                .run(profile: profile, calendar: .current, now: .now, detectWorkouts: true) else { return }
+            guard let output = try? await MetricsRecomputer.inBackground(container: container, profile: profile,
+                                                                         calendar: .current, now: .now, detectWorkouts: true) else { return }
             try? PulseStore.apply(output, to: context)
             self?.onDataChanged?()
         }

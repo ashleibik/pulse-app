@@ -6,6 +6,8 @@ import PulseCore
 /// "Better" / "worse" is always written out (ios/design/DESIGN.md).
 struct TrendsView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
+    @Environment(\.modelContext) private var context
+    @Environment(BandManager.self) private var band
     @State private var period: Period = .week
     @State private var showReport = false
 
@@ -40,8 +42,9 @@ struct TrendsView: View {
             }
             .padding(.horizontal, DS.Space.side)
             .padding(.top, DS.Space.l)
-            .padding(.bottom, DS.Space.xxl)
+            .padding(.bottom, DS.Space.tabBarClearance)
         }
+        .refreshable { await band.refresh(context: context) }
         .safeAreaInset(edge: .top, spacing: 0) {
             ScreenHeader(title: "Trends") {
                 PillPicker(options: Period.allCases, label: { $0.label }, selection: $period)
@@ -157,11 +160,13 @@ struct TrendsView: View {
 #Preview("Light") {
     TrendsView()
         .modelContainer(PulseStore.previewContainer)
+        .environment(BandManager())
         .preferredColorScheme(.light)
 }
 
 #Preview("Dark") {
     TrendsView()
         .modelContainer(PulseStore.previewContainer)
+        .environment(BandManager())
         .preferredColorScheme(.dark)
 }

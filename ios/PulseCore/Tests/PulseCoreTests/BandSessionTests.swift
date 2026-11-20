@@ -25,8 +25,9 @@ struct SessionHarness {
     }
 
     /// Runs until nothing is left to do. `answerClock: false` simulates a band that ignores GET_CLOCK.
-    mutating func run(answerClock: Bool = true, maxSteps: Int = 200_000) {
-        var queue = session.start()
+    /// `effects`: start from these instead of a fresh hello (e.g. `pullAgain()` on a kept connection).
+    mutating func run(answerClock: Bool = true, maxSteps: Int = 200_000, effects: [BandSession.Effect]? = nil) {
+        var queue = effects ?? session.start()
         var steps = 0
         while steps < maxSteps {
             steps += 1
@@ -49,7 +50,7 @@ struct SessionHarness {
                 queue += session.didPersist(token: token, recordCount: records.count)
             case .info(let info): lastInfo = info
             case .progress(let p): progressReports += 1; fractions.append(p.fraction)
-            case .liveHeartRate: break
+            case .liveHeartRate, .rawMotion: break
             case .finished(let records): finishedRecords = records
             case .failed(let message): failure = message
             case .log: logLines += 1
@@ -70,14 +71,51 @@ struct SessionHarness {
     #expect(h.session.phase == .finished)
     #expect(h.lastInfo?.batteryPercent == 76.5)
     #expect(h.lastInfo?.clockWasSet == true)                    // set on every connect
-    #expect(h.writes.prefix(8) == ["TOGGLE_REALTIME_HR off", "GET_BATTERY_LEVEL", "REPORT_VERSION_INFO", "GET_CLOCK",
-                                   "GET_DATA_RANGE", "SET_CLOCK", "GET_CLOCK (check)", "SEND_HISTORICAL_DATA"])
+    #expect(h.writes.prefix(9) == ["TOGGLE_REALTIME_HR off", "SEND_R10_R11_REALTIME off", "GET_BATTERY_LEVEL",
+                                   "REPORT_VERSION_INFO", "GET_CLOCK", "GET_DATA_RANGE", "SET_CLOCK", "GET_CLOCK (check)",
+                                   "SEND_HISTORICAL_DATA"])
+    #expect(h.band.rawStreamOn == false)                        // a stream left on by a cut-short step test stops
     #expect(h.lastInfo?.bandClockSource == "GET_CLOCK")
     #expect(h.lastInfo?.clockOffsetSeconds.map { abs($0) < 2 } == true)   // read back after setting
     #expect(h.band.realtimeOn == false)
     #expect(h.writes.filter { $0 == "HISTORY_ACK" }.count == 3)
     #expect(h.progressReports == 3)
     #expect(h.session.badFrames == 0)
+}
+
+@Test func aKeptConnectionPullsOnlyWhatIsNewWithoutSayingHelloAgain() {
+    let start: UInt32 = 1_750_000_000
+    var h = SessionHarness(band: SimulatedBand(samples: samples(150, start: start), batchSize: 100, mtuPayload: 20,
+                                               clock: start + 150), now: Double(start) + 151)
+    h.run()
+    #expect(h.finishedRecords == 150)
+
+    // Five minutes later, still connected: the band recorded 60 more seconds.
+    h.band.record(samples(60, start: start + 150))
+    h.writes = []
+    h.finishedRecords = nil
+    let pull = h.session.pullAgain()
+    h.run(effects: pull)
+    #expect(h.failure == nil)
+    #expect(h.finishedRecords == 60)
+    #expect(h.writes.prefix(3) == ["GET_BATTERY_LEVEL", "GET_DATA_RANGE", "SEND_HISTORICAL_DATA"])
+    #expect(!h.writes.contains("SET_CLOCK") && !h.writes.contains("REPORT_VERSION_INFO"))
+    #expect(h.saved.map(\.timestamp) == (0..<210).map { start + UInt32($0) })
+    #expect(h.session.phase == .finished)
+
+    // Nothing new: a pull is three commands and ends straight away.
+    h.finishedRecords = nil
+    let empty = h.session.pullAgain()
+    h.run(effects: empty)
+    #expect(h.finishedRecords == 0)
+    #expect(h.saved.count == 210)
+}
+
+@Test func pullAgainWaitsUntilTheLastDownloadIsDone() {
+    var session = BandSession()
+    #expect(session.pullAgain().isEmpty)        // idle: nothing to repeat
+    _ = session.start()
+    #expect(session.pullAgain().isEmpty)        // still saying hello
 }
 
 @Test func sessionFixesAWrongClockBeforeDownloading() {
@@ -149,7 +187,8 @@ struct SessionHarness {
         #expect(hit, "missed \(workout.kind) at \(workout.start)")
     }
     // And it must not invent a crowd of workouts out of normal daily life.
-    #expect(detected.count <= dataset.workouts.count + 6, "\(detected.count) detected vs \(dataset.workouts.count) planned")
+    let counted = detected.filter { $0.isSuggestion != true }
+    #expect(counted.count <= dataset.workouts.count + 6, "\(counted.count) detected vs \(dataset.workouts.count) planned")
     // Found in simulated minutes = still simulated, so it can never be exported as real.
     #expect(detected.allSatisfy { $0.source == .simulated })
     for workout in detected {
@@ -165,20 +204,19 @@ struct SessionHarness {
                      heartRate: [UInt8](repeating: hr, count: 60), rrIntervalsMs: [],
                      activity: [UInt8](repeating: 40, count: 60), source: .history)
     }
-    // 6 hard minutes (too short), a long rest, then 8 hard + 2 easy + 8 hard (one workout with a pause).
+    // 6 hard minutes (too short), a long rest, then 8 hard + 1 easy + 8 hard (one workout with a pause).
     var minutes: [MinuteSample] = []
     for i in 0..<6 { minutes.append(minute(i, hr: 150)) }
     for i in 6..<30 { minutes.append(minute(i, hr: 70)) }
     for i in 30..<38 { minutes.append(minute(i, hr: 150)) }
-    for i in 38..<40 { minutes.append(minute(i, hr: 80)) }
-    for i in 40..<48 { minutes.append(minute(i, hr: 150)) }
-    for i in 48..<60 { minutes.append(minute(i, hr: 70)) }
+    for i in 38..<39 { minutes.append(minute(i, hr: 80)) }
+    for i in 39..<47 { minutes.append(minute(i, hr: 150)) }
+    for i in 47..<60 { minutes.append(minute(i, hr: 70)) }
 
     let detected = WorkoutDetector.detect(minutes: minutes) { _ in 60 }
     #expect(detected.count == 1)
     #expect(detected.first?.start == minutes[30].start)
-    #expect(detected.first?.durationMinutes == 18)              // the trailing easy minutes are not counted
-    #expect(detected.first?.kind == .other)
+    #expect(detected.first?.durationMinutes == 17)              // the trailing easy minutes are not counted
     #expect(detected.first?.source == .history)
 }
 

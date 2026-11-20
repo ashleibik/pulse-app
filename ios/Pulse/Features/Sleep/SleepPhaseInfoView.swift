@@ -7,7 +7,19 @@ struct SleepPhaseSelection: Identifiable {
     var id: String { phase.rawValue }
 }
 
-/// The sheet behind the Restful / Light / Awake labels on the Sleep screen: how much of it you
+extension SleepPhase {
+    /// The stage's color on the Sleep tab and the Sleep page (DESIGN.md §4b-6).
+    var tint: Color {
+        switch self {
+        case .awake: DS.Colors.warn
+        case .rem: DS.Colors.accent
+        case .light: DS.Colors.sleepTint.opacity(0.7)
+        case .deep: DS.Colors.sleepTint
+        }
+    }
+}
+
+/// The sheet behind the Deep / Light / REM / Awake labels on the Sleep screen: how much of it you
 /// had, what it means, and how Pulse tells. Mono design (ios/design/DESIGN.md).
 struct SleepPhaseInfoView: View {
     let phase: SleepPhase
@@ -35,7 +47,7 @@ struct SleepPhaseInfoView: View {
 
                 block("What it means", meaning)
                 block("How Pulse tells", method)
-                Text("Pulse doesn't guess REM or deep sleep: heart rate and motion alone can't measure them reliably. General wellness information, not medical advice.")
+                Text("Stages are estimates from your heart rate and movement, not a sleep-lab measurement. General wellness information, not medical advice.")
                     .textStyle(.caption)
                     .foregroundStyle(DS.Colors.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -54,10 +66,12 @@ struct SleepPhaseInfoView: View {
 
     private var meaning: String {
         switch phase {
-        case .restful:
-            "The calmest part of your night: you were very still and your heart rate was low. More restful time usually goes with a better recovery score."
+        case .deep:
+            "The deepest part of your sleep: your heart rate is low and very steady. It usually comes earlier in the night."
+        case .rem:
+            "The stage most linked to vivid dreams. Your heart rate rises and varies more, and this stage usually gets longer toward morning."
         case .light:
-            "Asleep, but less settled: small movements or a slightly higher heart rate. It's a normal part of every night and often makes up about half of it."
+            "Asleep, but not in deep or REM sleep. It's a normal part of every night and often makes up about half of it."
         case .awake:
             "Short wake-ups: you moved clearly or your heart rate jumped. A few brief ones are normal, and most are forgotten by morning."
         }
@@ -65,12 +79,14 @@ struct SleepPhaseInfoView: View {
 
     private var method: String {
         switch phase {
-        case .restful:
-            "A minute counts as restful when there is almost no movement and your heart rate is at or below the night's middle value."
+        case .deep:
+            "Pulse looks for stretches when your heart rate is flat, you are still and your breathing rhythm is regular, mostly earlier in the night."
+        case .rem:
+            "Pulse looks for a more variable heart rate and a less regular breathing rhythm while you are still, mostly later in the night."
         case .light:
-            "Any sleeping minute that is neither restful nor awake."
+            "Any sleeping minute that doesn't look like deep or REM sleep."
         case .awake:
-            "A minute counts as awake when you moved clearly, your heart rate was 10 or more beats above the night's middle value, or the band had no reading."
+            "A minute counts as awake when you moved clearly or your heart rate was 10 or more beats above the night's middle value."
         }
     }
 

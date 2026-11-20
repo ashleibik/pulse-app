@@ -19,8 +19,11 @@ final class MinuteRecord {
     var rrIntervals: Data     // UInt16 little-endian, ms
     var activity: Data        // 60 bytes
     var sourceRaw: String
+    /// 60 bytes: how far the wrist turned each second. nil on minutes saved before Pulse stored this.
+    var wristAngle: Data?
 
     init(_ sample: MinuteSample) {
+        wristAngle = sample.wristAngle.map { Data($0) }
         start = sample.start
         heartRate = Data(sample.heartRate)
         rrIntervals = BinaryCoding.encode(sample.rrIntervalsMs)
@@ -44,13 +47,15 @@ final class MinuteRecord {
         if !sample.rrIntervalsMs.isEmpty {
             rrIntervals = BinaryCoding.encode(BinaryCoding.decodeUInt16(rrIntervals) + sample.rrIntervalsMs)
         }
+        wristAngle = WristAngle.merged(existing: wristAngle.map { [UInt8]($0) }, incoming: sample.wristAngle).map { Data($0) }
         sourceRaw = sample.source.rawValue
     }
 
     var value: MinuteSample {
         MinuteSample(start: start, heartRate: [UInt8](heartRate),
                      rrIntervalsMs: BinaryCoding.decodeUInt16(rrIntervals),
-                     activity: [UInt8](activity), source: DataSource(rawValue: sourceRaw) ?? .history)
+                     activity: [UInt8](activity), source: DataSource(rawValue: sourceRaw) ?? .history,
+                     wristAngle: wristAngle.map { [UInt8]($0) })
     }
 }
 
@@ -66,6 +71,8 @@ final class SleepRecord {
     var disturbances: Int
     var isNap: Bool
     var sourceRaw: String
+    /// Why Pulse asks "Is this right?" about this sleep. nil = nothing to ask.
+    var reviewReasonRaw: String?
 
     init(_ s: SleepSession) {
         id = s.id
@@ -76,11 +83,39 @@ final class SleepRecord {
         disturbances = s.disturbances
         isNap = s.isNap
         sourceRaw = s.source.rawValue
+        reviewReasonRaw = s.reviewReason?.rawValue
     }
 
     var value: SleepSession {
         SleepSession(id: id, start: start, end: end, asleepMinutes: asleepMinutes, awakeMinutes: awakeMinutes,
-                     disturbances: disturbances, isNap: isNap, source: DataSource(rawValue: sourceRaw) ?? .history)
+                     disturbances: disturbances, isNap: isNap, source: DataSource(rawValue: sourceRaw) ?? .history,
+                     reviewReason: reviewReasonRaw.flatMap(SleepReviewReason.init(rawValue:)))
+    }
+}
+
+/// A sleep the user edited or said wasn't sleep. Sleeps are rebuilt from the raw minutes on every
+/// recalculation, so the user's word is kept here and applied on top each time.
+@Model
+final class SleepCorrectionRecord {
+    @Attribute(.unique) var id: UUID
+    var detectedStart: Date
+    var detectedEnd: Date
+    var start: Date?
+    var end: Date?
+    var createdAt: Date
+
+    init(_ c: SleepCorrection) {
+        id = c.id
+        detectedStart = c.detectedStart
+        detectedEnd = c.detectedEnd
+        start = c.start
+        end = c.end
+        createdAt = c.createdAt
+    }
+
+    var value: SleepCorrection {
+        SleepCorrection(id: id, detectedStart: detectedStart, detectedEnd: detectedEnd, start: start, end: end,
+                        createdAt: createdAt)
     }
 }
 
@@ -97,12 +132,15 @@ final class WorkoutRecord {
     var calories: Int
     var sourceRaw: String
     // Filled in by later phases:
-    var healthKitID: UUID?          // Phase 6
+    var healthKitID: UUID?          // no longer used; kept so existing installs and backups still load
     var stravaActivityID: Int?      // unused: Strava's ids are not stored (its 7-day cache rule)
     /// When Pulse sent this workout to Strava (Phase 7). Our own mark, not Strava data.
     var stravaUploadedAt: Date?
+    /// true = "Was this a walk?" hasn't been answered yet.
+    var isSuggestion: Bool?
 
     init(_ w: Workout) {
+        isSuggestion = w.isSuggestion
         id = w.id
         kindRaw = w.kind.rawValue
         start = w.start
@@ -121,7 +159,7 @@ final class WorkoutRecord {
     var value: Workout {
         Workout(id: id, kind: kind, start: start, end: end, averageHeartRate: averageHeartRate,
                 maxHeartRate: maxHeartRate, strain: strain, zoneSeconds: zoneSeconds, calories: calories,
-                source: DataSource(rawValue: sourceRaw) ?? .history)
+                source: DataSource(rawValue: sourceRaw) ?? .history, isSuggestion: isSuggestion)
     }
     var durationMinutes: Int { Int(end.timeIntervalSince(start) / 60) }
 }
@@ -216,6 +254,13 @@ final class ProfileRecord {
     var maxHeartRateOverride: Int?
     var sleepGoalMinutes: Int
     var sexRaw: String = BiologicalSex.unspecified.rawValue
+    /// For the calorie estimate. nil = not entered (no estimate is shown).
+    var weightKg: Double?
+    var heightCm: Double?
+    /// Daily step goal (Settings > Steps).
+    var stepGoal: Int = 10_000
+    /// Optional. With it, VO₂ max uses the Nes model instead of heart rates alone (docs/METRICS.md §16).
+    var waistCm: Double?
 
     init(sleepGoalMinutes: Int = 480) {
         self.sleepGoalMinutes = sleepGoalMinutes
@@ -236,8 +281,49 @@ final class ProfileRecord {
         return 190
     }
 
+    /// Years this calendar year, from the birth year. nil when not entered.
+    func age(now: Date = .now, calendar: Calendar = .current) -> Double? {
+        birthYear.map { Double(calendar.component(.year, from: now) - $0) }
+    }
+
     var metricsProfile: MetricsProfile {
         MetricsProfile(maxHeartRate: estimatedMaxHeartRate(), sex: sex, sleepGoalMinutes: Double(sleepGoalMinutes))
+    }
+
+    /// What the calorie estimate needs. nil until all of it has been entered: nothing is guessed.
+    func calorieBody(now: Date = .now, calendar: Calendar = .current) -> DailyCalories.Body? {
+        guard let weightKg, let heightCm, let birthYear, sex != .unspecified else { return nil }
+        return DailyCalories.Body(weightKg: weightKg, heightCm: heightCm,
+                                  age: Double(calendar.component(.year, from: now) - birthYear), sex: sex)
+    }
+}
+
+/// A count the step estimate is checked against: a step test counted by hand, or an Apple Watch day total
+/// (docs/METRICS.md §15). The user's own entries, so "Delete all band data" keeps them.
+@Model
+final class StepReferenceRecord {
+    @Attribute(.unique) var id: UUID
+    var kindRaw: String
+    var start: Date
+    var end: Date
+    var steps: Int
+    var createdAt: Date
+    /// The band's 100 Hz count of a step test. nil when the stream didn't run.
+    var liveSteps: Int?
+
+    init(_ r: Steps.Reference) {
+        id = r.id
+        kindRaw = r.kind.rawValue
+        start = r.start
+        end = r.end
+        steps = r.steps
+        createdAt = r.createdAt
+        liveSteps = r.liveSteps
+    }
+
+    var value: Steps.Reference {
+        Steps.Reference(id: id, kind: Steps.Reference.Kind(rawValue: kindRaw) ?? .stepTest, start: start, end: end, steps: steps,
+                        createdAt: createdAt, liveSteps: liveSteps)
     }
 }
 

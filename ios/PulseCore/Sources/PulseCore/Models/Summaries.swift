@@ -37,6 +37,19 @@ public enum RecoveryZone: String, Codable, Sendable, CaseIterable {
 
 // MARK: - Sleep
 
+/// Why Pulse asks "Is this right?" about a sleep.
+public enum SleepReviewReason: String, Codable, Sendable, CaseIterable {
+    case missingData, unclear, unusualTime
+
+    public var message: String {
+        switch self {
+        case .missingData: "The band has no data for part of this sleep."
+        case .unclear: "Pulse couldn't clearly tell sleep from quiet rest during part of this sleep."
+        case .unusualTime: "This sleep is outside the hours you usually sleep."
+        }
+    }
+}
+
 public struct SleepSession: Identifiable, Codable, Sendable, Hashable {
     public var id: UUID
     public var start: Date            // fell asleep (or got into bed, if we can't tell)
@@ -46,9 +59,12 @@ public struct SleepSession: Identifiable, Codable, Sendable, Hashable {
     public var disturbances: Int      // number of times you woke up
     public var isNap: Bool
     public var source: DataSource
+    /// Set when Pulse is unsure about this sleep and the owner hasn't answered yet.
+    public var reviewReason: SleepReviewReason?
 
     public init(id: UUID = UUID(), start: Date, end: Date, asleepMinutes: Int, awakeMinutes: Int,
-                disturbances: Int, isNap: Bool = false, source: DataSource) {
+                disturbances: Int, isNap: Bool = false, source: DataSource, reviewReason: SleepReviewReason? = nil) {
+        self.reviewReason = reviewReason
         self.id = id
         self.start = start
         self.end = end
@@ -61,9 +77,13 @@ public struct SleepSession: Identifiable, Codable, Sendable, Hashable {
 
     public var inBedMinutes: Int { Int(end.timeIntervalSince(start) / 60) }
 
-    /// Fraction of time in bed actually spent asleep (0...1).
+    /// Minutes inside the session with no band data: neither asleep nor awake.
+    public var unknownMinutes: Int { max(0, inBedMinutes - asleepMinutes - awakeMinutes) }
+
+    /// Fraction of the measured time in bed actually spent asleep (0...1).
     public var efficiency: Double {
-        inBedMinutes > 0 ? Double(asleepMinutes) / Double(inBedMinutes) : 0
+        let measured = asleepMinutes + awakeMinutes
+        return measured > 0 ? Double(asleepMinutes) / Double(measured) : 0
     }
 }
 
@@ -75,11 +95,11 @@ public enum WorkoutKind: String, Codable, Sendable, CaseIterable {
     public var displayName: String {
         switch self {
         case .run: "Run"
-        case .ride: "Ride"
+        case .ride: "Cycle"
         case .strength: "Strength"
         case .walk: "Walk"
         case .hiit: "HIIT"
-        case .other: "Workout"
+        case .other: "Other"
         }
     }
 
@@ -105,14 +125,18 @@ public struct Workout: Identifiable, Codable, Sendable, Hashable {
     public var maxHeartRate: Int
     /// 0...21 scale (see Phase 3 for the formula).
     public var strain: Double
-    /// Seconds spent in HR zones 1-5 (by % of max HR: 50-60, 60-70, 70-80, 80-90, 90+).
+    /// Seconds spent in HR zones 1-5 (50-60, 60-70, 70-80, 80-90, 90+% of heart-rate reserve).
     public var zoneSeconds: [Int]
-    /// Rough estimate. Labelled "approx." in the UI.
+    /// Estimated active calories. 0 = unknown (the profile has no body details).
     public var calories: Int
     public var source: DataSource
+    /// true = Pulse is asking whether this happened ("Was this a walk?"). It isn't counted until confirmed.
+    public var isSuggestion: Bool?
 
     public init(id: UUID = UUID(), kind: WorkoutKind, start: Date, end: Date, averageHeartRate: Int,
-                maxHeartRate: Int, strain: Double, zoneSeconds: [Int], calories: Int, source: DataSource) {
+                maxHeartRate: Int, strain: Double, zoneSeconds: [Int], calories: Int, source: DataSource,
+                isSuggestion: Bool? = nil) {
+        self.isSuggestion = isSuggestion
         self.id = id
         self.kind = kind
         self.start = start

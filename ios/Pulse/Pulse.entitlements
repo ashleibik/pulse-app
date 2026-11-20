@@ -2,9 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Lets the signed app write to Apple Health (Phase 6). Access is still asked from the user at run time. -->
-	<key>com.apple.developer.healthkit</key>
-	<true/>
 	<!-- Shared storage with the home screen widget (Shared/WidgetSnapshot.swift). -->
 	<key>com.apple.security.application-groups</key>
 	<array>

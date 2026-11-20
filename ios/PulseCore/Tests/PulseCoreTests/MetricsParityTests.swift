@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PulseCore
 
-/// Swift must reproduce the Python reference (re-toolkit/metrics) on shared/test-vectors/metrics_v1.json.
+/// Swift must reproduce the Python reference (re-toolkit/metrics) on shared/test-vectors/metrics_v2.json.
 /// If a test here fails, either the two implementations drifted apart or the vectors are stale
 /// (regenerate with `python -m tools.make_metric_vectors` in re-toolkit/).
 
@@ -46,7 +46,7 @@ struct Vectors: Decodable {
         let repo = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let url = repo.appendingPathComponent("shared/test-vectors/metrics_v1.json")
+        let url = repo.appendingPathComponent("shared/test-vectors/metrics_v2.json")
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(Vectors.self, from: Data(contentsOf: url))
@@ -64,7 +64,7 @@ func close(_ a: Double?, _ b: Double?, _ tol: Double = vectors.tolerance) -> Boo
 }
 
 @Test func vectorsMatchThisAlgorithmVersion() {
-    #expect(vectors.algorithmVersion == MetricsEngine.algorithmVersion)
+    #expect(vectors.algorithmVersion == MetricsEngine.sharedFormulaVersion)
 }
 
 @Test func parityRRClean() {

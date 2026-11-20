@@ -6,7 +6,8 @@ import PulseCore
 enum PulseStore {
     static let schema = Schema([
         MinuteRecord.self, SleepRecord.self, WorkoutRecord.self, DaySummaryRecord.self,
-        BandRecord.self, ProfileRecord.self, PacketRecord.self, JournalRecord.self,
+        BandRecord.self, ProfileRecord.self, PacketRecord.self, JournalRecord.self, SleepCorrectionRecord.self,
+        StepReferenceRecord.self,
     ])
 
     static func makeContainer(inMemory: Bool = false) -> ModelContainer {
@@ -41,7 +42,9 @@ enum PulseStore {
         try context.delete(model: SleepRecord.self)
         try context.delete(model: WorkoutRecord.self)
         try context.delete(model: DaySummaryRecord.self)
+        try context.delete(model: SleepCorrectionRecord.self)
         try context.save()
+        RawHistoryArchive.delete()
     }
 
     /// Removes what older versions simulated: the demo month and simulated-band syncs.
@@ -85,6 +88,18 @@ struct RecomputeOutput: Sendable {
 /// Used after profile changes, and in Phase 5 after each band sync.
 @ModelActor
 actor MetricsRecomputer {
+    /// What the sleep model worked out last time. iOS may delete it: the next run then simply takes longer.
+    private static var sleepCacheURL: URL { URL.cachesDirectory.appending(path: "sleep-model-cache.bin") }
+
+    /// Creates the actor away from the main thread. An actor created on the main thread would do its work there.
+    static func inBackground(container: ModelContainer, profile: MetricsProfile, calendar: Calendar, now: Date,
+                             detectWorkouts: Bool = false) async throws -> RecomputeOutput {
+        try await Task.detached(priority: .userInitiated) {
+            try await MetricsRecomputer(modelContainer: container)
+                .run(profile: profile, calendar: calendar, now: now, detectWorkouts: detectWorkouts)
+        }.value
+    }
+
     /// - Parameter detectWorkouts: also look for workouts in the raw data (used after a band sync;
     ///   the demo month brings its own workouts).
     func run(profile: MetricsProfile, calendar: Calendar, now: Date,
@@ -94,7 +109,16 @@ actor MetricsRecomputer {
         if let cutoff = BandDataCutoff.date { descriptor.predicate = #Predicate { $0.start >= cutoff } }
         let records = try modelContext.fetch(descriptor)
         let minutes = records.map(\.value)
-        let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now)
+        let corrections = try modelContext.fetch(FetchDescriptor<SleepCorrectionRecord>()).map(\.value)
+        var sleepCache = (try? Data(contentsOf: Self.sleepCacheURL)).flatMap { SleepModelCache(data: $0) } ?? SleepModelCache()
+        let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now,
+                                       corrections: corrections, sleepCache: &sleepCache)
+        if minutes.isEmpty {
+            try? FileManager.default.removeItem(at: Self.sleepCacheURL)
+        } else {
+            try? sleepCache.encoded().write(to: Self.sleepCacheURL, options: .atomic)
+        }
+        let body = try modelContext.fetch(FetchDescriptor<ProfileRecord>()).first?.calorieBody()
         var strain: [UUID: Double] = [:]
         var manual: [UUID: Workout] = [:]
         for workout in try modelContext.fetch(FetchDescriptor<WorkoutRecord>()) {
@@ -102,14 +126,15 @@ actor MetricsRecomputer {
             strain[workout.id] = MetricsEngine.strain(of: minutes, from: workout.start, to: workout.end,
                                                       restingHR: rest, profile: profile)
             if workout.sourceRaw == DataSource.manual.rawValue {
-                manual[workout.id] = WorkoutDetector.manual(kind: workout.kind, start: workout.start, end: workout.end,
-                                                            minutes: minutes, profile: profile, restingHeartRate: rest)
+                manual[workout.id] = WorkoutDetector.manual(id: workout.id, kind: workout.kind, start: workout.start, end: workout.end,
+                                                            minutes: minutes, profile: profile, body: body,
+                                                            restingHeartRate: result.days.first { calendar.isDate($0.date, inSameDayAs: workout.start) }?.restingHeartRate)
             }
         }
         var output = RecomputeOutput(days: result.days, sleeps: result.sleeps, workoutStrain: strain)
         output.manualWorkouts = manual
         if detectWorkouts {
-            output.detectedWorkouts = WorkoutDetector.detect(minutes: minutes, profile: profile) { date in
+            output.detectedWorkouts = WorkoutDetector.detect(minutes: minutes, profile: profile, body: body) { date in
                 result.days.first { calendar.isDate($0.date, inSameDayAs: date) }?.restingHeartRate
             }
         }
@@ -125,7 +150,7 @@ actor BandImporter {
     func save(_ records: [Whoop.HistoryRecord], source: DataSource) throws {
         // The sync already drops the previous owner's records; this is the second lock on the door.
         let kept = BandDataCutoff.unix.map { cutoff in records.filter { $0.timestamp >= cutoff } } ?? records
-        let minutes = MinuteBuilder.minutes(from: kept, source: source)
+        let minutes = WristAngle.adding(to: MinuteBuilder.minutes(from: kept, source: source), from: kept)
         guard let first = minutes.first?.start, let last = minutes.last?.start else { return }
         let end = last.addingTimeInterval(60)
         let stored = try modelContext.fetch(FetchDescriptor<MinuteRecord>(
@@ -168,15 +193,17 @@ extension PulseStore {
         if let detected = output.detectedWorkouts {
             // Planned demo workouts are kept as they are. Detected ones are added, updated, or
             // removed if the detector no longer finds them. IDs are stable (WorkoutDetector.stableID),
-            // so a workout keeps its Apple Health / Strava marks across syncs.
+            // so a workout keeps its Strava mark across syncs.
             // "kept" = demo workouts and ones the user added by hand: detection never touches them.
             let demo = workouts.filter { $0.sourceRaw != DataSource.history.rawValue }
             var fromBand: [UUID: WorkoutRecord] = [:]
             for workout in workouts where workout.sourceRaw == DataSource.history.rawValue {
                 fromBand[workout.id] = workout
             }
+            let dismissed = WorkoutSuggestions.dismissed
             for found in detected {
                 if demo.contains(where: { $0.start < found.end && $0.end > found.start }) { continue }
+                if found.isSuggestion == true, dismissed.contains(found.id.uuidString) { continue }
                 if let existing = fromBand.removeValue(forKey: found.id) {
                     existing.end = found.end
                     existing.averageHeartRate = found.averageHeartRate

@@ -24,6 +24,8 @@ final class DataLoader {
 
     /// Set once the simulated data of older versions has been removed from this iPhone.
     private static let simulatedRemovedKey = "simulatedDataRemoved.v1"
+    /// The formula version the stored days were last calculated with.
+    private static let formulasKey = "metricsAlgorithmVersion"
 
     /// Call after a band sync (or a delete) changed the stored data.
     func dataChanged() {
@@ -46,16 +48,21 @@ final class DataLoader {
             defaults.removeObject(forKey: "dataSource")
             defaults.removeObject(forKey: "demoRawImportComplete")
         }
-        // Used band: before this version the pairing day wasn't stored. Pick a safe one.
-        if BandManager.pairedBand(in: context) != nil { BandDataCutoff.setForExistingInstall() }
+        // Used band, paired before the pairing day was stored: set the real one (once).
+        if BandManager.pairedBand(in: context) != nil { BandDataCutoff.fixPairingDayOnce() }
         let removedOldOwner = BandDataCutoff.date.map {
             (try? PulseStore.deleteBandData(before: $0, in: context)) ?? false
         } ?? false
         state = .ready
         rawDataReady = true
         revision += 1
+        // A new version of the formulas (for example stricter sleep detection) applies to old days too.
+        let formulasChanged = defaults.integer(forKey: Self.formulasKey) != MetricsEngine.algorithmVersion
+        defaults.set(MetricsEngine.algorithmVersion, forKey: Self.formulasKey)
         // Rows were deleted: recalculate from what's left.
-        if removedFromBandData || removedOldOwner { await recompute(context: context, detectWorkouts: removedOldOwner) }
+        if removedFromBandData || removedOldOwner || formulasChanged {
+            await recompute(context: context, detectWorkouts: removedOldOwner || formulasChanged)
+        }
     }
 
     /// Settings > "Your data starts": deletes everything before the new day, then recalculates.
@@ -72,8 +79,8 @@ final class DataLoader {
         state = .recalculating
         let profile = ProfileStore.current(in: context).metricsProfile
         do {
-            let output = try await MetricsRecomputer(modelContainer: context.container)
-                .run(profile: profile, calendar: .current, now: .now, detectWorkouts: detectWorkouts)
+            let output = try await MetricsRecomputer.inBackground(container: context.container, profile: profile,
+                                                                  calendar: .current, now: .now, detectWorkouts: detectWorkouts)
             try PulseStore.apply(output, to: context)
             state = .ready
             revision += 1

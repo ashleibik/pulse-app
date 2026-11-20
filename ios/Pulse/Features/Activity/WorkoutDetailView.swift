@@ -43,7 +43,7 @@ struct WorkoutDetailView: View {
     @ViewBuilder
     private var share: some View {
         if workout.isSimulated {
-            Text("This is a simulated workout. It is never sent to Strava or Apple Health.")
+            Text("This is a simulated workout. It is never sent to Strava.")
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
         } else if cloud.stravaConnected {
@@ -119,9 +119,9 @@ struct WorkoutDetailView: View {
                           number: Double(workout.durationMinutes),
                           format: { PulseFormat.duration(minutes: Int($0.rounded())) })
                 StatBlock(symbol: "bolt", label: "Calories",
-                          number: Double(workout.calories),
+                          number: workout.calories > 0 ? Double(workout.calories) : nil,
                           format: { "\(Int($0.rounded()))" }, unit: "kcal",
-                          caption: "rough estimate")
+                          caption: workout.calories > 0 ? "estimated active" : "add your details in Settings")
             }
             Hairline()
             HStack(alignment: .top, spacing: DS.Space.m) {

@@ -20,7 +20,7 @@ from protocol.constants import ALLOWED_COMMANDS, Cmd, EventId, MetaType, PacketT
 from protocol.crc import crc8, crc32
 from protocol.frames import (
     FrameReassembler, build_frame, cmd_get_battery, cmd_get_clock, cmd_get_data_range, cmd_get_hello,
-    cmd_history_ack, cmd_hr_broadcast, cmd_realtime_hr, cmd_report_version, cmd_send_historical_data,
+    cmd_history_ack, cmd_hr_broadcast, cmd_raw_stream, cmd_realtime_hr, cmd_report_version, cmd_send_historical_data,
     cmd_set_clock, parse_frame,
 )
 from protocol.parser import decode, parse_heart_rate_measurement, to_dict
@@ -70,6 +70,17 @@ def synthetic_packets() -> dict[str, bytes]:
     p["history_record_bad_accel"] = build_frame(bytes(bad))
     p["history_too_short"] = build_frame(bytes([PacketType.HISTORICAL_DATA, 12, 0, 0]))
     p["console_log"] = build_frame(bytes([PacketType.CONSOLE_LOGS, 0x00]) + b"hello")
+    # REALTIME_RAW motion variant (NOOP's WHOOP 4 layout): 100 samples per axis, signed.
+    raw = bytearray(1920)
+    raw[0], raw[1], raw[2] = PacketType.REALTIME_RAW, 0x11, 0x0A
+    struct.pack_into("<IH", raw, 11, 1_795_000_000, 16384)
+    raw[17] = 92
+    for start, scale in ((85, 37), (285, -11), (485, 5)):
+        struct.pack_into("<100h", raw, start, *[4096 + scale * (i - 50) if start == 485 else scale * (i - 50) for i in range(100)])
+    p["raw_motion"] = build_frame(bytes(raw))
+    optical = bytearray(1924)
+    optical[0] = PacketType.REALTIME_RAW
+    p["raw_optical"] = build_frame(bytes(optical))
     return p
 
 
@@ -106,6 +117,8 @@ def build_vectors() -> dict:
         {"name": "hr_broadcast", "on": False, "seq": 7, "hex": cmd_hr_broadcast(False, 7).hex()},
         {"name": "realtime_hr", "on": True, "seq": 0x8C, "hex": cmd_realtime_hr(True, 0x8C).hex()},
         {"name": "realtime_hr", "on": False, "seq": 255, "hex": cmd_realtime_hr(False, 255).hex()},
+        {"name": "raw_stream", "on": True, "seq": 0x21, "hex": cmd_raw_stream(True, 0x21).hex()},
+        {"name": "raw_stream", "on": False, "seq": 1, "hex": cmd_raw_stream(False, 1).hex()},
         {"name": "report_version", "seq": 1, "hex": cmd_report_version(1).hex()},
         {"name": "get_battery", "seq": 2, "hex": cmd_get_battery(2).hex()},
         {"name": "get_clock", "seq": 3, "hex": cmd_get_clock(3).hex()},

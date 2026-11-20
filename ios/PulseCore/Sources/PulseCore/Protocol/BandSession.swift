@@ -79,6 +79,8 @@ public struct BandSession: Sendable {
         case progress(Progress)
         /// A live heart-rate reading (only while realtime streaming is on).
         case liveHeartRate(Int)
+        /// One second of 100 Hz motion (only while the raw stream is on, during a step test).
+        case rawMotion(Whoop.RawMotion)
         case finished(records: Int)
         case failed(String)
         case log(LogEntry)
@@ -101,6 +103,8 @@ public struct BandSession: Sendable {
     /// packets are summarized once per batch.
     public var verboseTrace = false
     private var quiet = (notifications: 0, frames: 0, bytes: 0)
+    /// The 100 Hz stream's packets, counted like history: motion and the optical variant.
+    private var quietRaw = (motion: 0, other: 0)
     /// From GET_DATA_RANGE: where the band's unsynced data starts and ends (flash pages).
     private var range: (trim: UInt32, write: UInt32, capacity: UInt32)?
 
@@ -137,7 +141,13 @@ public struct BandSession: Sendable {
     /// One line for the history packets that were counted instead of logged.
     private mutating func flushQuiet() -> [Effect] {
         guard quiet.notifications > 0 else { return [] }
-        defer { quiet = (0, 0, 0) }
+        defer {
+            quiet = (0, 0, 0)
+            quietRaw = (0, 0)
+        }
+        if quietRaw.motion + quietRaw.other > 0 {
+            return [.trace("  … REALTIME_RAW: \(quietRaw.motion) motion and \(quietRaw.other) other packets, \(quiet.frames) history frames, in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized)")]
+        }
         return [.trace("  … HISTORICAL_DATA: \(quiet.frames) frames in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized; turn on Verbose for every packet)")]
     }
 
@@ -151,6 +161,8 @@ public struct BandSession: Sendable {
         // Battery: the live heart-rate stream must never be left on by a crash or a killed app.
         // The live workout screen switches it on again when it needs it.
         effects += write(Whoop.Command.realtimeHR(on: false, seq: seq.next()), "TOGGLE_REALTIME_HR off")
+        // The same for the 100 Hz stream, which also stays on across reconnects (a step test cut short).
+        effects += write(Whoop.Command.rawStream(on: false, seq: seq.next()), "SEND_R10_R11_REALTIME off")
         let battery = Whoop.Command.getBattery(seq: seq.next())
         effects += write(battery, "GET_BATTERY_LEVEL")
         let version = Whoop.Command.reportVersion(seq: seq.next())
@@ -182,13 +194,21 @@ public struct BandSession: Sendable {
         // A big download is thousands of identical-looking history packets. Unless the log is
         // verbose, they are counted (not hex-dumped) and summarized at the end of each batch.
         // That keeps the log small and saves the CPU time of formatting them.
-        let onlyHistory = frames.allSatisfy { $0.valid && $0.packetType == Int(Whoop.PacketType.historicalData.rawValue) }
+        let quietTypes = [Int(Whoop.PacketType.historicalData.rawValue), Int(Whoop.PacketType.realtimeRaw.rawValue)]
+        let onlyHistory = frames.allSatisfy { $0.valid && quietTypes.contains($0.packetType) }
         if !verboseTrace && !resynced && key == Whoop.dataUUID && onlyHistory {
             quiet.notifications += 1
             quiet.bytes += bytes.count
-            quiet.frames += frames.count
             var effects: [Effect] = []
-            for frame in frames { effects += handle(Whoop.decode(frame), frame: frame, channel: key, now: now) }
+            for frame in frames {
+                let packet = Whoop.decode(frame)
+                if frame.packetType == Int(Whoop.PacketType.realtimeRaw.rawValue) {
+                    if case .rawMotion = packet { quietRaw.motion += 1 } else { quietRaw.other += 1 }
+                } else {
+                    quiet.frames += 1
+                }
+                effects += handle(packet, frame: frame, channel: key, now: now)
+            }
             return effects
         }
         var effects = flushQuiet()
@@ -212,6 +232,19 @@ public struct BandSession: Sendable {
         return effects
     }
 
+    /// The connection is kept open (like WHOOP's own app): after a finished download, ask for what
+    /// the band recorded since. The clock was set when this connection started; battery and data
+    /// range are read again so the screens stay fresh. Does nothing unless the last download finished.
+    public mutating func pullAgain() -> [Effect] {
+        guard phase == .finished else { return [] }
+        phase = .syncing
+        sync = HistorySync(maxRetries: sync.maxRetries, startSeq: 32, discardBefore: sync.discardBefore)
+        range = nil
+        var effects = write(Whoop.Command.getBattery(seq: seq.next()), "GET_BATTERY_LEVEL")
+        effects += write(Whoop.Command.getDataRange(seq: seq.next()), "GET_DATA_RANGE")
+        return effects + map(sync.start(setClockTo: nil))
+    }
+
     /// The app's watchdog saw no data for a while during the download.
     public mutating func stalled() -> [Effect] {
         guard phase == .syncing else { return [] }
@@ -222,6 +255,11 @@ public struct BandSession: Sendable {
     public mutating func setLive(_ on: Bool) -> [Effect] {
         let command = Whoop.Command.realtimeHR(on: on, seq: seq.next())
         return write(command, "TOGGLE_REALTIME_HR")
+    }
+
+    /// Turns the band's 100 Hz motion stream on or off (only the step test uses it).
+    public mutating func setRawStream(_ on: Bool) -> [Effect] {
+        flushQuiet() + write(Whoop.Command.rawStream(on: on, seq: seq.next()), "SEND_R10_R11_REALTIME \(on ? "on" : "off")")
     }
 
     /// Call after the batch from `.persist` is safely on disk. Returns the ack for the band.
@@ -241,6 +279,11 @@ public struct BandSession: Sendable {
             var effects = [log(.fromBand, channel, "\(response.opcodeName) -> \(response.statusName)", frame.raw)]
             var changed = false
             if let battery = response.batteryPercent { info.batteryPercent = battery; changed = true }
+            if response.opcode == Int(Whoop.Cmd.getBatteryLevel.rawValue) {
+                // Every reading, with where it came from: to tell a real 0% from a bad read later.
+                effects.append(.trace(response.batteryPercent.map { String(format: "BATTERY %.1f%% (GET_BATTERY_LEVEL, fresh)", $0) }
+                    ?? "BATTERY no valid reading: GET_BATTERY_LEVEL status \(response.statusName), body \(Whoop.hex(response.body))"))
+            }
             if let r = response.dataRange, r.capacityPages > 0, r.writePage <= r.capacityPages, r.trimPage <= r.capacityPages {
                 if range == nil { range = (r.trimPage, r.writePage, r.capacityPages) }
                 let behind = (Int64(r.writePage) - Int64(r.trimPage) + Int64(r.capacityPages)) % Int64(r.capacityPages)
@@ -274,11 +317,28 @@ public struct BandSession: Sendable {
             var changed = false
             if let battery = event.batteryPercent { info.batteryPercent = battery; changed = true }
             if let charging = event.charging { info.isCharging = charging; changed = true }
+            let at = Whoop.plausibleUnix(event.timestamp) ? HistorySync.utc(event.timestamp) : "unset clock (\(event.timestamp))"
             switch Whoop.EventID(rawValue: UInt16(truncatingIfNeeded: event.eventID)) {
             case .wristOn: info.isWorn = true; changed = true
             case .wristOff: info.isWorn = false; changed = true
-            case .chargingOn: info.isCharging = true; changed = true
-            case .chargingOff: info.isCharging = false; changed = true
+            case .chargingOn:
+                info.isCharging = true; changed = true
+                effects.append(.trace("CHARGING ON (band event at \(at))"))
+            case .chargingOff:
+                info.isCharging = false; changed = true
+                effects.append(.trace("CHARGING OFF (band event at \(at))"))
+            case .batteryLevel:
+                let volts = event.batteryMillivolts.map { "\($0) mV" } ?? "? mV"
+                let plugged = event.charging == true ? "yes" : "no"
+                effects.append(.trace(event.batteryPercent.map {
+                    String(format: "BATTERY %.1f%%", $0) + " (band event at \(at), \(volts), charging \(plugged))"
+                } ?? "BATTERY event without a valid reading at \(at): body \(Whoop.hex(event.body))"))
+            case .boot:
+                effects.append(.trace("BAND REBOOTED (BOOT event at \(at)): if the battery was near 0%, it ran flat"))
+            case .rtcLost:
+                effects.append(.trace("BAND CLOCK LOST (RTC_LOST event at \(at)): it lost power or reset; records stamped before the next SET_CLOCK have no real date"))
+            case .setRtc:
+                effects.append(.trace("Band confirms its clock was set (SET_RTC event at \(at))"))
             default: break
             }
             if changed { effects.append(.info(info)) }
@@ -302,7 +362,12 @@ public struct BandSession: Sendable {
         case .history:
             return map(sync.handle(packet))
 
-        case .unknown(_, let typeName, _):
+        case .rawMotion(let motion):
+            return [.rawMotion(motion)]
+
+        case .unknown(let type, let typeName, _):
+            // The stream's optical variant: counted in the summary, not logged one by one.
+            if type == Int(Whoop.PacketType.realtimeRaw.rawValue) { return [] }
             return [log(.fromBand, channel, "Unknown packet \(typeName)", frame.raw)]
         }
     }

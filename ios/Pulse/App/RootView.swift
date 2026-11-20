@@ -9,7 +9,6 @@ struct RootView: View {
     @State private var loader = DataLoader()
     /// Shared with BackgroundSync, which can run before (or without) this screen.
     @State private var band = BandManager.shared
-    @State private var health = HealthExporter()
     @State private var cloud = CloudManager()
     /// Per-device UI preference (not health data), so UserDefaults is fine here.
     /// (UserDefaults also reads launch arguments, so `-hasSeenWelcome YES` skips it for screenshots.)
@@ -35,28 +34,27 @@ struct RootView: View {
         .sensoryFeedback(.selection, trigger: tab)                    // light tick when switching tabs
         .environment(loader)
         .environment(band)
-        .environment(health)
         .environment(cloud)
         .fullScreenCover(isPresented: Binding(get: { !hasSeenWelcome }, set: { hasSeenWelcome = !$0 })) {
             WelcomeView { hasSeenWelcome = true }
         }
-        // Every time the app opens (or comes back from the background): sync if it's due.
+        // Every time the app opens (or comes back): cached data is already on screen; pull what's
+        // new right away. It slides in when it's saved. No sheet, no popup.
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
-                band.syncIfDue(context: context)
+                band.appBecameActive(context: context)
                 Notifier.refresh(context: context)      // tonight's bedtime reminder
                 WidgetBridge.publish(context: context)
             } else if phase == .background {
-                BackgroundSync.schedule()               // next sync while the app is closed
+                BackgroundSync.schedule()               // wake-ups while the app is closed
             }
         }
-        // While the app is open: check once a minute whether a sync is due (every 20 minutes).
-        // Each sync is a short burst that disconnects when done.
+        // While the app is open: pull every few minutes over the kept connection.
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
-                if !Task.isCancelled { band.syncIfDue(context: context) }
+                if !Task.isCancelled { band.pullIfDue() }
             }
         }
         // Demo month generated, band synced, recalculated: the widget follows.
@@ -65,15 +63,12 @@ struct RootView: View {
             if state == .ready { WidgetBridge.publish(context: context) }
         }
         .task {
-            band.onDataChanged = { [loader, health, cloud, context] in
+            band.onDataChanged = { [loader, cloud, context] in
                 loader.dataChanged()
                 Notifier.refresh(context: context)
                 Notifier.recoveryReady(context: context)
                 // New band data: pass it on, but only to what the user turned on.
-                Task {
-                    await health.export(context: context)       // Apple Health
-                    await cloud.sync(context: context)          // own cloud (summaries only)
-                }
+                Task { await cloud.sync(context: context) }     // own cloud (summaries only)
             }
             await cloud.load()
             await loader.prepare(context: context)      // also removes old simulated data, once

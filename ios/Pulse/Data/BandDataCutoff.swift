@@ -34,11 +34,23 @@ enum BandDataCutoff {
         set(now)
     }
 
-    /// Versions before this one didn't record the pairing day. The band arrived recently, so a
-    /// week back is safely after the previous owner's data and before your own. Editable in Settings.
-    static func setForExistingInstall(now: Date = .now, calendar: Calendar = .current) {
-        guard date == nil else { return }
-        set(calendar.date(byAdding: .day, value: -7, to: now) ?? now, calendar: calendar)
+    /// The day this install first paired its band. Earlier versions didn't record it and guessed
+    /// "a week ago"; the owner's band was first paired in Pulse on 17 Nov 2026.
+    static let knownPairingDay = DateComponents(year: 2026, month: 11, day: 17)
+    private static let pairingDayFixKey = "bandDataStartsAt.pairingDayFix.v1"
+
+    /// Once, for an install that paired before the pairing day was stored: use the real pairing day
+    /// instead of the old "one week ago" guess. A later date chosen by hand in Settings is kept.
+    /// Returns true if the date changed.
+    @discardableResult
+    static func fixPairingDayOnce(calendar: Calendar = .current) -> Bool {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: pairingDayFixKey) else { return false }
+        defaults.set(true, forKey: pairingDayFixKey)
+        guard let pairingDay = calendar.date(from: knownPairingDay) else { return false }
+        if let current = date, current >= calendar.startOfDay(for: pairingDay) { return false }
+        set(pairingDay, calendar: calendar)
+        return true
     }
 }
 

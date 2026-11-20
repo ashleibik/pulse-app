@@ -43,7 +43,7 @@ jobs:
           grep -q "BUILD SUCCEEDED" build.log
 
       # An unsigned app carries no entitlements, so the sideloading tool would not know the app
-      # needs HealthKit and the App Group shared with the widget. A placeholder ("ad-hoc")
+      # needs the App Group shared with the widget. A placeholder ("ad-hoc")
       # signature embeds them; Sideloadly replaces it with your Apple ID's signature.
       - name: Embed entitlements
         run: |
