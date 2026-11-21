@@ -79,6 +79,18 @@ public struct StreamStepCounter: Sendable {
         return done
     }
 
+    /// The start of the minute being filled. nil = none.
+    public var minuteInProgress: Date? { minute.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
+
+    /// The steps of the minute being filled, counted the same way as when it closes, so the screens can move while the
+    /// owner walks. The minute's own count replaces it when it closes.
+    public var stepsSoFar: Int { seconds > 0 ? count(runs) : 0 }
+
+    private func count(_ runs: [[Double]]) -> Int {
+        let counted = runs.reduce(0) { $0 + OpenStrapPedometer.pedometer($1) }
+        return Int((Double(counted) * OpenStrapPedometer.gain).rounded())
+    }
+
     private mutating func closeMinute() -> [StepMinute] {
         defer {
             minute = nil
@@ -86,8 +98,6 @@ public struct StreamStepCounter: Sendable {
             seconds = 0
         }
         guard let minute, seconds > 0 else { return [] }
-        let counted = runs.reduce(0) { $0 + OpenStrapPedometer.pedometer($1) }
-        return [StepMinute(start: Date(timeIntervalSince1970: TimeInterval(minute)),
-                           steps: Int((Double(counted) * OpenStrapPedometer.gain).rounded()), seconds: seconds)]
+        return [StepMinute(start: Date(timeIntervalSince1970: TimeInterval(minute)), steps: count(runs), seconds: seconds)]
     }
 }

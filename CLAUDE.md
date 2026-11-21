@@ -26,6 +26,9 @@ The owner develops on Windows, has no Mac, and installs by sideloading (moving t
 - **A sleep must be confirmed and finished before it is shown (2026-11-18).** The owner sat at a computer from 21:30
   to 00:30 and got a false 3h06 sleep. A night appears only once they are up again, and the owner can edit or remove
   any sleep. Spec: `docs/METRICS.md` §4.
+- **Opening Pulse counts as being up (2026-11-21).** The owner wants the night right away, like Apple Watch. Opening the
+  app ends the sleep they were in, and it shows as soon as that pull is saved, unless they sleep 45+ minutes more.
+  Without opening it, the 15-of-45-minutes rule still applies.
 - **Sleep is a learned probability per minute (2026-11-18).** `SleepModel` combines movement, heart rate against the owner's
   awake level, clean beats, HRV and time of day, and learns from their nights and edits. Breathing and skin temperature are
   left out until the data supports them. Keep the replay of the real night in `RealNightReplayTests` passing.
@@ -53,8 +56,9 @@ Port OpenStrap only from commit `e59d63c` or earlier: that code is MIT, and late
 Band connection and kept reconnect, band clock set, history drain (a batch is acked only after it
 is saved), the data cutoff (`BandDataCutoff`: the band was bought used, older records belong to the
 previous owner and are dropped), the low-battery pause (below 5%, "Sync anyway" overrides once), and the 100 Hz motion
-stream (command 0x3F): off on every connect, then on only as `MotionStreamPolicy` allows (worn, not still for 30 minutes,
-band battery from 15%; always during a step test). It sends about 4 kB a second, so it costs band and phone battery.
+stream (command 0x3F): off on every connect, then on only as `MotionStreamPolicy` allows (worn, not asleep, band battery
+from 15%; always during a step test). It sends about 4 kB a second, so it costs band and phone battery. The stall watchdog
+must count only the download's own packets (`BandSession.downloadActivity`), never the stream's.
 
 ## Layout
 

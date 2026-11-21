@@ -94,6 +94,10 @@ public struct BandSession: Sendable {
     public private(set) var info = Info()
     /// Frames whose checksum did not match (a sign of a bad connection).
     public private(set) var badFrames = 0
+    /// Goes up with every packet of the download's conversation (command answers, history records, batch markers), and
+    /// never with the 100 Hz motion stream or live heart rate. The app's stall watchdog watches it: the stream sends data
+    /// every second, so "anything arrived" would hide a download that stopped.
+    public private(set) var downloadActivity = 0
 
     private var sync: HistorySync
     private var seq = Whoop.SeqCounter()
@@ -274,6 +278,10 @@ public struct BandSession: Sendable {
     // MARK: - Internals
 
     private mutating func handle(_ packet: Whoop.Packet, frame: Whoop.Frame, channel: String, now: Double) -> [Effect] {
+        switch packet {
+        case .commandResponse, .metadata, .history: downloadActivity &+= 1
+        case .realtime, .event, .rawMotion, .unknown: break
+        }
         switch packet {
         case .commandResponse(let response):
             var effects = [log(.fromBand, channel, "\(response.opcodeName) -> \(response.statusName)", frame.raw)]

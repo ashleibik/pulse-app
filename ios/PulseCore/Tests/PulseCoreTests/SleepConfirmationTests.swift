@@ -678,6 +678,43 @@ private func walking(_ minutes: Int) -> [(Double, Double)?] { Array(repeating: (
     #expect(up == [true, true])
 }
 
+private func sleeps(_ minutes: [MinuteSample], now: Date, opened: Date?) -> [SleepSession] {
+    MetricsEngine.run(minutes: minutes, calendar: calendar, now: now, ownerAwakeAt: opened).sleeps
+}
+
+@Test func openingPulseShowsTheNightAtOnce() throws {
+    // 06:33, three minutes after waking: too soon for "clearly up", but opening Pulse says so.
+    let minutes = daytime(9, 23) + night(23, 30.5) + daytime(30.5, 30.55)
+    #expect(sleeps(minutes, now: time(30.55), opened: nil).isEmpty)
+    let shown = try #require(sleeps(minutes, now: time(30.55), opened: time(30.55)).first)
+    #expect(abs(shown.start.timeIntervalSince(time(23))) <= 15 * 60)
+    #expect(abs(shown.end.timeIntervalSince(time(30.5))) <= 5 * 60)
+}
+
+@Test func openingPulseStillInBedEndsTheNightThere() throws {
+    // The band's minutes end asleep: the owner opened Pulse in bed, so the night ends at that minute.
+    let shown = try #require(sleeps(daytime(9, 23) + night(23, 30.5), now: time(30.5), opened: time(30.5)).first)
+    #expect(abs(shown.end.timeIntervalSince(time(30.5))) <= 2 * 60)
+}
+
+@Test func aLookAtThePhoneInTheNightDoesNotSplitTheNight() throws {
+    // Opened Pulse at 03:00, then slept on until 07:00.
+    let asleep = daytime(9, 23) + night(23, 31)
+    #expect(sleeps(asleep, now: time(31), opened: time(27)).isEmpty)
+    let morning = sleeps(asleep + daytime(31, 31.5), now: time(31.5), opened: time(27))
+    #expect(morning.count == 1)
+    #expect(morning.first.map { abs($0.end.timeIntervalSince(time(31))) <= 5 * 60 } == true)
+}
+
+@Test func openingPulseWithOldMinutesDoesNotCutTheNight() {
+    // The band was out of reach since 03:00: opening Pulse at 06:30 can't end the night at 03:00.
+    #expect(sleeps(daytime(9, 23) + night(23, 27), now: time(30.5), opened: time(30.5)).isEmpty)
+}
+
+@Test func openingPulseDuringTheDayShowsNoSleep() {
+    #expect(sleeps(daytime(9, 20), now: time(20), opened: time(20)).isEmpty)
+}
+
 @Test func theResultSaysASleepIsWaitingWithoutShowingIt() throws {
     let evening = daytime(9, 23)
     let asleep = night(23, 30.5)

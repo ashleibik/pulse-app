@@ -37,6 +37,20 @@ public enum Steps {
                    countedMinutes: Int((Double(seconds) / 60).rounded()))
     }
 
+    /// A day with the minute the stream is still filling added, so the count moves while the owner walks. That minute
+    /// isn't saved yet, so it is never in `day` already. A minute outside the day, or with no steps, changes nothing.
+    public static func day(_ day: Day?, adding inProgress: StepMinute?, dayStart: Date, calendar: Calendar) -> Day? {
+        guard let inProgress, inProgress.steps > 0 else { return day }
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(86_400)
+        guard inProgress.start >= dayStart, inProgress.start < nextDay else { return day }
+        let hours = max(1, Int((nextDay.timeIntervalSince(dayStart) / 3600).rounded()))
+        var result = day ?? Day(total: 0, hourly: [Int](repeating: 0, count: hours), countedMinutes: 0)
+        let hour = Int(inProgress.start.timeIntervalSince(dayStart) / 3600)
+        if hour >= 0 && hour < result.hourly.count { result.hourly[hour] += inProgress.steps }
+        result.total += inProgress.steps
+        return result
+    }
+
     // MARK: - Step tests
 
     /// A count the band is checked against. `appleWatchDay` entries come from earlier versions: they are kept in backups but

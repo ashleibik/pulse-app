@@ -377,7 +377,7 @@ private struct StepsSection: View {
     @State private var showTest = false
 
     var body: some View {
-        SettingsSection("Steps", footer: "The band counts your steps from its motion, 100 times a second, while you wear it and your iPhone is nearby. It pauses while you're still or asleep, and when its battery is low.") {
+        SettingsSection("Steps", footer: "The band counts your steps from its motion, 100 times a second, while you wear it and your iPhone is nearby. It pauses while you're asleep, and when its battery is low.") {
             goalRow
             Hairline()
             ValueRow(label: "Step counting", value: countingText, emphasized: band.streamDecision == .stream)
@@ -392,7 +392,7 @@ private struct StepsSection: View {
     private var countingText: String {
         switch band.streamDecision {
         case .stream: "On"
-        case .still: "Paused: you're still"
+        case .asleep: "Paused: you're asleep"
         case .notWorn: "Paused: band not worn"
         case .lowBattery: "Paused: band battery low"
         case nil: "Waiting for the band"

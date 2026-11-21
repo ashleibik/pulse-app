@@ -49,11 +49,12 @@ struct RootView: View {
                 BackgroundSync.schedule()               // wake-ups while the app is closed
             }
         }
-        // While the app is open: pull every few minutes over the kept connection.
+        // While the app is open: pull every minute over the kept connection (BandManager.onScreenPullInterval). It checks
+        // every 15 seconds, so a pull is never a whole extra minute late.
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
+                try? await Task.sleep(for: .seconds(15))
                 if !Task.isCancelled { band.pullIfDue() }
             }
         }

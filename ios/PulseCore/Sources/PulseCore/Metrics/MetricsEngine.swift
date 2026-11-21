@@ -133,15 +133,19 @@ public enum MetricsEngine {
     }
 
     public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
-                           calendar: Calendar, now: Date, corrections: [SleepCorrection] = []) -> MetricsResult {
+                           calendar: Calendar, now: Date, corrections: [SleepCorrection] = [],
+                           ownerAwakeAt: Date? = nil) -> MetricsResult {
         var cache = SleepModelCache()
-        return run(minutes: minutes, profile: profile, calendar: calendar, now: now, corrections: corrections, sleepCache: &cache)
+        return run(minutes: minutes, profile: profile, calendar: calendar, now: now, corrections: corrections,
+                   ownerAwakeAt: ownerAwakeAt, sleepCache: &cache)
     }
 
     /// - Parameter sleepCache: what the last run worked out. Weeks whose data didn't change are reused from it.
+    /// - Parameter ownerAwakeAt: the last time the owner opened Pulse. They were awake then, so a sleep that ended by
+    ///   that moment is finished (docs/METRICS.md §4, step 9), once the band's minutes reach it.
     public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
                            calendar: Calendar, now: Date, corrections: [SleepCorrection] = [],
-                           sleepCache: inout SleepModelCache) -> MetricsResult {
+                           ownerAwakeAt: Date? = nil, sleepCache: inout SleepModelCache) -> MetricsResult {
         guard let tl = timeline(minutes) else {
             sleepCache = SleepModelCache()
             return MetricsResult(sleeps: [], days: [])
@@ -152,8 +156,17 @@ public enum MetricsEngine {
         let observed = tl.hr.map { $0 != nil }
         let usual = SleepModel.usualSleepHours(timeline: tl, calendar: calendar, learned: model.learned)
         let (detected, candidates) = SleepModel.sessions(probability: model.probability, observed: observed, usualSleep: usual)
-        let ordered = detected.sorted { $0.start < $1.start }
-        let isFinished = SleepDetector.finished(ordered, asleep: candidates, hr: tl.hr, activity: tl.movement) { end in
+        var ordered = detected.sorted { $0.start < $1.start }
+        // Opening Pulse: up at that minute, if the band's minutes reach it (old minutes would cut a night short).
+        let lastMinute = tl.date(tl.count - 1)
+        let upAt = ownerAwakeAt.flatMap { at in
+            lastMinute >= at.addingTimeInterval(-SleepDetector.openedAppFreshness) ? tl.index(at) + 1 : nil
+        }
+        if let upAt, let k = ordered.firstIndex(where: { $0.start < upAt && upAt < $0.end }) {
+            ordered[k] = SleepDetector.endingWhenOpened(ordered[k], at: upAt, asleep: candidates, observed: observed)
+        }
+        let isFinished = SleepDetector.finished(ordered, asleep: candidates, hr: tl.hr, activity: tl.movement,
+                                                ownerUpAt: upAt) { end in
             now.timeIntervalSince(tl.date(end)) / 60
         }
         let finished = zip(ordered, isFinished).filter { $0.1 }.map { $0.0 }

@@ -86,16 +86,34 @@ extension SleepDetector {
         return false
     }
 
+    /// Opening Pulse counts as being up only when the band's minutes reach at least this close to that moment (seconds).
+    /// Older minutes would end a night where the data stops, not where the owner woke.
+    public static let openedAppFreshness: TimeInterval = 5 * 60
+    /// Asleep again for this many minutes after opening Pulse: it was a look at the phone in the night, not getting up.
+    public static let backToSleepMinutes = 45
+
+    /// The sleep Pulse was opened in ends at that minute, unless the owner fell asleep again for `backToSleepMinutes`.
+    static func endingWhenOpened(_ session: Session, at upAt: Int, asleep: [Bool], observed: [Bool]) -> Session {
+        let asleepAfter = (upAt..<session.end).filter { asleep[$0] }.count
+        guard asleepAfter < backToSleepMinutes else { return session }
+        return SleepDetector.session(start: session.start, end: upAt, asleep: asleep, observed: observed)
+    }
+
     /// `isFinished` for every sleep, oldest first. A sleep followed by a finished one is finished too: the person woke from
     /// it, whether or not they got up in between.
-    /// - Parameter minutesSinceEnd: minutes between a sleep's end (a timeline index) and now.
-    static func finished(_ sessions: [Session], asleep: [Bool], hr: [Double?], activity: [Double?],
+    /// - Parameters:
+    ///   - ownerUpAt: the owner opened Pulse in this minute (a timeline index, exclusive): a sleep that ended by then is
+    ///     finished, like Apple Watch's sleep ending when you turn off the alarm. nil = not opened, or the band's minutes
+    ///     don't reach that moment yet.
+    ///   - minutesSinceEnd: minutes between a sleep's end (a timeline index) and now.
+    static func finished(_ sessions: [Session], asleep: [Bool], hr: [Double?], activity: [Double?], ownerUpAt: Int? = nil,
                          minutesSinceEnd: (Int) -> Double) -> [Bool] {
         var flags = [Bool](repeating: false, count: sessions.count)
         var laterIsFinished = false
         for k in sessions.indices.reversed() {
             let next = k + 1 < sessions.count ? sessions[k + 1].start : nil
-            laterIsFinished = laterIsFinished
+            let opened = ownerUpAt.map { sessions[k].end <= $0 } ?? false
+            laterIsFinished = laterIsFinished || opened
                 || isFinished(sessions[k], asleep: asleep, hr: hr, activity: activity,
                               minutesSinceEnd: minutesSinceEnd(sessions[k].end), nextStart: next)
             flags[k] = laterIsFinished

@@ -126,6 +126,43 @@ private func count(_ packets: [Whoop.RawMotion]) -> [StepMinute] {
     #expect(Steps.averageDifference([noStream, watchDay]) == nil)
 }
 
+// MARK: - The minute in progress
+
+@Test func theMinuteInProgressCountsTheSameAsWhenItCloses() {
+    var counter = StreamStepCounter()
+    let walk = walkPackets(seconds: 61, stepHz: 1.8, from: minuteStart)
+    var closed: [StepMinute] = []
+    for motion in walk.prefix(60) { closed += counter.add(motion) }
+    #expect(closed.isEmpty)
+    #expect(counter.minuteInProgress == date(minuteStart))
+    let soFar = counter.stepsSoFar
+    #expect(soFar > 0)
+    closed += counter.add(walk[60])                     // the next minute starts: this one closes
+    #expect(closed.first?.steps == soFar)
+    #expect(counter.minuteInProgress == date(minuteStart + 60))
+    #expect(counter.stepsSoFar == 0)                     // one second of the new minute is not a step yet
+    _ = counter.finish()
+    #expect(counter.minuteInProgress == nil && counter.stepsSoFar == 0)
+}
+
+@Test func aDayGrowsWithTheMinuteInProgress() throws {
+    let dayStart = stepCalendar.startOfDay(for: date(minuteStart))
+    let saved = Steps.day([StepMinute(start: dayStart.addingTimeInterval(3600), steps: 100, seconds: 60)], dayStart: dayStart,
+                          end: dayStart.addingTimeInterval(7200), calendar: stepCalendar)
+    let now = StepMinute(start: dayStart.addingTimeInterval(5400), steps: 40, seconds: 30)
+    let live = try #require(Steps.day(saved, adding: now, dayStart: dayStart, calendar: stepCalendar))
+    #expect(live.total == 140)
+    #expect(live.hourly[1] == 140)
+    #expect(live.countedMinutes == saved?.countedMinutes)
+    // Nothing counted yet today: the minute in progress is the day.
+    #expect(Steps.day(nil, adding: now, dayStart: dayStart, calendar: stepCalendar)?.total == 40)
+    // No steps in it, or another day's minute: nothing changes.
+    #expect(Steps.day(saved, adding: StepMinute(start: now.start, steps: 0, seconds: 30), dayStart: dayStart,
+                      calendar: stepCalendar) == saved)
+    #expect(Steps.day(nil, adding: StepMinute(start: dayStart.addingTimeInterval(-60), steps: 40, seconds: 30), dayStart: dayStart,
+                      calendar: stepCalendar) == nil)
+}
+
 // MARK: - When the band streams
 
 private func minute(_ index: Int, heartRate: UInt8 = 60, turn: UInt8? = 4, movement: UInt8 = 3) -> MinuteSample {
@@ -135,43 +172,46 @@ private func minute(_ index: Int, heartRate: UInt8 = 60, turn: UInt8? = 4, movem
     return sample
 }
 
-@Test func theStreamStopsWhileYouAreStillForHalfAnHour() {
+@Test func sittingStillKeepsTheStreamOnSoTheNextWalkCountsFromItsFirstStep() {
+    // Half an hour at a desk used to pause the stream, and only the next pull, minutes later, started it again.
     let still = (0..<30).map { minute($0) }
-    #expect(MotionStreamPolicy.decide(recent: still, batteryPercent: 80, charging: false, streaming: true) == .still)
-    // One minute of moving in the half hour and it streams.
-    var moved = still
-    moved[20] = minute(20, turn: 60)
-    #expect(MotionStreamPolicy.decide(recent: moved, batteryPercent: 80, charging: false, streaming: false) == .stream)
-    // Too little of the half hour measured to call it still.
-    #expect(MotionStreamPolicy.decide(recent: Array(still.suffix(20)), batteryPercent: 80, charging: false,
-                                      streaming: true) == .stream)
+    #expect(MotionStreamPolicy.decide(recent: still, batteryPercent: 80, charging: false, streaming: true, asleep: false) == .stream)
+    let stillWithoutTurns = (0..<30).map { minute($0, turn: nil, movement: 4) }
+    #expect(MotionStreamPolicy.decide(recent: stillWithoutTurns, batteryPercent: 80, charging: nil, streaming: false,
+                                      asleep: false) == .stream)
 }
 
-@Test func minutesWithoutTheWristsTurnUseTheirMovement() {
-    let still = (0..<30).map { minute($0, turn: nil, movement: 4) }
-    #expect(MotionStreamPolicy.decide(recent: still, batteryPercent: 80, charging: nil, streaming: true) == .still)
-    let busy = (0..<30).map { minute($0, turn: nil, movement: 25) }
-    #expect(MotionStreamPolicy.decide(recent: busy, batteryPercent: 80, charging: nil, streaming: true) == .stream)
+@Test func theStreamStopsWhileYouSleep() {
+    let still = (0..<30).map { minute($0) }
+    #expect(MotionStreamPolicy.decide(recent: still, batteryPercent: 80, charging: false, streaming: true, asleep: true) == .asleep)
+    #expect(!MotionStreamPolicy.Decision.asleep.isOn)
 }
 
 @Test func theStreamStopsWhenTheBandIsOffTheWrist() {
     let worn = (0..<20).map { minute($0, turn: 60) }
     let off = (20..<30).map { minute($0, heartRate: 0, turn: nil, movement: 0) }
-    #expect(MotionStreamPolicy.decide(recent: worn + off, batteryPercent: 80, charging: false, streaming: true) == .notWorn)
+    #expect(MotionStreamPolicy.decide(recent: worn + off, batteryPercent: 80, charging: false, streaming: true,
+                                      asleep: false) == .notWorn)
     #expect(MotionStreamPolicy.decide(recent: worn + off.prefix(9), batteryPercent: 80, charging: false,
-                                      streaming: true) == .stream)
+                                      streaming: true, asleep: false) == .stream)
+    // Off the wrist wins over asleep: the band is on the nightstand.
+    #expect(MotionStreamPolicy.decide(recent: worn + off, batteryPercent: 80, charging: false, streaming: true,
+                                      asleep: true) == .notWorn)
 }
 
 @Test func theStreamSparesALowBatteryWithoutFlickering() {
     let moving = (0..<30).map { minute($0, turn: 60) }
-    #expect(MotionStreamPolicy.decide(recent: moving, batteryPercent: 14, charging: false, streaming: true) == .lowBattery)
-    #expect(MotionStreamPolicy.decide(recent: moving, batteryPercent: 17, charging: false, streaming: true) == .stream)
-    #expect(MotionStreamPolicy.decide(recent: moving, batteryPercent: 17, charging: false, streaming: false) == .lowBattery)
-    #expect(MotionStreamPolicy.decide(recent: moving, batteryPercent: 20, charging: false, streaming: false) == .stream)
-    #expect(MotionStreamPolicy.decide(recent: moving, batteryPercent: 5, charging: true, streaming: false) == .stream)
+    func decide(_ battery: Double, charging: Bool, streaming: Bool) -> MotionStreamPolicy.Decision {
+        MotionStreamPolicy.decide(recent: moving, batteryPercent: battery, charging: charging, streaming: streaming, asleep: false)
+    }
+    #expect(decide(14, charging: false, streaming: true) == .lowBattery)
+    #expect(decide(17, charging: false, streaming: true) == .stream)
+    #expect(decide(17, charging: false, streaming: false) == .lowBattery)
+    #expect(decide(20, charging: false, streaming: false) == .stream)
+    #expect(decide(5, charging: true, streaming: false) == .stream)
 }
 
 @Test func withNoBandDataYetTheStreamStarts() {
-    #expect(MotionStreamPolicy.decide(recent: [], batteryPercent: nil, charging: nil, streaming: false) == .stream)
-    #expect(MotionStreamPolicy.Decision.stream.isOn && !MotionStreamPolicy.Decision.still.isOn)
+    #expect(MotionStreamPolicy.decide(recent: [], batteryPercent: nil, charging: nil, streaming: false, asleep: false) == .stream)
+    #expect(MotionStreamPolicy.Decision.stream.isOn)
 }

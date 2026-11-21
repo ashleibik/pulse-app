@@ -123,13 +123,16 @@ final class SyncWorker: @unchecked Sendable {
     // MARK: - Called on the Bluetooth queue
 
     func receive(characteristic: String, bytes: [UInt8]) {
-        lastActivity = Date()
         noteWearSensor(in: bytes)
         guard var current = session else {
             trace.add("RX (no session) \(characteristic) len=\(bytes.count) \(Whoop.hex(bytes))", at: Date().timeIntervalSince1970)
             return
         }
+        let before = current.downloadActivity
         let effects = current.receive(characteristic: characteristic, bytes: bytes, now: Date().timeIntervalSince1970)
+        // Only the download's own packets count as progress: the 100 Hz stream arrives every second and would keep a
+        // stopped download looking alive, so no pull would ever run again.
+        if current.downloadActivity != before { lastActivity = Date() }
         session = current
         run(effects)
     }

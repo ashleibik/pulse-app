@@ -256,9 +256,10 @@ struct TodayView: View {
 
     private var stepGoal: Int { profiles.first?.stepGoal ?? 10_000 }
 
-    /// The band's own count against the daily goal (DESIGN.md §4b-8).
+    /// The band's own count against the daily goal (DESIGN.md §4b-8), with the minute it is counting right now.
     private var stepsCard: some View {
-        VStack(alignment: .leading, spacing: DS.Space.xs) {
+        let steps = StepsData.live(self.steps, dayStart: selectedDay, band: band)
+        return VStack(alignment: .leading, spacing: DS.Space.xs) {
             HStack(spacing: 6) {
                 Image(systemName: "figure.walk")
                 Text("STEPS")
@@ -280,6 +281,12 @@ struct TodayView: View {
                 .textStyle(.caption)
                 .foregroundStyle(DS.Colors.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if isToday, let paused = StepsData.pausedText(band.streamDecision, connected: band.isConnected) {
+                Text(paused)
+                    .textStyle(.caption)
+                    .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .monoCard(padding: DS.Space.m)
@@ -514,11 +521,14 @@ struct TodayView: View {
         soFar = TodaySoFar.compute(minutes: minutes, profile: profile)
         let dayEnd = min(calendar.date(byAdding: .day, value: 1, to: selectedDay) ?? selectedDay, .now)
         let counted = StepsData.minutes(from: selectedDay, to: dayEnd, in: context)
+        // The day's resting heart rate, or the newest one before it: today's row only gets one once last night is in.
+        let dayEndForResting = calendar.date(byAdding: .day, value: 1, to: selectedDay) ?? selectedDay
+        let resting = days.lazy.filter { $0.date < dayEndForResting }
+            .compactMap { $0.restingHeartRate ?? $0.baselineRestingHeartRate }.first
         calories = calorieBody.flatMap { body in
             DailyCalories.estimate(minutes: isToday ? minutes : PulseStore.minutes(from: selectedDay, to: dayEnd, in: context),
                                    steps: counted, body: body, dayStart: selectedDay, end: dayEnd, maxHeartRate: profile.maxHeartRate,
-                                   restingHeartRate: days.first { calendar.isDate($0.date, inSameDayAs: selectedDay) }
-                                       .flatMap { $0.restingHeartRate ?? $0.baselineRestingHeartRate })
+                                   restingHeartRate: resting)
         }
         let sleeps = sleepRecords.map(\.value)
         stress = StressMonitor.day(minutes: minutes, sleeps: sleeps, workouts: workouts.map(\.value),

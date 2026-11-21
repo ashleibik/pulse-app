@@ -84,7 +84,7 @@ struct EmptyState: View {
 
 /// A sleep is found but not finished yet (DESIGN.md §4b-2): say it is coming, never its times or numbers.
 struct UnfinishedSleepNote: View {
-    static let text = "Your sleep shows up about \(SleepDetector.upMinutes) minutes after you get up."
+    static let text = "Your sleep shows up as soon as your band syncs."
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {

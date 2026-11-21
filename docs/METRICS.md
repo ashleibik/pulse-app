@@ -160,6 +160,15 @@ latest week only. An edit recalculates its own week and, if that changes what wa
    waited for its own 6 hours. The owner's sleep of 2026-11-20 10:26–11:26 was followed by 50 quiet minutes in bed, then
    walking from 12:16; it appeared after 6 hours instead of 1. The first 45 minutes still decide when a night appears in
    the usual case: about 15 to 25 minutes after waking on the owner's three real nights.
+
+   **Opening Pulse counts as being up** (the owner's choice, 2026-11-21: "Apple Watch shows it right away"). The app passes
+   the last time it was opened. A sleep that ended by then is finished, and the sleep it was opened in ends at that minute,
+   unless the owner is asleep again for 45 more minutes (a look at the phone in the night, which must not split the night).
+   It counts only when the band's minutes reach within 5 minutes of the opening; older minutes would end a night where the
+   data stops. On the owner's backups, opening Pulse at 393 real awake moments (every 10 minutes outside sleep, including
+   the evening at the computer, and 1 to 10 minutes after each sleep) never showed a sleep that wasn't one in the end, and
+   showed every sleep 1 minute after it ended. Opened a few minutes after waking, the night first ends at the opening and
+   moves back to the real wake time within about 10 minutes, as the newer minutes arrive.
 10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. An awake stretch
     shorter than 3 minutes between asleep minutes counts as asleep, so only longer ones are wake-ups. A sleep with no band data
     at all, which only the user can add (for example a nap logged by hand), counts as asleep for its whole length. The other minutes are
@@ -447,13 +456,24 @@ NOOP's own WHOOP 4.0 method (all motion × a factor from a phone's step count) h
 own count and no scaling from the Apple Watch.
 
 **When the band streams** (`MotionStreamPolicy`). Every connect turns the stream off (a crash or a killed app can't leave it on).
-After each pull (every 5 minutes while connected) and when the app opens, Pulse decides from the newest band minutes:
+After each pull (every minute while Pulse is on screen, every 5 minutes in the background) and when the app opens, Pulse decides
+from the newest band minutes:
 
 - **Off** while the band battery is under 15% and not charging, and on again from 20%.
 - **Off** when the band wasn't worn in the newest 10 minutes of data (no heart rate).
-- **Off** when the wrist was still for 30 minutes: at least 25 of the last 30 minutes measured, all worn, each turning under 1° a
-  second on average. On the owner's nap of 2026-11-19, sleep turned 0.1° to 0.8° a second and lying awake 1° to 4°.
+- **Off** while a sleep is going on (§4: found, with no band minutes after it yet).
 - **On** otherwise, and always during a step test.
+
+*Changed 2026-11-21:* the stream also paused after 30 still minutes. Only the next pull could start it again, and with the app
+closed and the stream off nothing woke Pulse for up to a quarter of an hour, so the first minutes of every walk after sitting were
+never counted. Sitting no longer pauses it; sleep does.
+
+While the stream is on, the steps cards add the minute being counted (refreshed every 5 seconds), so the number moves while the
+owner walks. The minute's own count replaces it when the minute closes.
+
+**Downloads while streaming.** The stall watchdog (a pull with no answer for 25 seconds asks again, and gives up after 5 tries)
+counts only the download's own packets. Until 2026-11-21 any packet counted, so with the stream on a stopped download looked
+alive forever: no pull ran again, calories, sleep and recovery stopped updating, and the stream was never decided again.
 
 The phone has to be within Bluetooth range: steps taken away from it aren't counted. While it streams, the band sends about 4 kB a
 second, so it uses more of the band's and the phone's battery; the sync log has each pull's battery levels.

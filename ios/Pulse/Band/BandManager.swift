@@ -10,12 +10,12 @@ import PulseCore
 /// - The connection is kept. Once a band is paired, Pulse asks CoreBluetooth for it at launch and
 ///   after every drop; iOS connects whenever the band is in range, also in the background, and can
 ///   relaunch Pulse for it (state restoration, see BluetoothBandLink).
-/// - While connected, new records are pulled every `pullInterval` (`quickPullInterval` while last night waits for
-///   the owner to get up), right away when the app opens,
+/// - While connected, new records are pulled every `pullInterval` (every `onScreenPullInterval` while Pulse is on
+///   screen, `quickPullInterval` while last night waits for the owner to get up), right away when the app opens,
 ///   and whenever the band wakes Pulse in the background (any event from it). A pull is short: a few
 ///   commands, the new batches, done. Live heart rate streams only while a live screen asks for it.
-/// - The band's 100 Hz motion stream counts steps while `MotionStreamPolicy` allows (worn, not still for half
-///   an hour, enough battery). Every connect starts with it off; it is decided again after every pull.
+/// - The band's 100 Hz motion stream counts steps while `MotionStreamPolicy` allows (worn, not asleep, enough
+///   battery). Every connect starts with it off; it is decided again after every pull.
 /// - The screens show cached data at once; new data slides in when a pull saved something.
 ///
 /// It connects three things that each do one job:
@@ -109,6 +109,11 @@ final class BandManager {
     @ObservationIgnored private var countedSincePull = (steps: 0, minutes: 0)
     /// Goes up whenever counted minutes are saved, so the steps cards reload.
     private(set) var stepsRevision = 0
+    /// Steps of the minute the stream is filling (not saved yet), refreshed every 5 seconds: the steps cards add them,
+    /// so the count moves while the owner walks. 0 = none.
+    private(set) var stepsInProgress = 0
+    /// The start of that minute.
+    private(set) var stepsInProgressMinute: Date?
 
     /// Called after new data was saved and the metrics were recalculated.
     var onDataChanged: (() -> Void)?
@@ -123,6 +128,8 @@ final class BandManager {
     @ObservationIgnored private var connectRequested = false
     /// "Sync anyway": the next pull ignores the low-battery pause.
     @ObservationIgnored private var lowBatteryOverride = false
+    /// Pulse was opened while a sleep waited: recalculate after the next pull even if it brings nothing new.
+    @ObservationIgnored private var recalculateAfterOpening = false
     @ObservationIgnored private var overrideLogged = false
     private var context: ModelContext?
     private var target: DiscoveredBand?
@@ -134,6 +141,8 @@ final class BandManager {
     static let pullInterval: TimeInterval = 5 * 60
     /// After waking, while the sleep waits to be shown (docs/METRICS.md §4, step 9): it appears soon after the person is up.
     static let quickPullInterval: TimeInterval = 2 * 60
+    /// While Pulse is on screen: calories, strain and the rest of today keep up without pulling to refresh.
+    static let onScreenPullInterval: TimeInterval = 60
     /// How often to ask iOS for a background wake-up (iOS decides when, often less often).
     static let backgroundInterval: TimeInterval = 15 * 60
     /// The status pill says "Band not found" after this long without the band.
@@ -227,19 +236,32 @@ final class BandManager {
     }
 
     /// The app came to the front: connect if needed and pull right away (cached data is already on screen).
+    /// Opening Pulse also means the owner is awake: a sleep waiting for them to get up is shown after this pull
+    /// (docs/METRICS.md §4, step 9), or straight away when the newest minutes are already here.
     func appBecameActive(context: ModelContext) {
         self.context = context
+        UnfinishedSleepStore.ownerOpenedPulse()
+        if UnfinishedSleepStore.isWaitingNow { recalculateAfterOpening = true }
         keepConnected()
         pullIfDue(olderThan: 30)
+        if recalculateAfterOpening && stage != .syncing {
+            recalculateAfterOpening = false
+            traceLine("Pulse was opened while a sleep waited: recalculating")
+            recalculate(detection: .skip) {}
+        }
     }
 
-    /// Pull new records if the last pull is older than `olderThan` seconds (by default `pullInterval`, or
-    /// `quickPullInterval` while a sleep waits for the person to get up). Cheap to call often.
+    /// Pull new records if the last pull is older than `olderThan` seconds (by default `onScreenPullInterval` while Pulse is
+    /// on screen, `quickPullInterval` while a sleep waits for the person to get up, else `pullInterval`). Cheap to call often.
     func pullIfDue(olderThan interval: TimeInterval? = nil) {
         guard isConnected, hasSession, !wantsLive, stage != .syncing else { return }
-        let interval = interval ?? (UnfinishedSleepStore.wantsQuickPulls() ? Self.quickPullInterval : Self.pullInterval)
-        if let lastPullAt, Date.now.timeIntervalSince(lastPullAt) < interval { return }
+        if let lastPullAt, Date.now.timeIntervalSince(lastPullAt) < (interval ?? Self.dueInterval()) { return }
         pull()
+    }
+
+    private static func dueInterval() -> TimeInterval {
+        if UIApplication.shared.applicationState == .active { return onScreenPullInterval }
+        return UnfinishedSleepStore.wantsQuickPulls() ? quickPullInterval : pullInterval
     }
 
     /// Pull to refresh (Today) and "Sync now" (Settings > Band). Returns when the pull is done, or
@@ -409,15 +431,19 @@ final class BandManager {
     func updateStream() {
         guard isConnected, hasSession, let context else { return }
         let record = Self.pairedBand(in: context)
-        let recent = PulseStore.minutes(from: Date.now.addingTimeInterval(-45 * 60), to: Date.now.addingTimeInterval(60), in: context)
+        let recent = PulseStore.minutes(from: Date.now.addingTimeInterval(-30 * 60), to: Date.now.addingTimeInterval(60), in: context)
         let decision: MotionStreamPolicy.Decision = isStepTestRunning ? .stream
             : MotionStreamPolicy.decide(recent: recent, batteryPercent: lastBatteryReading ?? record?.batteryPercent,
-                                        charging: record?.isCharging, streaming: streamOn)
+                                        charging: record?.isCharging, streaming: streamOn,
+                                        asleep: UnfinishedSleepStore.sleepIsGoingOn)
         streamDecision = decision
         guard decision.isOn != streamOn else { return }
         streamOn = decision.isOn
         traceLine("STREAM \(streamOn ? "on" : "off"): \(decision.rawValue)")
-        if !streamOn { saveSteps(stepCounter.finish()) }
+        if !streamOn {
+            saveSteps(stepCounter.finish())
+            showStepsInProgress()
+        }
         worker?.setRawStream(streamOn)
     }
 
@@ -433,6 +459,15 @@ final class BandManager {
         }
         try? context.save()
         stepsRevision += 1
+        showStepsInProgress()
+    }
+
+    /// The minute the stream is filling, for the steps cards.
+    private func showStepsInProgress() {
+        let steps = stepCounter.stepsSoFar
+        let minute = stepCounter.minuteInProgress
+        if steps != stepsInProgress { stepsInProgress = steps }
+        if minute != stepsInProgressMinute { stepsInProgressMinute = minute }
     }
 
     /// Stop pairing (scan / connect to a new band). A paired band's connection is kept.
@@ -643,6 +678,7 @@ final class BandManager {
         worker?.end()
         // The minute in progress is saved; the next connection starts with the stream off.
         saveSteps(stepCounter.finish())
+        showStepsInProgress()
         streamOn = false
         streamDecision = nil
     }
@@ -707,6 +743,8 @@ final class BandManager {
             case .rawMotion(let motion):
                 if isStepTestRunning { liveSteps.add(motion) }
                 saveSteps(stepCounter.add(motion))
+                // The count moves while the owner walks: the minute in progress, every 5 seconds.
+                if motion.timestamp % 5 == 0 { showStepsInProgress() }
                 // The stream keeps Pulse awake in the background: a chance to pull on time.
                 if stage != .syncing { pullIfDue() }
 
@@ -784,8 +822,21 @@ final class BandManager {
             // With the newest minutes in: should the band stream its motion to count steps?
             self.updateStream()
         }
-        guard saved > 0 else {
+        // Opened while a sleep waited: recalculate even without new records, so it shows now.
+        let opened = recalculateAfterOpening
+        recalculateAfterOpening = false
+        guard saved > 0 || opened else {
             stage = .upToDate
+            afterwards()
+            return
+        }
+        if saved == 0 { traceLine("Pulse was opened while a sleep waited: recalculating") }
+        recalculate(detection: saved > 0 ? .recent : .skip, then: afterwards)
+    }
+
+    /// Recalculates every metric in the background, then the screens update.
+    private func recalculate(detection: WorkoutDetection, then afterwards: @escaping () -> Void) {
+        guard let context else {
             afterwards()
             return
         }
@@ -795,7 +846,7 @@ final class BandManager {
         Task { [weak self] in
             do {
                 let output = try await MetricsRecomputer.inBackground(container: container, profile: profile,
-                                                                      calendar: .current, now: .now, detection: .recent)
+                                                                      calendar: .current, now: .now, detection: detection)
                 let computed = Date.now
                 try PulseStore.apply(output, to: context)
                 self?.traceLine("RECOMPUTE: \(Int(computed.timeIntervalSince(started) * 1000)) ms in the background, \(Int(Date.now.timeIntervalSince(computed) * 1000)) ms writing results on the main thread")

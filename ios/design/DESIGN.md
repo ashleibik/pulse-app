@@ -84,10 +84,12 @@ plain-language paragraph.
 
 ## 4b-2. Sleep is only shown when it is finished
 
-A sleep appears once you are clearly up again; until then the night stays empty. While a sleep is found but not
-finished yet, Today's activities (instead of "Nothing yet today") and the top of the Sleep tab show one `body` line in
-`secondary` with a `moon.zzz` icon in `sleepTint`: "Your sleep shows up about 15 minutes after you get up." It never shows
-the sleep's times or numbers, and it goes away when the sleep appears (or 6 hours after it ended). The Sleep tab and
+A sleep appears once you are clearly up again; until then the night stays empty. Opening Pulse counts as being up
+(like turning off the alarm on Apple Watch): the night appears as soon as the pull that opening starts is saved, a few
+seconds. While a sleep is found but not finished yet, Today's activities (instead of "Nothing yet today") and the top of
+the Sleep tab show one `body` line in `secondary` with a `moon.zzz` icon in `sleepTint`: "Your sleep shows up as soon as
+your band syncs." It never shows the sleep's times or numbers, and it goes away when the sleep appears (or 6 hours after
+it ended). The Sleep tab and
 the Sleep page have a pencil button that opens "Edit sleep" (fix the times, or "I wasn't asleep").
 Settings > Your data offers to undo those edits. Settings > Band has a "Motion check" sheet.
 
@@ -150,13 +152,19 @@ Steps are counted by the band, never estimated, so no step number carries "Estim
 Today has a "STEPS" card under the calories card (`monoCard`): the count in `title`, "of 10,000" (the goal) in `caption`, a progress
 bar toward the goal (`accent` fill on a `border` track, full at the goal), and one `caption` with how long the band counted that day
 ("Counted for 9h 12m"). A day the band never counted shows `--` and the `caption` "The band counts steps while it streams its motion
-to your iPhone."
+to your iPhone." While the band streams, today's count includes the minute in progress and moves as you walk (every 5 seconds,
+`numericText` transition), on Today and on the Activity tab. When the band isn't counting right now, today's card adds a second
+`caption` saying why: "Paused while you sleep.", "Paused: the band isn't on your wrist.", "Paused: the band's battery is low.",
+"Not counting: the band isn't connected." or "Waiting for the band…".
+
+While Pulse is on screen it pulls from the band every minute (5 minutes in the background), so calories, strain and the rest of
+today keep up without pulling to refresh.
 
 The Activity tab has a "Steps" card under heart rate zones: today's count, the same "Counted for" `caption`, then "Steps by hour" bars
 (`DayBarsChart`, the current hour highlighted, every third hour labelled).
 
 Settings has a "Steps" section: a "Daily goal" row with minus / plus (1,000 steps a click, 2,000 to 30,000), a "Step counting" row
-("On", "Paused: you're still", "Paused: band not worn", "Paused: band battery low", "Waiting for the band"), one `caption` footer
+("On", "Paused: you're asleep", "Paused: band not worn", "Paused: band battery low", "Waiting for the band"), one `caption` footer
 saying when the band counts, and a "Step test" secondary pill.
 
 "Step test" is a sheet that checks the band's count against yours: one `body` paragraph (walk at your usual pace, count 500 steps,

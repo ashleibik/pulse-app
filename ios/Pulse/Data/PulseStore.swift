@@ -129,7 +129,8 @@ actor MetricsRecomputer {
         let corrections = try modelContext.fetch(FetchDescriptor<SleepCorrectionRecord>()).map(\.value)
         var sleepCache = (try? Data(contentsOf: Self.sleepCacheURL)).flatMap { SleepModelCache(data: $0) } ?? SleepModelCache()
         let result = MetricsEngine.run(minutes: minutes, profile: profile, calendar: calendar, now: now,
-                                       corrections: corrections, sleepCache: &sleepCache)
+                                       corrections: corrections, ownerAwakeAt: UnfinishedSleepStore.openedAt,
+                                       sleepCache: &sleepCache)
         if minutes.isEmpty {
             try? FileManager.default.removeItem(at: Self.sleepCacheURL)
         } else {
@@ -273,6 +274,24 @@ enum UnfinishedSleepStore {
     static let endKey = "unfinishedSleepEnd"
     /// The person woke from it (the band has minutes after it).
     static let hasEndedKey = "unfinishedSleepHasEnded"
+    /// The last time the owner opened Pulse, in seconds since 1970. They were awake then, so the sleep they were in is
+    /// over (docs/METRICS.md §4, step 9).
+    static let openedAtKey = "ownerOpenedPulseAt"
+
+    static func ownerOpenedPulse(at date: Date = .now) {
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: openedAtKey)
+    }
+
+    static var openedAt: Date? {
+        let seconds = UserDefaults.standard.double(forKey: openedAtKey)
+        return seconds > 0 ? Date(timeIntervalSince1970: seconds) : nil
+    }
+
+    /// A sleep waits to be shown right now.
+    static var isWaitingNow: Bool { isWaiting(end: UserDefaults.standard.double(forKey: endKey)) }
+
+    /// A sleep is going on: found, and the band has no minutes after it yet. The step stream pauses for it.
+    static var sleepIsGoingOn: Bool { isWaitingNow && !UserDefaults.standard.bool(forKey: hasEndedKey) }
     /// Quicker pulls only this long after it ended. After that, the usual pace.
     static let quickPullsFor: TimeInterval = 2 * 3600
 

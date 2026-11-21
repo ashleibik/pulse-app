@@ -111,6 +111,35 @@ struct SessionHarness {
     #expect(h.saved.count == 210)
 }
 
+@Test func theMotionStreamDoesNotLookLikeDownloadProgress() {
+    // The stall watchdog watches `downloadActivity`. The 100 Hz stream arrives every second during a pull and must not
+    // keep a stopped download looking alive (build 27: one stuck pull stopped every later sync).
+    let start: UInt32 = 1_750_000_000
+    var h = SessionHarness(band: SimulatedBand(samples: samples(150, start: start), batchSize: 100, mtuPayload: 20,
+                                               clock: start + 150), now: Double(start) + 151)
+    h.run()
+    let afterDownload = h.session.downloadActivity
+    #expect(afterDownload > 0)
+    _ = h.session.pullAgain()
+    let pulling = h.session.downloadActivity
+    for second in 0..<10 {
+        let x = [Int16](repeating: 0, count: 100), z = [Int16](repeating: 4096, count: 100)
+        _ = h.session.receive(characteristic: Whoop.dataUUID,
+                              bytes: SimulatedBand.rawMotionFrame(timestamp: start + 200 + UInt32(second), accel: [x, x, z]), now: 0)
+        _ = h.session.receive(characteristic: Whoop.dataUUID,
+                              bytes: SimulatedBand.rawOpticalFrame(timestamp: start + 200 + UInt32(second)), now: 0)
+    }
+    #expect(h.session.downloadActivity == pulling)
+    #expect(h.session.phase == .syncing)
+    // The band's answer to the pull is progress.
+    h.band.record(samples(30, start: start + 150))
+    h.writes = []
+    h.finishedRecords = nil
+    h.run(effects: h.session.stalled())
+    #expect(h.session.downloadActivity > pulling)
+    #expect(h.finishedRecords == 30)
+}
+
 @Test func pullAgainWaitsUntilTheLastDownloadIsDone() {
     var session = BandSession()
     #expect(session.pullAgain().isEmpty)        // idle: nothing to repeat

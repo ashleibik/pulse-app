@@ -49,13 +49,19 @@ enum Notifier {
         center.add(UNNotificationRequest(identifier: bedtimeID, content: content, trigger: trigger))
     }
 
-    /// After a band sync. iOS only shows it when the app is not on screen.
+    /// The day the recovery notification was last sent (seconds since 1970 of its midnight): once a morning, not after every sync.
+    private static let recoverySentKey = "recoveryNotifiedDay"
+
+    /// After a band sync, the first time today has a recovery score. iOS only shows it when the app is not on screen.
     static func recoveryReady(context: ModelContext) {
         guard isEnabled else { return }
         var descriptor = FetchDescriptor<DaySummaryRecord>(sortBy: [SortDescriptor(\.date, order: .reverse)])
         descriptor.fetchLimit = 1
         guard let today = try? context.fetch(descriptor).first, let score = today.recoveryScore,
               Calendar.current.isDateInToday(today.date) else { return }
+        let day = Calendar.current.startOfDay(for: today.date).timeIntervalSince1970
+        guard UserDefaults.standard.double(forKey: recoverySentKey) != day else { return }
+        UserDefaults.standard.set(day, forKey: recoverySentKey)
         let content = UNMutableNotificationContent()
         content.title = "Recovery \(PulseFormat.percent(score)): \(RecoveryZone(score: score).word)"
         content.body = today.explanation

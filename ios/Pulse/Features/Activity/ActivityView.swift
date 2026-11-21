@@ -82,7 +82,8 @@ struct ActivityView: View {
         let start = Calendar.current.startOfDay(for: .now)
         let minutes = PulseStore.minutes(from: start, to: .now, in: context)
         let maxHR = profiles.first?.estimatedMaxHeartRate() ?? 190
-        let resting = days.first?.restingHeartRate ?? days.first?.baselineRestingHeartRate
+        // The newest resting heart rate: today's row only gets one once last night is in.
+        let resting = days.lazy.compactMap { $0.restingHeartRate ?? $0.baselineRestingHeartRate }.first
         let zones = OpenStrapZones.zones(restingHistory: Array(days.prefix(28)).compactMap(\.restingHeartRate), maxHeartRate: maxHR)
         zoneMinutes = OpenStrapZones.secondsInZones(minutes, zones: zones).map { $0 / 60 }
         let counted = StepsData.minutes(from: start, to: .now, in: context)
@@ -133,9 +134,10 @@ struct ActivityView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// Today's steps, hour by hour (DESIGN.md §4b-8).
+    /// Today's steps, hour by hour (DESIGN.md §4b-8), with the minute the band is counting right now.
     private var stepsByHour: some View {
-        VStack(alignment: .leading, spacing: DS.Space.m) {
+        let steps = StepsData.live(self.steps, dayStart: .now, band: band)
+        return VStack(alignment: .leading, spacing: DS.Space.m) {
             SectionTitle(title: "Steps")
             if let steps {
                 VStack(alignment: .leading, spacing: DS.Space.xs) {
@@ -143,6 +145,7 @@ struct ActivityView: View {
                         Text(steps.total.formatted())
                             .textStyle(.title)
                             .foregroundStyle(DS.Colors.primary)
+                            .contentTransition(.numericText())
                         Text("today").textStyle(.caption).foregroundStyle(DS.Colors.secondary)
                     }
                     Text(StepsData.countedText(steps))
