@@ -130,11 +130,32 @@ import Testing
 
 @Test func aNightsTimeAxisShowsItsStartAndEnd() {
     func at(_ hour: Int, _ minute: Int) -> Date { Date(timeIntervalSince1970: 1_750_032_000 + Double(hour * 3600 + minute * 60)) }
-    // 1:12 to 7:55: 7 AM would crowd the end.
-    #expect(SleepTimeline.axisTimes(from: at(1, 12), to: at(7, 55), calendar: utcCalendar) == [at(1, 12), at(3, 0), at(5, 0), at(7, 55)])
-    // A short sleep gets every hour.
-    #expect(SleepTimeline.axisTimes(from: at(13, 5), to: at(16, 10), calendar: utcCalendar) == [at(13, 5), at(14, 0), at(15, 0), at(16, 10)])
+    // The owner's night of 2026-11-21: 4 AM ran into "1:48 AM" and 8 AM into "10:22 AM".
+    #expect(SleepTimeline.axisTimes(from: at(1, 48), to: at(10, 22), calendar: utcCalendar) == [at(1, 48), at(5, 0), at(7, 0), at(10, 22)])
+    // 1:12 to 7:55: hours every 2, a third of the night clear of each end.
+    #expect(SleepTimeline.axisTimes(from: at(1, 12), to: at(7, 55), calendar: utcCalendar) == [at(1, 12), at(4, 0), at(7, 55)])
+    // A three-hour sleep can have an hour a third of the way along.
+    #expect(SleepTimeline.axisTimes(from: at(13, 5), to: at(16, 10), calendar: utcCalendar) == [at(13, 5), at(15, 0), at(16, 10)])
     #expect(SleepTimeline.axisTimes(from: at(13, 5), to: at(13, 30), calendar: utcCalendar) == [at(13, 5), at(13, 30)])
+}
+
+@Test func nightAxisLabelsNeverCrowdEachOther() {
+    // Every length from 20 minutes to 14 hours: hours clear of both ends and of each other.
+    let start = Date(timeIntervalSince1970: 1_750_032_000 + 1800)
+    for minutes in stride(from: 20, through: 14 * 60, by: 7) {
+        let end = start.addingTimeInterval(Double(minutes) * 60)
+        let length = end.timeIntervalSince(start)
+        let times = SleepTimeline.axisTimes(from: start, to: end, calendar: utcCalendar)
+        #expect(times.first == start && times.last == end)
+        let hours = Array(times.dropFirst().dropLast())
+        for hour in hours {
+            #expect(hour.timeIntervalSince(start) >= SleepTimeline.axisEdgeRoom * length - 1)
+            #expect(end.timeIntervalSince(hour) >= SleepTimeline.axisEdgeRoom * length - 1)
+        }
+        for (a, b) in zip(hours, hours.dropFirst()) {
+            #expect(b.timeIntervalSince(a) >= SleepTimeline.axisHourSpacing * length - 1)
+        }
+    }
 }
 
 // MARK: - Zones + sleep need

@@ -32,6 +32,8 @@ struct TodayView: View {
     @State private var showPairing = LaunchOptions.route == "pairing"
     @State private var showCoach = LaunchOptions.route == "coach"
     @State private var showStress = false
+    /// The month calendar, from the day pill or the streak card (DESIGN.md §4b-12).
+    @State private var showCalendar = false
     @State private var showJournal = false
     @State private var showAdd = false
     @State private var showLiveWorkout = false
@@ -58,6 +60,8 @@ struct TodayView: View {
     private var isToday: Bool { calendar.isDateInToday(selectedDay) }
     private var summary: DaySummaryRecord? { days.first { calendar.isDate($0.date, inSameDayAs: selectedDay) } }
     private var mainSleep: SleepRecord? { NightVitals.mainSleep(endingOn: selectedDay, in: sleepRecords) }
+    /// Days in a row with a recorded night, up to today (DESIGN.md §4b-13).
+    private var streak: Streak.Result { Streak.days(days.map(\.value), today: .now, calendar: calendar) }
 
     var body: some View {
         NavigationStack {
@@ -95,6 +99,10 @@ struct TodayView: View {
             .sheet(isPresented: $showCoach) { CoachView() }
             .sheet(isPresented: $showStress) { StressView(day: stress).presentationDetents([.medium, .large]) }
             .sheet(isPresented: $showJournal) { JournalView() }
+            .sheet(isPresented: $showCalendar) {
+                CalendarSheet(day: $selectedDay, earliest: days.last?.date ?? .now)
+                    .presentationDetents([.medium, .large])
+            }
             .sheet(isPresented: $showAdd) { AddWorkoutView() }
             .sheet(item: $editingNap) { SleepEditView(target: $0) }
             .fullScreenCover(isPresented: $showLiveWorkout) { LiveWorkoutView() }
@@ -114,7 +122,7 @@ struct TodayView: View {
     /// Settings on the left, the day switcher in the middle, the band (battery / status) on the right.
     private var header: some View {
         ZStack {
-            DayPager(day: $selectedDay, earliest: days.last?.date ?? .now)
+            DayPager(day: $selectedDay, earliest: days.last?.date ?? .now) { open { showCalendar = true } }
             HStack {
                 IconButton(systemName: "gearshape", label: "Settings") { open { showSettings = true } }
                 Spacer()
@@ -136,6 +144,11 @@ struct TodayView: View {
             monitors.riseIn(2)
             caloriesCard.riseIn(2)
             stepsCard.riseIn(2)
+            if !days.isEmpty {
+                Button { open { showCalendar = true } } label: { StreakCard(streak: streak) }
+                    .buttonStyle(.pressable)
+                    .riseIn(2)
+            }
             myDay.riseIn(3)
             if days.isEmpty { firstNightCard.riseIn(4) }
             liveCard.riseIn(4)

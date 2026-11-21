@@ -109,6 +109,8 @@ public struct BandSession: Sendable {
     private var quiet = (notifications: 0, frames: 0, bytes: 0)
     /// The 100 Hz stream's packets, counted like history: motion and the optical variant.
     private var quietRaw = (motion: 0, other: 0)
+    /// Dates the 100 Hz stream's seconds by the phone's clock.
+    private var motionClock = MotionClock()
     /// From GET_DATA_RANGE: where the band's unsynced data starts and ends (flash pages).
     private var range: (trim: UInt32, write: UInt32, capacity: UInt32)?
 
@@ -261,9 +263,10 @@ public struct BandSession: Sendable {
         return write(command, "TOGGLE_REALTIME_HR")
     }
 
-    /// Turns the band's 100 Hz motion stream on or off (only the step test uses it).
+    /// Turns the band's 100 Hz motion stream on or off (step counting, docs/METRICS.md §15).
     public mutating func setRawStream(_ on: Bool) -> [Effect] {
-        flushQuiet() + write(Whoop.Command.rawStream(on: on, seq: seq.next()), "SEND_R10_R11_REALTIME \(on ? "on" : "off")")
+        motionClock = MotionClock()             // a new stream starts at the phone's time
+        return flushQuiet() + write(Whoop.Command.rawStream(on: on, seq: seq.next()), "SEND_R10_R11_REALTIME \(on ? "on" : "off")")
     }
 
     /// Call after the batch from `.persist` is safely on disk. Returns the ack for the band.
@@ -371,7 +374,9 @@ public struct BandSession: Sendable {
             return map(sync.handle(packet))
 
         case .rawMotion(let motion):
-            return [.rawMotion(motion)]
+            // The packet's own time field is not the time on the owner's firmware: each second gets the phone's clock.
+            guard let second = motionClock.second(for: motion, receivedAt: now) else { return [] }
+            return [.rawMotion(Whoop.RawMotion(timestamp: second, subsec: 0, heartRate: motion.heartRate, accel: motion.accel))]
 
         case .unknown(let type, let typeName, _):
             // The stream's optical variant: counted in the summary, not logged one by one.

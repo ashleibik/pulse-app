@@ -294,20 +294,27 @@ struct DayPager: View {
     @Binding var day: Date
     /// The first day with data (can't go further back).
     let earliest: Date
+    /// The day pill opens the calendar (DESIGN.md §4b-12).
+    var openCalendar: () -> Void = {}
     private var calendar: Calendar { .current }
 
     var body: some View {
         HStack(spacing: DS.Space.xs) {
             step(-1, symbol: "chevron.left", label: "Previous day")
                 .disabled(day <= calendar.startOfDay(for: earliest))
-            Text(title)
-                .textStyle(.label)
-                .foregroundStyle(DS.Colors.primary)
-                .lineLimit(1)
-                .padding(.horizontal, DS.Space.m)
-                .frame(minHeight: 32)
-                .background(Capsule().fill(DS.Colors.surface))
-                .accessibilityAddTraits(.isHeader)
+            Button(action: openCalendar) {
+                Text(title)
+                    .textStyle(.label)
+                    .foregroundStyle(DS.Colors.primary)
+                    .lineLimit(1)
+                    .padding(.horizontal, DS.Space.m)
+                    .frame(minHeight: 44)
+                    .background(Capsule().fill(DS.Colors.surface).frame(height: 32))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable)
+            .accessibilityLabel(title.capitalized)
+            .accessibilityHint("Opens the calendar")
             step(1, symbol: "chevron.right", label: "Next day")
                 .disabled(calendar.isDateInToday(day))
         }

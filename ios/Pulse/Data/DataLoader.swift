@@ -53,6 +53,7 @@ final class DataLoader {
         let removedOldOwner = BandDataCutoff.date.map {
             (try? PulseStore.deleteBandData(before: $0, in: context)) ?? false
         } ?? false
+        try? PulseStore.removeMisdatedStepMinutes(dataStart: BandDataCutoff.date, in: context)
         state = .ready
         rawDataReady = true
         revision += 1

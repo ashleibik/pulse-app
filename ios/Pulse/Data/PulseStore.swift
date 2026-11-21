@@ -49,6 +49,16 @@ enum PulseStore {
         UnfinishedSleepStore.save(nil)
     }
 
+    /// Step minutes that builds 27 to 29 dated by the band's packet time field (June 2023 and May 2038, 0 steps each). The
+    /// stream is dated by the phone now (`MotionClock`), so a step minute before the data start or in the future can only be one
+    /// of those. Cheap: runs at every launch.
+    static func removeMisdatedStepMinutes(dataStart: Date?, now: Date = .now, in context: ModelContext) throws {
+        let earliest = dataStart ?? .distantPast
+        let latest = now.addingTimeInterval(3600)
+        try context.delete(model: StepMinuteRecord.self, where: #Predicate { $0.start < earliest || $0.start > latest })
+        try context.save()
+    }
+
     /// Removes what older versions simulated: the demo month and simulated-band syncs.
     /// Returns true when real band data was there too (so the numbers must be recalculated).
     @MainActor

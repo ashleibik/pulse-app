@@ -71,10 +71,10 @@ All styles follow Dynamic Type.
 
 ## 4b. Today (home)
 
-Top to bottom: header (settings · "‹ TODAY ›" day switcher · band battery) → three rings
+Top to bottom: header (settings · "‹ TODAY ›" day switcher, the pill opens the calendar §4b-12 · band battery) → three rings
 (Sleep %, Recovery %, Strain) → two monitor cards (Health: "within range n/n metrics";
 Stress: level + value + time) → calories card (`title` number, labelled "Estimated", resting +
-active underneath, then one `caption` with the time measured when the band covered under 90% of the day; asks for the missing profile details instead of guessing) → steps card (§4b-8) → "MY DAY" with a + button → daily outlook row (opens Coach) →
+active underneath, then one `caption` with the time measured when the band covered under 90% of the day; asks for the missing profile details instead of guessing) → steps card (§4b-8) → streak card (§4b-13) → "MY DAY" with a + button → daily outlook row (opens Coach) →
 today's activities card (sleep and workouts as rows with their times; Add / Start activity) →
 live heart rate. The rings use `sleepTint`, the recovery zone colour, and `strainTint`.
 Tapping a ring opens its page: a big ring + score, a card of rows (each with a three-step
@@ -131,10 +131,11 @@ at least 3:1 against `surface`) and Deep (`sleepTint`). "Your night" says "Stage
 stages are estimates, not a sleep-lab measurement.
 
 "Your night" is one connected step chart, 160 pt tall: each stage is a block 12 pt high on its row, and a 1.5 pt `tertiary` line joins
-one stage to the next. The time axis shows when the sleep started and ended, with minutes, and whole hours between them (every 2 hours
-on a night over 4 hours), leaving out an hour that would crowd either end. Under the chart, a 2 × 2 grid holds the four stages with
+one stage to the next. The time axis shows when the sleep started and ended, with minutes, and whole hours between them: an hour label stays a
+third of the night away from either end and a fifth of the night from the next one (every 1, 2, 3, 4 or 6 hours), so no two
+labels touch on a phone ("1:48 AM · 5 AM · 7 AM · 10:22 AM"). Under the chart, a 2 × 2 grid holds the four stages with
 their times: Deep and Light, then REM and Awake. Under the grid, after a hairline, one "Restorative" row ("deep + REM" in `caption`,
-then the time and share). The Sleep page adds a "Restorative sleep" row with its three-step level under "High sleep stress", and a
+then the time and share on one line, "2h 15m · 29%", never wrapping). The Sleep page adds a "Restorative sleep" row with its three-step level under "High sleep stress", and a
 "RESTORATIVE (DEEP + REM)" line under the phases.
 
 ## 4b-7. Naps
@@ -173,6 +174,26 @@ so far", or why there is no count yet) and Stop (primary) / Cancel (secondary). 
 by side, the difference in percent (`warn` past 5%, a word next to it too), an editable "You counted" row (default 500), and "Save"
 (primary) / "Discard" (secondary). Saved tests are listed under it with their date, both counts and the difference, with a "Remove"
 button (ask once); the title shows their average difference. The test never changes how steps are counted.
+
+## 4b-12. Calendar
+
+Tapping the day pill in Today's header ("TODAY", "YESTERDAY", "FRI, NOV 21") opens a sheet (`monoSheet`, medium and large
+detents) titled "Calendar" with a close button. One month at a time: the month and year in `heading` with previous / next month
+buttons (`IconButton`, off before the first month with data and after this month), weekday initials in `caption`
+`secondary`, then a 7-column grid of days, each a 44 pt button. A day shows its number in `body`; under it a 6 pt dot in the
+day's recovery colour (`zone`), or `sleepTint` when the night is recorded but recovery isn't known yet; no dot without data.
+Today's number has an `accent` ring; the selected day is an `accent` circle with `onAccent` text. Days before the data starts
+and after today are `tertiary` and can't be picked. Picking a day closes the sheet and Today shows that day. Under the grid, one
+`caption`: "Dots show each day's recovery. Blue: the night is in, recovery is still being learned." and, when another day is
+selected, a secondary pill "Go to today".
+
+## 4b-13. Streak
+
+A "STREAK" card on Today under the steps card (`monoCard`, padding `m`), shown once there is any data: the days in a row in
+`title` with "days in a row" (`caption`, "day" for 1), then the last 7 days as 7 small circles with their weekday initial under
+each (`caption` `tertiary`): `accent` filled for a day that counts, a `border` ring for one that doesn't, today's ring `accent`.
+Under them one `caption`: "Longest: 4 days. A day counts when your band records its night." Tapping the card opens the
+calendar (§4b-12). The count is NOOP's streak calculator (docs/METRICS.md §17); today keeps the streak until its night is in.
 
 ## 4b-11. Settings search
 

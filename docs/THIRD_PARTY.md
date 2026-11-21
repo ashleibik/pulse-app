@@ -65,6 +65,7 @@ SOFTWARE.
 | `NOOP/NoopFitness.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/FitnessAgeEngine.swift`, `docs/FITNESS_AGE.md` | VO₂ max (Nes 2011 model, activity index, 4-of-7-nights gate) |
 | `NOOP/NoopRestorative.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/AnalyticsEngine.swift` (`enum Rest`, restorative sub-score) | Restorative sleep level |
 | `NOOP/NoopWorkoutDetector.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/WorkoutDetector.swift` (`detect` and its helpers), `StrainScorer.swift` (Edwards zones) | Finding workouts from heart rate and movement |
+| `NOOP/NoopStreak.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/StreakCalculator.swift` (`streaks`), `Baselines.swift` (`isoEpochDay`) | Days in a row (which days count is Pulse's, docs/METRICS.md §17) |
 
 ## Pulse's own rules
 

@@ -159,13 +159,15 @@ public enum SleepTimeline {
         return out
     }
 
-    /// Times to label under a night chart: the start and the end, and whole hours between them that leave room for the labels.
-    /// Every 2 hours on a night over 4 hours, otherwise every hour.
+    /// Times to label under a night chart: the start and the end (with minutes), and whole hours between them that leave room
+    /// for those labels. On a phone the chart is about 270 points wide and "10:22 AM" about 60, so an hour label must stay a
+    /// third of the night away from either end, and hour labels a fifth of the night apart (every 1, 2, 3, 4 or 6 hours).
+    /// The owner's night of 2026-11-21 (1:48 to 10:22) showed "1:48 AM4 AM" and "8 AM10:22 AM" run together with 18%.
     public static func axisTimes(from start: Date, to end: Date, calendar: Calendar) -> [Date] {
         guard end > start else { return [start] }
         let length = end.timeIntervalSince(start)
-        let step: TimeInterval = length > 4 * 3600 ? 7200 : 3600
-        let room = max(0.18 * length, 20 * 60)
+        let step = ([1, 2, 3, 4, 6].map { TimeInterval($0) * 3600 }.first { $0 >= axisHourSpacing * length }) ?? 6 * 3600
+        let room = max(axisEdgeRoom * length, 20 * 60)
         guard var hour = calendar.dateInterval(of: .hour, for: start.addingTimeInterval(room))?.start else { return [start, end] }
         if hour < start.addingTimeInterval(room) { hour = hour.addingTimeInterval(3600) }
         var times = [start]
@@ -175,6 +177,11 @@ public enum SleepTimeline {
         }
         return times + [end]
     }
+
+    /// How far from either end of the night an hour label must be, as a share of the night.
+    public static let axisEdgeRoom = 0.32
+    /// How far apart hour labels must be, as a share of the night.
+    public static let axisHourSpacing = 0.2
 
     public static func totals(_ segments: [SleepSegment]) -> [SleepPhase: Int] {
         var totals: [SleepPhase: Int] = [:]

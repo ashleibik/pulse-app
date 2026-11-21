@@ -203,6 +203,8 @@ Sent about once a second while 0x3F is on, alternating with an optical packet. T
 gravity sphere fit; also OpenStrap's convention) and 2000/32768 °/s for the gyroscope. The optical variant has inner
 length 1,924. NOOP documents both for firmware 41.17.6.0; the owner's band reports 41.11.7.0, so the first real step
 test confirms or refutes it (the sync log prints the median size of the readings: about 1 g if the scale is right).
+On 41.11.7.0 the scale is right (median 0.997 g and 1.000 g) but `[11:15]` is **not** the time: the owner's packets gave June 2023
+and May 2038 (backup of 2026-11-21). Pulse dates each packet by the phone's clock instead (`MotionClock`, docs/METRICS.md §15).
 
 ## 9. Events (type 0x30) 🟡 [OS]
 

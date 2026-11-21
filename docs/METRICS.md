@@ -491,9 +491,16 @@ Pulse's port reproduces), and 33% average error on OxWalk (39 adults, free livin
 arm movement without walking adds steps. The step test (Settings > Steps) compares the band's count of a 500-step walk with the
 owner's own count; it is a check and never changes how steps are counted. Target set by the owner: within 5%.
 
+**Dating the seconds** (`MotionClock`). Each motion packet is one second of readings, and they arrive in order. The packet's own
+time field (inner bytes 11 to 15 in NOOP's layout for firmware 41.17.6.0) is not the time on the owner's band: the backup of
+2026-11-21 (builds 27 to 29) had 14 step minutes dated June 2023 and May 2038, one second each and 0 steps, because the counter
+dropped nearly every other second as a repeat. Since 2026-11-21 the first packet takes the phone's clock and each next one is the
+next second; a packet more than 3 seconds later than that starts again at the phone's clock (the stream paused). The same packet
+twice (every field equal) counts once. Misdated step minutes (before the data start or in the future) are removed at launch.
+
 **Status:** the stream worked on the owner's band on 2026-11-19 (firmware 41.11.7.0; median reading size 0.997 g and 1.000 g, as
-expected). Counting all day has only been tested with simulated walks and stillness. Not yet checked with a full step test or a real
-day.
+expected). Until the fix above no step was counted on the phone. Counting with the phone's clock has only been tested with
+simulated walks (including the band's real time fields); not yet on a real day or with a full step test.
 
 ## 16. VO₂ max
 
@@ -512,6 +519,17 @@ NOOP's estimate (`FitnessAgeEngine.swift`, `docs/FITNESS_AGE.md`, and the Uth fa
 
 It is a non-exercise estimate with a large error, so the app shows it as an estimate and a trend over weeks. It has not been compared
 with a lab test or with WHOOP.
+
+## 17. Streak
+
+**Days in a row** with a recorded night, counted by NOOP's `StreakCalculator` (ported unchanged as `NoopStreak`): the current run
+ends today, or yesterday while today's night isn't in yet (a day's numbers land after its night), and a missed day ends it. The
+longest run anywhere in the history is shown too.
+
+*Departure from NOOP:* NOOP counts a day with a recovery ("Charge") score. Pulse holds recovery back for its first nights while it
+learns the owner's normal (§7), so that rule read 0 days for the owner's first four days. A day counts in Pulse when it has a main
+sleep (a night the band recorded), or a recovery. Every day with a recovery has a night, so after those first nights the two rules
+agree.
 
 ### Bugs the truth tests caught while building v1
 1. One HR threshold for the whole month split nights where resting HR ran a few beats high → per-noon-block threshold.

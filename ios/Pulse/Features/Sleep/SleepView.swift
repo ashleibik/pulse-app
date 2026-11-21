@@ -365,17 +365,22 @@ struct SleepView: View {
                 if let restorative = RestorativeSleep.make(totals: totals) {
                     Hairline()
                     HStack(spacing: DS.Space.s) {
-                        Text("Restorative")
-                            .textStyle(.body)
-                            .foregroundStyle(DS.Colors.primary)
-                        Text("deep + REM")
-                            .textStyle(.caption)
-                            .foregroundStyle(DS.Colors.secondary)
+                        // The two words stack, so the time and share always fit on one line.
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Restorative")
+                                .textStyle(.body)
+                                .foregroundStyle(DS.Colors.primary)
+                            Text("deep + REM")
+                                .textStyle(.caption)
+                                .foregroundStyle(DS.Colors.secondary)
+                        }
                         Spacer(minLength: DS.Space.s)
                         Text("\(PulseFormat.duration(minutes: restorative.minutes)) · \(Int((restorative.share * 100).rounded()))%")
                             .textStyle(.bodyStrong)
                             .monospacedDigit()
                             .foregroundStyle(DS.Colors.primary)
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                     .frame(minHeight: 44)
                     .accessibilityElement(children: .combine)
