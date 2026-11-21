@@ -158,6 +158,39 @@ private func run(_ minutes: [MinuteSample], corrections: [SleepCorrection] = [])
     #expect(night.end < nap.start)
 }
 
+@Test func theRealMorningSleepShowsOnceTheOwnerGetsUp() throws {
+    // The owner's sleep of 2026-11-20, 10:26 to 11:26 (logs/, never committed): 50 quiet minutes in bed after it, then up and
+    // walking from 12:16. It used to wait 6 hours (until 17:26), because only the first 45 minutes after a sleep counted.
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("logs/pulse-backup-2026-11-21.json")
+    guard FileManager.default.fileExists(atPath: url.path) else { return }
+    var data: Data? = try Data(contentsOf: url)
+    let reader = try PulseBackup.Reader(chunks: { defer { data = nil }; return data })
+    var minutes: [MinuteSample] = []
+    while let minute = try reader.nextMinute() { minutes.append(minute) }
+    var local = Calendar(identifier: .gregorian)
+    local.timeZone = TimeZone(secondsFromGMT: -6 * 3600)!
+    func clock(_ hour: Double) -> Date {
+        local.date(from: DateComponents(year: 2026, month: 11, day: 20))!.addingTimeInterval(hour * 3600)
+    }
+    /// What the phone showed with the band's minutes up to `now`.
+    func seen(at now: Date) -> MetricsResult {
+        MetricsEngine.run(minutes: minutes.filter { $0.start.addingTimeInterval(60) <= now }, calendar: local, now: now)
+    }
+    func morningSleep(_ result: MetricsResult) -> SleepSession? {
+        result.sleeps.first { $0.start < clock(11.5) && $0.end > clock(10.5) }
+    }
+    // Still in bed: not shown yet, but on its way, and the owner is awake.
+    let inBed = seen(at: clock(12))
+    #expect(morningSleep(inBed) == nil)
+    #expect(inBed.unfinishedSleep?.hasEnded == true)
+    // Up and walking: shown, about an hour after it ended.
+    let up = seen(at: clock(12.5))
+    let sleep = try #require(morningSleep(up))
+    #expect(sleep.end >= clock(11.25) && sleep.end <= clock(11.6), "ends \(sleep.end)")
+    #expect(up.unfinishedSleep == nil)
+}
+
 @Test func aNapLowersTheNextNightsNeedButNotRecovery() throws {
     let without = run(days(6))
     let with = run(days(6, nap: (14, 15)))

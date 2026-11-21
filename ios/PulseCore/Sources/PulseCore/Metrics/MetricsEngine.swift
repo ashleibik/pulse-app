@@ -16,6 +16,16 @@ public struct MetricsProfile: Sendable, Equatable {
 public struct MetricsResult: Sendable {
     public var sleeps: [SleepSession]
     public var days: [DailySummary]
+    /// The newest sleep that is found but not finished yet (nil = none). Only its existence is shown
+    /// ("shows once you're up"), never its times or numbers.
+    public var unfinishedSleep: UnfinishedSleep? = nil
+
+    public struct UnfinishedSleep: Sendable, Equatable {
+        /// Where it ends so far: the newest minute while it goes on.
+        public var end: Date
+        /// The band has minutes after it: the person woke, and it shows once they are clearly up.
+        public var hasEnded: Bool
+    }
 }
 
 /// Raw minutes in -> sleep sessions + daily summaries out. Pure function: same input, same output.
@@ -142,13 +152,18 @@ public enum MetricsEngine {
         let observed = tl.hr.map { $0 != nil }
         let usual = SleepModel.usualSleepHours(timeline: tl, calendar: calendar, learned: model.learned)
         let (detected, candidates) = SleepModel.sessions(probability: model.probability, observed: observed, usualSleep: usual)
-        let finished = detected
-            .filter { session in
-                SleepDetector.isFinished(session, asleep: candidates, hr: tl.hr, activity: tl.movement,
-                                         minutesSinceEnd: now.timeIntervalSince(tl.date(session.end)) / 60)
-            }
+        let ordered = detected.sorted { $0.start < $1.start }
+        let isFinished = SleepDetector.finished(ordered, asleep: candidates, hr: tl.hr, activity: tl.movement) { end in
+            now.timeIntervalSince(tl.date(end)) / 60
+        }
+        let finished = zip(ordered, isFinished).filter { $0.1 }.map { $0.0 }
         let (counted, asleep) = described(applying(corrections, to: finished, timeline: tl, asleep: candidates), timeline: tl)
         let found = SleepModel.markingNaps(counted, usualSleep: usual)
+        // A sleep still waiting to be finished, unless an edit already shows it.
+        let unfinished = zip(ordered, isFinished).filter { !$0.1 }.map { $0.0 }
+        let waiting = unfinished.last(where: { session in
+            !found.contains { $0.start < session.end && session.start < $0.end }
+        })
         let sleeps = found.map { s -> SleepSession in
             // Deterministic ID from the start time: re-running the engine updates, not duplicates.
             var idSource = SeededRandom(seed: UInt64(bitPattern: Int64(tl.date(s.start).timeIntervalSince1970)))
@@ -239,7 +254,9 @@ public enum MetricsEngine {
             previousAsleep = asleepMinutes.map { Double($0) }
             day = next
         }
-        return MetricsResult(sleeps: sleeps, days: days)
+        return MetricsResult(sleeps: sleeps, days: days, unfinishedSleep: waiting.map {
+            MetricsResult.UnfinishedSleep(end: tl.date($0.end), hasEnded: tl.count - $0.end >= 3)
+        })
     }
 
     /// Strain for a time range (e.g. one workout).

@@ -84,7 +84,10 @@ plain-language paragraph.
 
 ## 4b-2. Sleep is only shown when it is finished
 
-A sleep appears once you are clearly up again; until then the night stays empty. The Sleep tab and
+A sleep appears once you are clearly up again; until then the night stays empty. While a sleep is found but not
+finished yet, Today's activities (instead of "Nothing yet today") and the top of the Sleep tab show one `body` line in
+`secondary` with a `moon.zzz` icon in `sleepTint`: "Your sleep shows up about 15 minutes after you get up." It never shows
+the sleep's times or numbers, and it goes away when the sleep appears (or 6 hours after it ended). The Sleep tab and
 the Sleep page have a pencil button that opens "Edit sleep" (fix the times, or "I wasn't asleep").
 Settings > Your data offers to undo those edits. Settings > Band has a "Motion check" sheet.
 

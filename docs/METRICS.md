@@ -152,8 +152,14 @@ latest week only. An edit recalculates its own week and, if that changes what wa
    *Our choice:* 20 minutes, the owner's rule. The 6-hour daytime rule: the owner's afternoon nap of 2026-11-19 ran from about
    15:00 to 18:20, longer than 3 hours, and must not become a second night. WHOOP calls every sleep other than the main one a nap.
 8. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
-9. **Finished:** a sleep is shown only after **15 of the 45 minutes** after it are clearly awake (`A > 2.5`, or HR 10+ bpm
-   above the sleep's), or the band was off the wrist for an hour, or 6 hours have passed without newer data.
+9. **Finished:** a sleep is shown only once, at some point between its end and the next sleep, **15 of 45 minutes** in a row
+   are clearly awake (`A > 2.5`, or HR 10+ bpm above the sleep's), or the band was off the wrist for an hour; or once a later
+   sleep is finished; or 6 hours after it ended. Until then the app says a sleep is on its way (DESIGN.md §4b-2), without its
+   times or numbers, and while the person is awake and it waits, the phone pulls from the band every 2 minutes instead of 5.
+   *Changed 2026-11-21:* the 45 minutes used to be only the first 45 after the sleep, and a sleep followed by another one
+   waited for its own 6 hours. The owner's sleep of 2026-11-20 10:26–11:26 was followed by 50 quiet minutes in bed, then
+   walking from 12:16; it appeared after 6 hours instead of 1. The first 45 minutes still decide when a night appears in
+   the usual case: about 15 to 25 minutes after waking on the owner's three real nights.
 10. **Minutes inside a sleep:** unknown = no band data. Awake = `A ≥ 6`, or HR 10+ bpm above the sleep's median. An awake stretch
     shorter than 3 minutes between asleep minutes counts as asleep, so only longer ones are wake-ups. A sleep with no band data
     at all, which only the user can add (for example a nap logged by hand), counts as asleep for its whole length. The other minutes are

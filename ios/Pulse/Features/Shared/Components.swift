@@ -80,6 +80,27 @@ struct EmptyState: View {
     }
 }
 
+// MARK: - Sleep on its way
+
+/// A sleep is found but not finished yet (DESIGN.md §4b-2): say it is coming, never its times or numbers.
+struct UnfinishedSleepNote: View {
+    static let text = "Your sleep shows up about \(SleepDetector.upMinutes) minutes after you get up."
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+            Image(systemName: "moon.zzz")
+                .foregroundStyle(DS.Colors.sleepTint)
+                .accessibilityHidden(true)
+            Text(Self.text)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 // MARK: - Section title
 
 /// Bold section heading with an optional quiet note on the right ("Avg 52%").

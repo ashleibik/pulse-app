@@ -10,7 +10,8 @@ import PulseCore
 /// - The connection is kept. Once a band is paired, Pulse asks CoreBluetooth for it at launch and
 ///   after every drop; iOS connects whenever the band is in range, also in the background, and can
 ///   relaunch Pulse for it (state restoration, see BluetoothBandLink).
-/// - While connected, new records are pulled every `pullInterval`, right away when the app opens,
+/// - While connected, new records are pulled every `pullInterval` (`quickPullInterval` while last night waits for
+///   the owner to get up), right away when the app opens,
 ///   and whenever the band wakes Pulse in the background (any event from it). A pull is short: a few
 ///   commands, the new batches, done. Live heart rate streams only while a live screen asks for it.
 /// - The band's 100 Hz motion stream counts steps while `MotionStreamPolicy` allows (worn, not still for half
@@ -131,6 +132,8 @@ final class BandManager {
 
     /// While connected, new records are pulled this often (and right away when the app opens).
     static let pullInterval: TimeInterval = 5 * 60
+    /// After waking, while the sleep waits to be shown (docs/METRICS.md §4, step 9): it appears soon after the person is up.
+    static let quickPullInterval: TimeInterval = 2 * 60
     /// How often to ask iOS for a background wake-up (iOS decides when, often less often).
     static let backgroundInterval: TimeInterval = 15 * 60
     /// The status pill says "Band not found" after this long without the band.
@@ -230,9 +233,11 @@ final class BandManager {
         pullIfDue(olderThan: 30)
     }
 
-    /// Pull new records if the last pull is older than `olderThan` seconds. Cheap to call often.
-    func pullIfDue(olderThan interval: TimeInterval = pullInterval) {
+    /// Pull new records if the last pull is older than `olderThan` seconds (by default `pullInterval`, or
+    /// `quickPullInterval` while a sleep waits for the person to get up). Cheap to call often.
+    func pullIfDue(olderThan interval: TimeInterval? = nil) {
         guard isConnected, hasSession, !wantsLive, stage != .syncing else { return }
+        let interval = interval ?? (UnfinishedSleepStore.wantsQuickPulls() ? Self.quickPullInterval : Self.pullInterval)
         if let lastPullAt, Date.now.timeIntervalSince(lastPullAt) < interval { return }
         pull()
     }

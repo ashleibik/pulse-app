@@ -14,6 +14,8 @@ struct SleepView: View {
     @Environment(BandManager.self) private var band
 
     @State private var nightIndex = 0          // 0 = last night, 1 = the night before, ...
+    /// A sleep found but not finished yet ends here (seconds since 1970, 0 = none). DESIGN.md §4b-2.
+    @AppStorage(UnfinishedSleepStore.endKey) private var unfinishedSleepEnd: Double = 0
     @State private var heartRate: [ChartPoint] = []
     @State private var segments: [SleepSegment] = []
     /// Breaths per minute for the night on screen (nil = no clear reading).
@@ -35,10 +37,17 @@ struct SleepView: View {
             Group {
                 if sleeps.isEmpty {
                     EmptyState(symbol: "moon.zzz", title: "No sleep yet",
-                               text: "Wear your band to bed and your night will appear here.")
+                               text: UnfinishedSleepStore.isWaiting(end: unfinishedSleepEnd)
+                                   ? UnfinishedSleepNote.text : "Wear your band to bed and your night will appear here.")
                         .padding(.top, DS.Space.xxl)
                 } else {
-                    content(sleeps[min(nightIndex, sleeps.count - 1)])
+                    VStack(alignment: .leading, spacing: DS.Space.l) {
+                        // The newest night is on screen, and a newer sleep is on its way.
+                        if nightIndex == 0 && UnfinishedSleepStore.isWaiting(end: unfinishedSleepEnd) {
+                            UnfinishedSleepNote()
+                        }
+                        content(sleeps[min(nightIndex, sleeps.count - 1)])
+                    }
                 }
             }
             .padding(.horizontal, DS.Space.side)

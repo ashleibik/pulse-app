@@ -46,6 +46,7 @@ enum PulseStore {
         try context.delete(model: StepMinuteRecord.self)
         try context.save()
         RawHistoryArchive.delete()
+        UnfinishedSleepStore.save(nil)
     }
 
     /// Removes what older versions simulated: the demo month and simulated-band syncs.
@@ -91,6 +92,8 @@ struct RecomputeOutput: Sendable {
     let days: [DailySummary]
     let sleeps: [SleepSession]
     let workoutStrain: [UUID: Double]
+    /// A sleep found but not finished yet (docs/METRICS.md §4, step 9).
+    var unfinishedSleep: MetricsResult.UnfinishedSleep? = nil
     /// Workouts found in the raw data (`nil` = leave workouts alone).
     var detectedWorkouts: [Workout]? = nil
     /// Detection looked only from here on (nil = the whole history).
@@ -146,6 +149,7 @@ actor MetricsRecomputer {
             }
         }
         var output = RecomputeOutput(days: result.days, sleeps: result.sleeps, workoutStrain: strain)
+        output.unfinishedSleep = result.unfinishedSleep
         output.manualWorkouts = manual
         if detection != .skip {
             // Recent: from `recentDays` before the newest data, with an hour before that for workouts already under way.
@@ -248,6 +252,7 @@ extension PulseStore {
             for stale in fromBand.values { context.delete(stale) }
         }
         try context.save()
+        UnfinishedSleepStore.save(output.unfinishedSleep)
     }
 
     /// Raw minutes in [from, to), as plain values (for charts and the sleep timeline).
@@ -258,6 +263,36 @@ extension PulseStore {
             sortBy: [SortDescriptor(\.start)]
         )
         return ((try? context.fetch(descriptor)) ?? []).map(\.value)
+    }
+}
+
+/// A sleep found but not finished yet (docs/METRICS.md §4, step 9): Today and Sleep say it is on its way
+/// (DESIGN.md §4b-2), and the band is pulled sooner while the person is up. Never its times or numbers.
+enum UnfinishedSleepStore {
+    /// Where it ends so far, in seconds since 1970. 0 = none.
+    static let endKey = "unfinishedSleepEnd"
+    /// The person woke from it (the band has minutes after it).
+    static let hasEndedKey = "unfinishedSleepHasEnded"
+    /// Quicker pulls only this long after it ended. After that, the usual pace.
+    static let quickPullsFor: TimeInterval = 2 * 3600
+
+    static func save(_ sleep: MetricsResult.UnfinishedSleep?) {
+        let defaults = UserDefaults.standard
+        defaults.set(sleep?.end.timeIntervalSince1970 ?? 0, forKey: endKey)
+        defaults.set(sleep?.hasEnded ?? false, forKey: hasEndedKey)
+    }
+
+    /// True while a sleep waits to be shown. It is shown anyway `showAnywayMinutes` after it ended.
+    static func isWaiting(end: Double, now: Date = .now) -> Bool {
+        end > 0 && now.timeIntervalSince1970 - end < SleepDetector.showAnywayMinutes * 60
+    }
+
+    /// The person woke from a sleep that waits to be shown: pull sooner, so it appears soon after they get up.
+    static func wantsQuickPulls(now: Date = .now) -> Bool {
+        let defaults = UserDefaults.standard
+        let end = defaults.double(forKey: endKey)
+        return defaults.bool(forKey: hasEndedKey) && isWaiting(end: end, now: now)
+            && now.timeIntervalSince1970 - end < quickPullsFor
     }
 }
 

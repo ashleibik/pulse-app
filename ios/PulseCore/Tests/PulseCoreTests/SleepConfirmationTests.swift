@@ -613,6 +613,92 @@ private func sameSleeps(_ a: [SleepSession], _ b: [SleepSession]) -> Bool {
     #expect(sleeps(daytime(9, 23) + night(23, 30.5) + off, now: time(32)).count == 1)
 }
 
+/// 100 minutes asleep at 50 bpm, then what came after, one (heart rate, movement) per minute. nil = no wrist.
+private func afterASleep(_ after: [(Double, Double)?]) -> (session: SleepDetector.Session, asleep: [Bool], hr: [Double?], move: [Double?]) {
+    let session = SleepDetector.Session(start: 0, end: 100, asleep: 100, awake: 0, disturbances: 0, isNap: true)
+    return (session, [Bool](repeating: true, count: 100) + [Bool](repeating: false, count: after.count),
+            [Double?](repeating: 50, count: 100) + after.map { $0?.0 }, [Double?](repeating: 1, count: 100) + after.map { $0?.1 })
+}
+
+private func lyingAwake(_ minutes: Int) -> [(Double, Double)?] { Array(repeating: (55, 1.6), count: minutes) }
+private func walking(_ minutes: Int) -> [(Double, Double)?] { Array(repeating: (90, 60), count: minutes) }
+
+@Test func gettingUpLateStillFinishesTheSleep() {
+    // The owner's morning sleep of 2026-11-20: still in bed for 50 minutes after waking, then up. It used to wait 6 hours.
+    let late = afterASleep(lyingAwake(50) + walking(14))
+    #expect(!SleepDetector.isFinished(late.session, asleep: late.asleep, hr: late.hr, activity: late.move, minutesSinceEnd: 64))
+    let up = afterASleep(lyingAwake(50) + walking(15))
+    #expect(SleepDetector.isFinished(up.session, asleep: up.asleep, hr: up.hr, activity: up.move, minutesSinceEnd: 65))
+    // Up straight away: finished after 15 minutes, as before.
+    let early = afterASleep(walking(15))
+    #expect(SleepDetector.isFinished(early.session, asleep: early.asleep, hr: early.hr, activity: early.move, minutesSinceEnd: 15))
+}
+
+@Test func upMinutesMustBeCloseTogether() {
+    // 15 clearly awake minutes spread over two hours are not "up again": one every 8 minutes.
+    let scattered = afterASleep((0..<120).map { i -> (Double, Double)? in i % 8 == 0 ? (90, 60) : (55, 1.6) })
+    #expect(!SleepDetector.isFinished(scattered.session, asleep: scattered.asleep, hr: scattered.hr, activity: scattered.move,
+                                      minutesSinceEnd: 120))
+}
+
+@Test func takingTheBandOffLaterStillFinishesTheSleep() {
+    let noWrist = [(Double, Double)?](repeating: nil, count: 60)
+    let off = afterASleep(lyingAwake(30) + noWrist + walking(1))
+    #expect(SleepDetector.isFinished(off.session, asleep: off.asleep, hr: off.hr, activity: off.move, minutesSinceEnd: 91))
+    let shortOff = afterASleep(lyingAwake(30) + Array(noWrist.dropLast()) + lyingAwake(1))
+    #expect(!SleepDetector.isFinished(shortOff.session, asleep: shortOff.asleep, hr: shortOff.hr, activity: shortOff.move,
+                                      minutesSinceEnd: 90))
+}
+
+@Test func gettingUpAfterTheNextSleepStartedDoesNotFinishTheFirstByItself() {
+    let a = afterASleep(lyingAwake(40) + walking(30))
+    #expect(!SleepDetector.isFinished(a.session, asleep: a.asleep, hr: a.hr, activity: a.move, minutesSinceEnd: 70, nextStart: 140))
+    #expect(SleepDetector.isFinished(a.session, asleep: a.asleep, hr: a.hr, activity: a.move, minutesSinceEnd: 70, nextStart: nil))
+}
+
+@Test func aSleepFollowedByAFinishedSleepIsFinished() {
+    // Woke at 3:00, lay still, slept again from 3:40, up at 7:00: both sleeps show once the person is up.
+    let first = SleepDetector.Session(start: 0, end: 180, asleep: 180, awake: 0, disturbances: 0, isNap: false)
+    let second = SleepDetector.Session(start: 220, end: 420, asleep: 200, awake: 0, disturbances: 0, isNap: false)
+    var asleep = [Bool](repeating: false, count: 440), hr = [Double?](repeating: 55, count: 440)
+    var move = [Double?](repeating: 1.6, count: 440)
+    for i in Array(0..<180) + Array(220..<420) {
+        asleep[i] = true
+        hr[i] = 50
+        move[i] = 1
+    }
+    let stillAsleep = SleepDetector.finished([first, second], asleep: Array(asleep[0..<420]), hr: Array(hr[0..<420]),
+                                             activity: Array(move[0..<420])) { _ in 10 }
+    #expect(stillAsleep == [false, false])
+    for i in 420..<440 {
+        hr[i] = 90
+        move[i] = 60
+    }
+    let up = SleepDetector.finished([first, second], asleep: asleep, hr: hr, activity: move) { _ in 20 }
+    #expect(up == [true, true])
+}
+
+@Test func theResultSaysASleepIsWaitingWithoutShowingIt() throws {
+    let evening = daytime(9, 23)
+    let asleep = night(23, 30.5)
+    // 04:00, still asleep: nothing shown, but a sleep is on its way.
+    let during = MetricsEngine.run(minutes: evening + night(23, 28), calendar: calendar, now: time(28))
+    #expect(during.sleeps.isEmpty)
+    let waiting = try #require(during.unfinishedSleep)
+    #expect(abs(waiting.end.timeIntervalSince(time(28))) <= 120)
+    #expect(!waiting.hasEnded)
+    // 06:36, just woke up: still waiting, but the sleep is over.
+    let woke = MetricsEngine.run(minutes: evening + asleep + daytime(30.5, 30.6), calendar: calendar, now: time(30.6))
+    #expect(woke.sleeps.isEmpty)
+    #expect(woke.unfinishedSleep?.hasEnded == true)
+    // Up and moving for half an hour: shown, and nothing is waiting any more.
+    let after = MetricsEngine.run(minutes: evening + asleep + daytime(30.5, 31), calendar: calendar, now: time(31))
+    #expect(after.sleeps.count == 1)
+    #expect(after.unfinishedSleep == nil)
+    // A day with no sleep in it has nothing waiting.
+    #expect(MetricsEngine.run(minutes: daytime(9, 20), calendar: calendar, now: time(20)).unfinishedSleep == nil)
+}
+
 // MARK: - Corrections
 
 @Test func iWasntAsleepRemovesTheSleepAndItsNumbers() throws {

@@ -51,6 +51,8 @@ struct TodayView: View {
     @State private var liveOn = false
     /// Goes up by one on every tap that opens something. Drives the light haptic.
     @State private var taps = 0
+    /// A sleep found but not finished yet ends here (seconds since 1970, 0 = none). DESIGN.md §4b-2.
+    @AppStorage(UnfinishedSleepStore.endKey) private var unfinishedSleepEnd: Double = 0
 
     private var calendar: Calendar { .current }
     private var isToday: Bool { calendar.isDateInToday(selectedDay) }
@@ -362,7 +364,10 @@ struct TodayView: View {
                 }
                 .buttonStyle(.pressable)
             }
-            if mainSleep == nil && dayWorkouts.isEmpty && dayNaps.isEmpty {
+            if isToday && UnfinishedSleepStore.isWaiting(end: unfinishedSleepEnd) {
+                UnfinishedSleepNote()
+                    .padding(.vertical, DS.Space.s)
+            } else if mainSleep == nil && dayWorkouts.isEmpty && dayNaps.isEmpty {
                 Text(isToday ? "Nothing yet today. Sleep and workouts show up here by themselves." : "Nothing recorded.")
                     .textStyle(.body)
                     .foregroundStyle(DS.Colors.secondary)
