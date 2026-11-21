@@ -116,6 +116,15 @@ rate (docs/METRICS.md §10). They appear in the list like any other workout. Del
 or removes a workout you added or confirmed. With none in 14 days, one `body` line says how Pulse finds them. Finishing a workout
 under a minute long asks "Too short. Discard?" with Discard and Keep going.
 
+**Starting a workout.** "Start activity" (Today) and the play button (Activity) open the workout sheet: live heart rate, the
+running time, the type and "Finish workout". Swiping it down or tapping the chevron keeps the workout running while you use the
+rest of Pulse or another app. A bar then sits above the tab bar on every tab: a `surface` capsule, 52 pt tall with a 1 pt `border`
+edge, holding the type's symbol in `strainTint`, the type in `bodyStrong`, the running time in `secondary` and a chevron. Tapping it
+opens the sheet again. The workout is kept on the phone, so it carries on when Pulse is closed or iOS ends it in the background.
+While it runs, "Start activity" reads "Open workout". The trash button discards it (asks first). Live heart rate streams only while
+the sheet is open and Pulse is on screen; the saved numbers come from the band's stored minutes. Pulse doesn't record a workout
+by itself over the one you're timing.
+
 ## 4b-5. Stress
 
 The sheet opens with "RIGHT NOW": the level in `display` (Calm `accent`, Moderate `warn`, High `alert`) and one line saying which hour it

@@ -21,6 +21,7 @@ struct TodayView: View {
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
+    @Environment(WorkoutInProgress.self) private var workout
     @Environment(\.scenePhase) private var scenePhase
     @Query private var bands: [BandRecord]
 
@@ -36,7 +37,6 @@ struct TodayView: View {
     @State private var showCalendar = false
     @State private var showJournal = false
     @State private var showAdd = false
-    @State private var showLiveWorkout = false
     @State private var openedWorkout: WorkoutRecord?
     @State private var editingNap: SleepEditTarget?
     @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
@@ -105,7 +105,6 @@ struct TodayView: View {
             }
             .sheet(isPresented: $showAdd) { AddWorkoutView() }
             .sheet(item: $editingNap) { SleepEditView(target: $0) }
-            .fullScreenCover(isPresented: $showLiveWorkout) { LiveWorkoutView() }
             .sheet(item: $explaining) { kind in
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
@@ -399,8 +398,10 @@ struct TodayView: View {
                         Label("Add activity", systemImage: "plus").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.secondaryPill)
-                    Button { open { showLiveWorkout = true } } label: {
-                        Label("Start activity", systemImage: "stopwatch").frame(maxWidth: .infinity)
+                    // The workout sheet lives in RootView; while one runs this opens it again (DESIGN.md §4b-4).
+                    Button { open { workout.open() } } label: {
+                        Label(workout.running == nil ? "Start activity" : "Open workout", systemImage: "stopwatch")
+                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.secondaryPill)
                 }
@@ -518,7 +519,7 @@ struct TodayView: View {
     private func setLive(_ on: Bool) {
         guard on != liveOn else { return }
         liveOn = on
-        if on { band.startLive(context: context) } else { band.stopLive() }
+        if on { band.startLive(.card, context: context) } else { band.stopLive(.card) }
     }
 
     /// Every tap that opens something goes through here, so it also gives a light haptic.
@@ -571,4 +572,5 @@ struct TrailingIconLabelStyle: LabelStyle {
         .environment(DataLoader())
         .environment(BandManager())
         .environment(CloudManager())
+        .environment(WorkoutInProgress.shared)
 }

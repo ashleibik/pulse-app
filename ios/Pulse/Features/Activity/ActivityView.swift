@@ -11,12 +11,12 @@ struct ActivityView: View {
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
+    @Environment(WorkoutInProgress.self) private var workout
 
     @State private var zoneMinutes: [Int] = []
     /// The open workout (empty = the list is showing).
     @State private var path: [UUID] = []
     @State private var showAdd = false
-    @State private var showLive = false
     /// Active calories so far today, from heart rate and counted steps. nil = not enough details to work them out.
     @State private var activeCalories: Int?
     /// Today's steps, as the band counted them. nil = it hasn't counted today.
@@ -44,12 +44,14 @@ struct ActivityView: View {
             .refreshable { await band.refresh(context: context) }
             .safeAreaInset(edge: .top, spacing: 0) {
                 ScreenHeader(title: "Activity") {
-                    IconButton(systemName: "play", label: "Start a workout") { showLive = true }
+                    // The workout sheet lives in RootView; while one runs this opens it again (DESIGN.md §4b-4).
+                    IconButton(systemName: "play", label: workout.running == nil ? "Start a workout" : "Open the workout") {
+                        workout.open()
+                    }
                     IconButton(systemName: "plus", label: "Add a past workout") { showAdd = true }
                 }
             }
             .sheet(isPresented: $showAdd) { AddWorkoutView() }
-            .fullScreenCover(isPresented: $showLive) { LiveWorkoutView() }
             .monoBackground()
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: UUID.self) { id in
@@ -290,6 +292,7 @@ struct ActivityView: View {
         .modelContainer(PulseStore.previewContainer)
         .environment(DataLoader())
         .environment(BandManager())
+        .environment(WorkoutInProgress.shared)
         .preferredColorScheme(.light)
 }
 
@@ -298,5 +301,6 @@ struct ActivityView: View {
         .modelContainer(PulseStore.previewContainer)
         .environment(DataLoader())
         .environment(BandManager())
+        .environment(WorkoutInProgress.shared)
         .preferredColorScheme(.dark)
 }

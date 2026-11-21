@@ -10,6 +10,8 @@ struct RootView: View {
     /// Shared with BackgroundSync, which can run before (or without) this screen.
     @State private var band = BandManager.shared
     @State private var cloud = CloudManager()
+    /// A workout started in Pulse and not finished yet: its sheet opens from any tab, its bar sits above the tab bar.
+    @State private var workout = WorkoutInProgress.shared
     /// Per-device UI preference (not health data), so UserDefaults is fine here.
     /// (UserDefaults also reads launch arguments, so `-hasSeenWelcome YES` skips it for screenshots.)
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
@@ -18,23 +20,36 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
+            // The running workout's bar sits just above the tab bar, on every tab (DESIGN.md §4b-4).
             TodayView()
+                .safeAreaInset(edge: .bottom, spacing: 0) { WorkoutBar() }
                 .tabItem { Label("Today", systemImage: "sun.max.fill") }
                 .tag(Tab.today)
             SleepView()
+                .safeAreaInset(edge: .bottom, spacing: 0) { WorkoutBar() }
                 .tabItem { Label("Sleep", systemImage: "moon.zzz.fill") }
                 .tag(Tab.sleep)
             ActivityView()
+                .safeAreaInset(edge: .bottom, spacing: 0) { WorkoutBar() }
                 .tabItem { Label("Activity", systemImage: "flame.fill") }
                 .tag(Tab.activity)
             TrendsView()
+                .safeAreaInset(edge: .bottom, spacing: 0) { WorkoutBar() }
                 .tabItem { Label("Trends", systemImage: "chart.xyaxis.line") }
                 .tag(Tab.trends)
         }
         .sensoryFeedback(.selection, trigger: tab)                    // light tick when switching tabs
+        .animation(DS.Motion.spring, value: workout.running == nil)   // the bar slides in and out
         .environment(loader)
         .environment(band)
         .environment(cloud)
+        .environment(workout)
+        // Opened by "Start activity", the Activity tab's play button and the workout bar. Swiping it down keeps the workout.
+        .sheet(isPresented: $workout.isShowing) {
+            LiveWorkoutView()
+                .environment(band)
+                .environment(workout)
+        }
         .fullScreenCover(isPresented: Binding(get: { !hasSeenWelcome }, set: { hasSeenWelcome = !$0 })) {
             WelcomeView { hasSeenWelcome = true }
         }

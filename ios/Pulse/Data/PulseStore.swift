@@ -244,8 +244,11 @@ extension PulseStore {
                 fromBand[workout.id] = workout
             }
             let dismissed = DismissedWorkouts.ids
+            // A workout the owner is timing counts as added from its start (docs/METRICS.md §10).
+            let running = WorkoutInProgress.shared.running
             for found in detected {
                 if kept.contains(where: { $0.start < found.end && $0.end > found.start }) { continue }
+                if let running, running.overlaps(start: found.start, end: found.end) { continue }
                 if dismissed.contains(found.id.uuidString) { continue }
                 if let existing = fromBand.removeValue(forKey: found.id) {
                     existing.kindRaw = found.kind.rawValue

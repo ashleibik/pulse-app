@@ -337,7 +337,9 @@ Sources and licenses for the ported parts are in `docs/THIRD_PARTY.md`.
 detection never changes or removes a workout you added or confirmed. After a sync Pulse looks at the last 3 days; it looks at the
 whole history when these rules change, after an import, and when "Your data starts" moves. NOOP's app itself only suggests a
 workout (its `AutoWorkoutDetector`: 12 minutes at resting + 30, kept after a tap). The owner asked for workouts without
-confirming, so Pulse uses NOOP's stricter exercise detector instead.
+confirming, so Pulse uses NOOP's stricter exercise detector instead. A workout the owner is timing in the app (started, not
+finished yet) counts as added from its start: nothing found that ends after that start is recorded while it runs
+(`RunningWorkout.overlaps`).
 
 - **From heart rate and movement (NOOP's `WorkoutDetector.detect`, ported).** A second's motion is the change of the band's gravity
   reading from the second before, averaged over the trailing 10 seconds. A second is active when that is above 0.20 g and a heart

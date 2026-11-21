@@ -91,7 +91,11 @@ final class BandManager {
     private(set) var badFrames = 0
     /// The band's live heart rate while a live screen asks for it. `nil` = no live reading.
     private(set) var liveHeartRate: Int?
-    private var wantsLive = false
+    /// What asks for live heart rate. Today's live card and the workout screen each ask for themselves, so one closing
+    /// never switches it off under the other.
+    enum LiveUser: Hashable { case card, workout }
+    private var liveUsers: Set<LiveUser> = []
+    private var wantsLive: Bool { !liveUsers.isEmpty }
     /// The 100 Hz stream's seconds while a step test runs (docs/METRICS.md §15).
     private(set) var liveSteps = LiveSteps()
     /// A step test is running: the stream stays on whatever the policy says.
@@ -377,10 +381,12 @@ final class BandManager {
         link?.connect(to: band.id)
     }
 
-    /// A live screen opened: stream heart rate (connecting first if needed).
-    func startLive(context: ModelContext) {
+    /// A live screen opened: stream heart rate (connecting first if needed). Already streaming for the other user: nothing to do.
+    func startLive(_ user: LiveUser, context: ModelContext) {
         self.context = context
-        wantsLive = true
+        let alreadyOn = wantsLive
+        liveUsers.insert(user)
+        guard !alreadyOn else { return }
         liveHeartRate = nil
         if isConnected && hasSession && stage != .syncing {
             worker?.setLive(true)
@@ -389,10 +395,9 @@ final class BandManager {
         }
     }
 
-    /// The live screen closed: stop the stream. The connection stays.
-    func stopLive() {
-        guard wantsLive else { return }
-        wantsLive = false
+    /// A live screen closed: stop the stream once nothing else asks for it. The connection stays.
+    func stopLive(_ user: LiveUser) {
+        guard liveUsers.remove(user) != nil, liveUsers.isEmpty else { return }
         liveHeartRate = nil
         if hasSession { worker?.setLive(false) }
     }
