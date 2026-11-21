@@ -105,7 +105,7 @@ final class SyncWorker: @unchecked Sendable {
         }
     }
 
-    /// The 100 Hz motion stream on or off (the step test).
+    /// The 100 Hz motion stream on or off (step counting, docs/METRICS.md §15).
     func setRawStream(_ on: Bool) {
         queue.async { [self] in
             guard var current = session else { return }

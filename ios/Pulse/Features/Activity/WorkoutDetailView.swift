@@ -6,7 +6,7 @@ import PulseCore
 /// Mono design (ios/design/DESIGN.md).
 struct WorkoutDetailView: View {
     let workout: WorkoutRecord
-    /// Deletes this workout (only offered for workouts the user added by hand).
+    /// Deletes this workout. One Pulse found stays deleted (`DismissedWorkouts`).
     var onDelete: (() -> Void)? = nil
     @Environment(\.modelContext) private var context
     @Environment(CloudManager.self) private var cloud
@@ -20,7 +20,7 @@ struct WorkoutDetailView: View {
                 heart.riseIn(2)
                 zones.riseIn(3)
                 share.riseIn(4)
-                if workout.sourceRaw == DataSource.manual.rawValue, let onDelete {
+                if let onDelete {
                     Button("Delete workout") { onDelete() }
                         .buttonStyle(.secondaryPill)
                 }
@@ -89,8 +89,7 @@ struct WorkoutDetailView: View {
         .accessibilityLabel("\(workout.kind.displayName), strain \(PulseFormat.strain(workout.strain)) of 21")
     }
 
-    /// Workouts found automatically are all "Workout". This lets you say what it was.
-    /// The choice is kept when later syncs update the workout (same id, kind is never overwritten).
+    /// Lets you say what a workout was. Choosing confirms a found workout, so later syncs never change or remove it.
     private var kindPicker: some View {
         HStack(spacing: DS.Space.m) {
             Text("Type")
@@ -99,7 +98,11 @@ struct WorkoutDetailView: View {
             Spacer(minLength: DS.Space.s)
             Picker("Type", selection: Binding(
                 get: { workout.kind },
-                set: { workout.kindRaw = $0.rawValue; try? context.save() })) {
+                set: {
+                    workout.kindRaw = $0.rawValue
+                    if workout.sourceRaw == DataSource.history.rawValue { workout.isSuggestion = false }
+                    try? context.save()
+                })) {
                 ForEach(WorkoutKind.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }
             .pickerStyle(.menu)

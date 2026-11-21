@@ -132,7 +132,7 @@ struct BackupButtons: View {
                 let result = try await BackupStore(modelContainer: container).importFile(at: url, dataStart: dataStart)
                 if let profile = header.profile { ProfileStore.current(in: context).restore(profile) }
                 try? context.save()
-                await loader.recompute(context: context, detectWorkouts: true)
+                await loader.recompute(context: context, detection: .all)
                 loader.dataChanged()
                 message = "Imported \(PulseFormat.duration(minutes: result.minutesAdded)) of new band data, \(result.workoutsAdded) workouts and \(result.journalDays) journal days."
             } catch {

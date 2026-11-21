@@ -130,7 +130,8 @@ public struct Workout: Identifiable, Codable, Sendable, Hashable {
     /// Estimated active calories. 0 = unknown (the profile has no body details).
     public var calories: Int
     public var source: DataSource
-    /// true = Pulse is asking whether this happened ("Was this a walk?"). It isn't counted until confirmed.
+    /// nil = found by detection. false = the owner confirmed it, so detection never changes or removes it. true = an earlier
+    /// version asked "Was this a walk?" about it; the next sync replaces it.
     public var isSuggestion: Bool?
 
     public init(id: UUID = UUID(), kind: WorkoutKind, start: Date, end: Date, averageHeartRate: Int,

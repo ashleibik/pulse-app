@@ -131,6 +131,46 @@ private func summary(_ daysAgo: Int, sleep: Int?) -> DailySummary {
                  baselineHRV: nil, explanation: "", source: .history)
 }
 
+// MARK: - Walking (counted steps)
+
+@Test func aStepLengthComesFromHeight() {
+    #expect(abs(DailyCalories.stepLength(man) - 0.747) < 1e-9)          // 0.415 x 180 cm
+    #expect(abs(DailyCalories.stepLength(woman) - 0.68145) < 1e-9)      // 0.413 x 165 cm
+}
+
+@Test func aMinuteOfWalkingCostsWhatACSMSays() {
+    let walking = StepMinute(start: dayStart, steps: 100, seconds: 60)
+    // 0.0005 x 100 steps x 0.747 m x 80 kg
+    #expect(abs(DailyCalories.walkingKcal(walking, body: man) - 2.988) < 1e-9)
+    // Running (140 steps a minute or more) costs twice as much a metre.
+    let running = StepMinute(start: dayStart, steps: 160, seconds: 60)
+    #expect(abs(DailyCalories.walkingKcal(running, body: man) - 0.001 * 160 * 0.747 * 80) < 1e-9)
+    #expect(DailyCalories.walkingKcal(StepMinute(start: dayStart, steps: 0, seconds: 60), body: man) == 0)
+}
+
+@Test func walkingUnderTheHeartRateGateAddsItsStepsCost() throws {
+    // An hour of walking at 95 bpm: under the gate of 125, so heart rate adds nothing and the steps add their cost.
+    let day = (0..<60).map { minute($0, bpm: 95) }
+    let walk = (0..<60).map { StepMinute(start: dayStart.addingTimeInterval(Double($0) * 60), steps: 100, seconds: 60) }
+    let without = try #require(estimate(day))
+    let with = try #require(DailyCalories.estimate(minutes: day, steps: walk, body: man, dayStart: dayStart,
+                                                   end: dayStart.addingTimeInterval(86_400), maxHeartRate: 190,
+                                                   restingHeartRate: 60))
+    #expect(without.active == 0)
+    #expect(with.active == Int((60 * 2.988).rounded()))
+    #expect(with.resting == without.resting && with.total == with.resting + with.active)
+}
+
+@Test func stepsAboveTheHeartRateGateAreNotCountedTwice() throws {
+    let day = (0..<60).map { minute($0, bpm: 140) }
+    let run = (0..<60).map { StepMinute(start: dayStart.addingTimeInterval(Double($0) * 60), steps: 160, seconds: 60) }
+    let without = try #require(estimate(day))
+    let with = try #require(DailyCalories.estimate(minutes: day, steps: run, body: man, dayStart: dayStart,
+                                                   end: dayStart.addingTimeInterval(86_400), maxHeartRate: 190,
+                                                   restingHeartRate: 60))
+    #expect(with.active == without.active)
+}
+
 @Test func lastNightIsTheNewestDayThatHasASleep() {
     // Today exists already, but the night has not synced yet.
     #expect(LastNight.day(in: [summary(2, sleep: 400), summary(0, sleep: nil), summary(1, sleep: 450)])?.sleepMinutes == 450)

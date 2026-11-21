@@ -33,6 +33,10 @@ The owner develops on Windows, has no Mac, and installs by sideloading (moving t
   original code (as `NoopSleepStagerTests` does). Depart from it only when NOOP's own data says that part is untested or wrong,
   when the band's data differs from what NOOP assumes, or when the owner's real nights show a clear mistake. Write each
   departure and its reason in `docs/METRICS.md`. Settle doubts by comparing with the owner's Apple Watch, not by guessing.
+- **Steps are the band's own count (2026-11-20).** Only the band's 100 Hz motion stream counts steps (OpenStrap's pedometer),
+  streamed while the band is worn and the owner is awake. No estimate from the once-a-second history, and the Apple Watch never sets
+  or scales the count. Walks and runs are recorded by themselves from those steps, other workouts by NOOP's detector; nothing is
+  suggested for confirmation. Spec: `docs/METRICS.md` §10 and §15.
 
 ## Third-party code
 
@@ -49,8 +53,8 @@ Port OpenStrap only from commit `e59d63c` or earlier: that code is MIT, and late
 Band connection and kept reconnect, band clock set, history drain (a batch is acked only after it
 is saved), the data cutoff (`BandDataCutoff`: the band was bought used, older records belong to the
 previous owner and are dropped), the low-battery pause (below 5%, "Sync anyway" overrides once), and the 100 Hz motion
-stream (command 0x3F): off on every connect, on only during a step test, 15 minutes at most. Left on, it floods Bluetooth
-and the band's memory.
+stream (command 0x3F): off on every connect, then on only as `MotionStreamPolicy` allows (worn, not still for 30 minutes,
+band battery from 15%; always during a step test). It sends about 4 kB a second, so it costs band and phone battery.
 
 ## Layout
 

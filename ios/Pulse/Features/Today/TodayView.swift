@@ -18,7 +18,6 @@ struct TodayView: View {
     @Query private var profiles: [ProfileRecord]
     @Query(sort: \SleepRecord.end, order: .reverse) private var sleepRecords: [SleepRecord]
     @Query private var journal: [JournalRecord]
-    @Query private var stepReferences: [StepReferenceRecord]
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
@@ -44,9 +43,8 @@ struct TodayView: View {
     @State private var soFar: TodaySoFar?
     /// The selected day's estimated calories (nil = no band data that day, or the profile is incomplete).
     @State private var calories: DailyCalories.Estimate?
-    /// The selected day's estimated steps (nil = no band data that day), and the personal factor behind them.
+    /// The selected day's steps, as the band counted them (nil = it never counted that day).
     @State private var steps: Steps.Day?
-    @State private var stepFactor: Steps.Factor = .none
     /// Respiratory rate of the selected night and the 30 nights before (for the health monitor).
     @State private var respiratory: (today: Double?, history: [Double]) = (nil, [])
     /// The live heart-rate card is streaming (only while this screen is open).
@@ -102,7 +100,7 @@ struct TodayView: View {
                 MetricExplainerView(kind: kind, today: days.first, history: Array(days.prefix(14)))
                     .presentationDetents([.medium, .large])
             }
-            .task(id: "\(loader.revision)-\(loader.rawDataReady)-\(selectedDay.timeIntervalSince1970)-\(String(describing: calorieBody))-\(stepReferences.count)") { load() }
+            .task(id: "\(loader.revision)-\(loader.rawDataReady)-\(selectedDay.timeIntervalSince1970)-\(String(describing: calorieBody))-\(band.stepsRevision)") { load() }
             .onChange(of: scenePhase) { _, phase in if phase != .active { setLive(false) } }
             .onDisappear { setLive(false) }
             .sensoryFeedback(.impact(weight: .light), trigger: taps)
@@ -256,14 +254,12 @@ struct TodayView: View {
 
     private var stepGoal: Int { profiles.first?.stepGoal ?? 10_000 }
 
-    /// An estimate, labelled as one, against the daily goal.
+    /// The band's own count against the daily goal (DESIGN.md §4b-8).
     private var stepsCard: some View {
         VStack(alignment: .leading, spacing: DS.Space.xs) {
             HStack(spacing: 6) {
                 Image(systemName: "figure.walk")
                 Text("STEPS")
-                Spacer()
-                Text("Estimated").textStyle(.caption).foregroundStyle(DS.Colors.secondary)
             }
             .textStyle(.label)
             .foregroundStyle(DS.Colors.primary)
@@ -278,20 +274,10 @@ struct TodayView: View {
             }
             ProgressMeter(fraction: Double(steps?.total ?? 0) / Double(max(1, stepGoal)))
                 .padding(.vertical, DS.Space.xs)
-            if steps == nil {
-                Text("No band data for this day")
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
-            } else if let steps, steps.isPartial {
-                Text("Counts the \(PulseFormat.duration(minutes: steps.measuredMinutes)) your band measured")
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
-            }
-            if !stepFactor.isCalibrated {
-                Text("Not checked yet. Settings > Steps")
-                    .textStyle(.caption)
-                    .foregroundStyle(DS.Colors.secondary)
-            }
+            Text(steps.map(StepsData.countedText) ?? StepsData.notCountedText)
+                .textStyle(.caption)
+                .foregroundStyle(DS.Colors.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .monoCard(padding: DS.Space.m)
@@ -522,20 +508,17 @@ struct TodayView: View {
         let profile = profiles.first?.metricsProfile ?? MetricsProfile()
         soFar = TodaySoFar.compute(minutes: minutes, profile: profile)
         let dayEnd = min(calendar.date(byAdding: .day, value: 1, to: selectedDay) ?? selectedDay, .now)
+        let counted = StepsData.minutes(from: selectedDay, to: dayEnd, in: context)
         calories = calorieBody.flatMap { body in
             DailyCalories.estimate(minutes: isToday ? minutes : PulseStore.minutes(from: selectedDay, to: dayEnd, in: context),
-                                   body: body, dayStart: selectedDay, end: dayEnd, maxHeartRate: profile.maxHeartRate,
+                                   steps: counted, body: body, dayStart: selectedDay, end: dayEnd, maxHeartRate: profile.maxHeartRate,
                                    restingHeartRate: days.first { calendar.isDate($0.date, inSameDayAs: selectedDay) }
                                        .flatMap { $0.restingHeartRate ?? $0.baselineRestingHeartRate })
         }
         let sleeps = sleepRecords.map(\.value)
         stress = StressMonitor.day(minutes: minutes, sleeps: sleeps, workouts: workouts.map(\.value),
                                    now: .now, calendar: calendar)
-        let summaries = Array(days)
-        stepFactor = Steps.factor(StepsData.checked(stepReferences.map(\.value), sleeps: sleeps, days: summaries,
-                                                    maxHeartRate: profile.maxHeartRate, context: context))
-        steps = StepsData.day(selectedDay, sleeps: sleeps, days: summaries, maxHeartRate: profile.maxHeartRate,
-                              factor: stepFactor, context: context)
+        steps = StepsData.day(selectedDay, context: context)
         // Respiratory rate needs the beat-to-beat data of each night: the selected one and up to 30 before.
         let tonight = mainSleep
         let from = calendar.date(byAdding: .day, value: -30, to: selectedDay) ?? selectedDay

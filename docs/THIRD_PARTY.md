@@ -8,8 +8,7 @@ Pulse ports some logic from two open projects. The ported Swift lives in
 - **OpenStrap code is MIT.** It can be used in any project, as long as the notice below stays with it.
 - **NOOP code is noncommercial only.** The files in `ThirdParty/NOOP/` are under the PolyForm Noncommercial License 1.0.0. While
   they are in Pulse, Pulse can't be sold or used commercially. Deleting them, and replacing their uses in `WorkoutDetector.swift`,
-  `DailyCalories.swift`, `Wellbeing.swift`, `NightAnalysis.swift`, `Steps.swift`, `SleepPerformance.swift` and `VO2Max.swift`, removes
-  that limit.
+  `DailyCalories.swift`, `Wellbeing.swift`, `NightAnalysis.swift`, `SleepPerformance.swift` and `VO2Max.swift`, removes that limit.
 - **Nothing here comes from OpenStrap's AGPL code.** OpenStrap moved to AGPL-3.0 after the commit below, so only that commit or
   earlier may be used as a source. Don't update these ports from a newer OpenStrap version without checking its license first.
 
@@ -24,8 +23,7 @@ Pulse ports some logic from two open projects. The ported Swift lives in
 | `OpenStrap/OpenStrapRespiration.swift` | `lib/src/onehz/respiration/resp_rate.dart` | Breathing rate |
 | `OpenStrap/OpenStrapZones.swift` | `lib/src/onehz/workout/hr_zones.dart` | Heart-rate zones |
 | `OpenStrap/OpenStrapCalories.swift` | `lib/src/onehz/workout/calories.dart` | Active calories |
-| `OpenStrap/OpenStrapAutoDetect.swift` | `lib/src/onehz/workout/auto_detect.dart` | Cardio workout detection |
-| `OpenStrap/OpenStrapPedometer.swift` | `lib/src/onehz/motion/steps.dart` (Tier A: `StepParams`, `pedometer`, `calcSteps`, `livePedometer`) | Steps on the band's 100 Hz stream during a step test |
+| `OpenStrap/OpenStrapPedometer.swift` | `lib/src/onehz/motion/steps.dart` (Tier A: `StepParams`, `pedometer`, `calcSteps`, `livePedometer`) | Steps on the band's 100 Hz stream, minute by minute |
 
 ```text
 MIT License
@@ -66,13 +64,11 @@ SOFTWARE.
 | `NOOP/NoopSleepStager.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStagerV2.swift` | Deep, REM and light sleep |
 | `NOOP/NoopFitness.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/FitnessAgeEngine.swift`, `docs/FITNESS_AGE.md` | VO₂ max (Nes 2011 model, activity index, 4-of-7-nights gate) |
 | `NOOP/NoopRestorative.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/AnalyticsEngine.swift` (`enum Rest`, restorative sub-score) | Restorative sleep level |
-| `NOOP/NoopSteps.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/SleepAwareStepCounter.swift`, `StepsCounter.swift`, `StepsEstimateEngine.swift` | Sleep-aware step counting and the personal step factor |
+| `NOOP/NoopWorkoutDetector.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/WorkoutDetector.swift` (`detect` and its helpers), `StrainScorer.swift` (Edwards zones) | Finding workouts from heart rate and movement |
 
 ## Pulse's own rules
 
-Neither project has a detector for strength sessions or walks from one-second band data. These rules in `WorkoutDetector.swift` are
-Pulse's own, and are tuned on the owner's data: 20+ minutes of raised heart rate with arm movement and at least 3 climbs and falls
-of 15 bpm, and 10+ minutes of sustained movement with a raised heart rate.
-
-NOOP's step counter reads a step counter that only the WHOOP 5.0 and MG keep. For a WHOOP 4.0, the seconds of walking and running
-that feed it come from Pulse's own detector in `Steps.swift` (docs/METRICS.md §15).
+Neither project records walks and runs from a WHOOP 4.0's own step count. Pulse's rule in `WorkoutDetector.swift` is its own:
+10 minutes or more of minutes with 60 counted steps or more, pauses of up to 2 minutes, and a run from a median of 140 a minute
+(docs/METRICS.md §10). When to stream the 100 Hz motion (`MotionStreamPolicy.swift`) and the walking cost in `DailyCalories.swift`
+(ACSM's equations) are Pulse's own too.

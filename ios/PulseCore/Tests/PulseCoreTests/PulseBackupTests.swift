@@ -149,10 +149,11 @@ private func readAll(_ data: Data, size: Int = 4096) throws -> (PulseBackup.Cont
 }
 
 @Test func aFormatOneBackupStillReads() throws {
-    // Written before the wear sensor's readings and the step references were added.
+    // Written before the wear sensor's readings, the step references and the step count were added.
     let text = String(decoding: try file(minutes: [minute(0)]), as: UTF8.self)
         .replacingOccurrences(of: "\"wear_sensor\":[],\n", with: "")
         .replacingOccurrences(of: "\"step_references\":[],\n", with: "")
+        .replacingOccurrences(of: "\"step_minutes\":[],\n", with: "")
         .replacingOccurrences(of: "\"formatVersion\":\(PulseBackup.formatVersion)", with: "\"formatVersion\":1")
     #expect(!text.contains("wear_sensor") && !text.contains("step_references"))
     let read = try readAll(Data(text.utf8))
@@ -162,6 +163,7 @@ private func readAll(_ data: Data, size: Int = 4096) throws -> (PulseBackup.Cont
 @Test func aFormatTwoBackupStillReads() throws {
     let text = String(decoding: try file(minutes: [minute(0)]), as: UTF8.self)
         .replacingOccurrences(of: "\"step_references\":[],\n", with: "")
+        .replacingOccurrences(of: "\"step_minutes\":[],\n", with: "")
         .replacingOccurrences(of: "\"formatVersion\":\(PulseBackup.formatVersion)", with: "\"formatVersion\":2")
     let read = try readAll(Data(text.utf8))
     #expect(read.0.stepReferences.isEmpty && read.0.header.profile?.stepGoal == nil && read.1.count == 1)
@@ -182,6 +184,26 @@ private func readAll(_ data: Data, size: Int = 4096) throws -> (PulseBackup.Cont
     let read = try readAll(data).0
     #expect(read.stepReferences == contents.stepReferences)
     #expect(read.header.profile?.stepGoal == 9_000 && read.header.profile?.waistCm == 84)
+}
+
+@Test func aFormatThreeBackupStillReads() throws {
+    let text = String(decoding: try file(minutes: [minute(0)]), as: UTF8.self)
+        .replacingOccurrences(of: "\"step_minutes\":[],\n", with: "")
+        .replacingOccurrences(of: "\"formatVersion\":\(PulseBackup.formatVersion)", with: "\"formatVersion\":3")
+    #expect(!text.contains("step_minutes"))
+    let read = try readAll(Data(text.utf8))
+    #expect(read.0.stepMinutes.isEmpty && read.1.count == 1)
+}
+
+@Test func theBandsStepCountMakesTheRoundTrip() throws {
+    var contents = fixture
+    contents.stepMinutes = [StepMinute(start: date(0), steps: 104, seconds: 60), StepMinute(start: date(1), steps: 12, seconds: 31)]
+    var data = Data()
+    var writer = try PulseBackup.Writer(contents: contents) { data.append($0) }
+    try writer.append([minute(0)])
+    try writer.finish()
+    #expect(String(decoding: data, as: UTF8.self).contains("\"step_minutes\":[["))
+    #expect(try readAll(data).0.stepMinutes == contents.stepMinutes)
 }
 
 // MARK: - Merging

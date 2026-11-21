@@ -179,16 +179,21 @@ struct SessionHarness {
         computed.days.first { utcCalendar.isDate($0.date, inSameDayAs: date) }?.restingHeartRate
     }
     let detected = WorkoutDetector.detect(minutes: dataset.minutes, restingHeartRate: rest)
-    // Every clearly hard session the generator planned (average HR 125+ for 20+ minutes) must be found.
-    let hard = dataset.workouts.filter { $0.averageHeartRate >= 125 && $0.durationMinutes >= 20 }
+    // Every clearly hard session the generator planned must be found: 20+ minutes averaging 65% of heart-rate reserve or more,
+    // with the arms moving beyond NOOP's 0.20 g (runs, rides, HIIT and "other"; its strength and walks move less).
+    let hard = dataset.workouts.filter { workout in
+        let resting = rest(workout.start) ?? 54
+        return [.run, .ride, .hiit, .other].contains(workout.kind) && workout.durationMinutes >= 20
+            && Double(workout.averageHeartRate) >= resting + 0.65 * (190 - resting)
+    }
     #expect(hard.count >= 5)
     for workout in hard {
         let hit = detected.contains { $0.start < workout.end && $0.end > workout.start }
         #expect(hit, "missed \(workout.kind) at \(workout.start)")
     }
-    // And it must not invent a crowd of workouts out of normal daily life.
-    let counted = detected.filter { $0.isSuggestion != true }
-    #expect(counted.count <= dataset.workouts.count + 6, "\(counted.count) detected vs \(dataset.workouts.count) planned")
+    // And it must not invent a crowd of workouts out of normal daily life, or ask about any.
+    #expect(detected.count <= dataset.workouts.count + 6, "\(detected.count) detected vs \(dataset.workouts.count) planned")
+    #expect(detected.allSatisfy { $0.isSuggestion == nil })
     // Found in simulated minutes = still simulated, so it can never be exported as real.
     #expect(detected.allSatisfy { $0.source == .simulated })
     for workout in detected {
@@ -199,24 +204,24 @@ struct SessionHarness {
 }
 
 @Test func detectorIgnoresShortBurstsAndKeepsShortPauses() {
-    func minute(_ index: Int, hr: UInt8) -> MinuteSample {
+    func minute(_ index: Int, hr: UInt8, moving: Bool) -> MinuteSample {
         MinuteSample(start: Date(timeIntervalSince1970: 1_750_000_020 + Double(index) * 60),
                      heartRate: [UInt8](repeating: hr, count: 60), rrIntervalsMs: [],
-                     activity: [UInt8](repeating: 40, count: 60), source: .history)
+                     activity: [UInt8](repeating: moving ? 130 : 3, count: 60), source: .history)
     }
-    // 6 hard minutes (too short), a long rest, then 8 hard + 1 easy + 8 hard (one workout with a pause).
+    // 4 hard minutes (under NOOP's 5), a long rest, then 8 hard + 2 resting + 8 hard (one workout with a pause).
     var minutes: [MinuteSample] = []
-    for i in 0..<6 { minutes.append(minute(i, hr: 150)) }
-    for i in 6..<30 { minutes.append(minute(i, hr: 70)) }
-    for i in 30..<38 { minutes.append(minute(i, hr: 150)) }
-    for i in 38..<39 { minutes.append(minute(i, hr: 80)) }
-    for i in 39..<47 { minutes.append(minute(i, hr: 150)) }
-    for i in 47..<60 { minutes.append(minute(i, hr: 70)) }
+    for i in 0..<4 { minutes.append(minute(i, hr: 150, moving: true)) }
+    for i in 4..<30 { minutes.append(minute(i, hr: 70, moving: false)) }
+    for i in 30..<38 { minutes.append(minute(i, hr: 150, moving: true)) }
+    for i in 38..<40 { minutes.append(minute(i, hr: 70, moving: false)) }
+    for i in 40..<48 { minutes.append(minute(i, hr: 150, moving: true)) }
+    for i in 48..<60 { minutes.append(minute(i, hr: 70, moving: false)) }
 
     let detected = WorkoutDetector.detect(minutes: minutes) { _ in 60 }
     #expect(detected.count == 1)
     #expect(detected.first?.start == minutes[30].start)
-    #expect(detected.first?.durationMinutes == 17)              // the trailing easy minutes are not counted
+    #expect(detected.first?.durationMinutes == 18)              // the resting minutes after it are not counted
     #expect(detected.first?.source == .history)
 }
 

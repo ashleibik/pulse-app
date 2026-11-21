@@ -1,32 +1,19 @@
 import Foundation
 
-/// Finds workouts in raw band data, so nobody has to press "start". Spec: docs/METRICS.md §10.
+/// Finds workouts by itself and records them, so nobody has to press "start" or confirm anything. Spec: docs/METRICS.md §10.
 ///
-/// Three kinds of stretch are looked for:
-/// - **Cardio:** heart rate held high for 12+ minutes (OpenStrap's detector).
-/// - **Strength:** heart rate going up and down for 20+ minutes with the arms moving. NOOP's classifier decides
-///   whether the pattern looks like sets and rests.
-/// - **Walk:** 10+ minutes of sustained movement with a raised heart rate. Only suggested, never assumed: at one
-///   reading a second the band can't see the rhythm of steps.
+/// - **From heart rate and movement:** NOOP's exercise detector (`NoopWorkoutDetector`). Its type comes from the band's step
+///   count when the band counted most of it, else from NOOP's classifier.
+/// - **From steps:** 10 minutes or more of walking or running on the band's 100 Hz count (`Steps`), where no heart-rate workout is.
 public enum WorkoutDetector {
-    public static let minimumMinutes = 10
+    /// NOOP's shortest workout.
+    public static let minimumMinutes = 5
     /// Shorter than this is a mis-tap, not a workout.
     public static let minimumSavedSeconds = 60.0
-
-    // Our choices, tuned on the owner's data: neither source has a detector for these patterns.
-    static let strengthMinutes = 20
-    static let strengthPauseMinutes = 5
-    static let strengthLongestMinutes = 180
-    static let strengthAverageReserve = 0.20
-    static let strengthPeakReserve = 0.30
-    static let strengthMovement = 8.0
-    /// Sets and rests: the heart rate has to climb and fall by this much, this many times.
-    static let strengthSwingBeats = 15.0
-    static let strengthSwings = 3
-    static let walkMinutes = 10
-    static let walkPauseMinutes = 2
-    static let walkMovement = 30.0
-    static let walkReserve = 0.10
+    /// A walk or run found from steps lasts at least this long ...
+    public static let stepWorkoutMinutes = 10
+    /// ... with pauses of up to this many minutes.
+    public static let stepPauseMinutes = 2
 
     /// True when a workout this long should not be saved.
     public static func isTooShort(start: Date, end: Date) -> Bool {
@@ -35,163 +22,172 @@ public enum WorkoutDetector {
 
     /// - Parameters:
     ///   - minutes: raw minutes, any order.
+    ///   - steps: the band's counted minutes (§15), any order. Without them only heart-rate workouts are found.
     ///   - body: for calories. Without it a workout has 0 calories, which the app shows as `--`.
-    ///   - restingHeartRate: the resting heart rate of the day a minute belongs to. nil = unknown, 60 is used.
-    public static func detect(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
+    ///   - restingHeartRate: the resting heart rate of the day a minute belongs to. nil = unknown (NOOP's 10th percentile).
+    public static func detect(minutes: [MinuteSample], steps: [StepMinute] = [], profile: MetricsProfile = MetricsProfile(),
                               body: DailyCalories.Body? = nil, restingHeartRate: (Date) -> Double?) -> [Workout] {
         let sorted = minutes.filter(\.isWorn).sorted { $0.start < $1.start }
+        let counted = steps.filter { $0.seconds > 0 }.sorted { $0.start < $1.start }
         var found: [Workout] = []
-        for region in regions(sorted, profile: profile, restingHeartRate: restingHeartRate) {
-            let window = Array(sorted[region])
-            guard let first = window.first else { continue }
-            let known = restingHeartRate(first.start)
-            let rest = known ?? 60
-            var taken: [Range<Date>] = []
+        var taken: [Range<Date>] = []
 
-            func add(_ range: Range<Date>, suggested: Bool = false, kind fixed: WorkoutKind? = nil) {
-                let inside = window.filter { $0.start >= range.lowerBound && $0.start < range.upperBound }
-                guard !inside.isEmpty else { return }
-                var workout = build(inside, start: range.lowerBound, end: range.upperBound, kind: fixed ?? .other, profile: profile,
-                                    body: body, resting: rest, restingKnown: known != nil, id: stableID(start: range.lowerBound))
-                if fixed == nil { workout.kind = NoopWorkoutType.classify(features(inside, workout: workout, resting: rest, profile: profile)) }
-                workout.isSuggestion = suggested ? true : nil
-                workout.source = inside.allSatisfy { $0.source == .simulated } ? .simulated : .history
-                found.append(workout)
-                taken.append(range)
+        func add(_ range: Range<Date>, kind fixed: WorkoutKind?) {
+            let inside = Array(sorted[slice(sorted, range, \.start)])
+            guard !inside.isEmpty else { return }
+            let resting = restingHeartRate(range.lowerBound)
+            var workout = build(inside, start: range.lowerBound, end: range.upperBound, kind: fixed ?? .other, profile: profile,
+                                body: body, resting: resting ?? 60, restingKnown: resting != nil,
+                                id: stableID(start: range.lowerBound))
+            let stepsInside = Array(counted[slice(counted, range, \.start)])
+            if fixed == nil {
+                let length = Int((range.upperBound.timeIntervalSince(range.lowerBound) / 60).rounded())
+                workout.kind = Self.kind(cadenceOf: stepsInside, minutes: length)
+                    ?? NoopWorkoutType.classify(features(inside, workout: workout, resting: resting ?? 60, profile: profile))
             }
+            if let body, !stepsInside.isEmpty {
+                let walking = stepsInside.reduce(0.0) { $0 + DailyCalories.walkingKcal($1, body: body) }
+                workout.calories = max(workout.calories, Int(walking.rounded()))
+            }
+            workout.source = inside.allSatisfy { $0.source == .simulated } ? .simulated : .history
+            found.append(workout)
+            taken.append(range)
+        }
 
-            for bout in cardio(window, resting: rest, profile: profile) { add(bout) }
-            for range in strength(window, resting: rest, profile: profile, excluding: taken) {
-                let inside = window.filter { $0.start >= range.lowerBound && $0.start < range.upperBound }
-                let draft = build(inside, start: range.lowerBound, end: range.upperBound, kind: .strength, profile: profile, body: body,
-                                  resting: rest, restingKnown: known != nil, id: stableID(start: range.lowerBound))
-                if NoopWorkoutType.classify(features(inside, workout: draft, resting: rest, profile: profile)) == .strength {
-                    add(range, kind: .strength)
-                }
-            }
-            for range in walks(window, resting: rest, profile: profile, excluding: taken) { add(range, suggested: true, kind: .walk) }
+        for bout in heartRateBouts(sorted, profile: profile, restingHeartRate: restingHeartRate) {
+            let start = Date(timeIntervalSince1970: Double(bout.start / 60 * 60))
+            let end = Date(timeIntervalSince1970: Double(bout.end / 60 * 60 + 60))
+            add(start..<end, kind: nil)
+        }
+        for (range, kind) in stepWorkouts(counted)
+        where !taken.contains(where: { $0.lowerBound < range.upperBound && range.lowerBound < $0.upperBound }) {
+            add(range, kind: kind)
         }
         return found.sorted { $0.start < $1.start }
     }
 
-    /// Stretches worth a closer look. Quiet minutes are skipped so that a sync stays fast with a long history.
-    private static func regions(_ sorted: [MinuteSample], profile: MetricsProfile,
-                                restingHeartRate: (Date) -> Double?) -> [Range<Int>] {
-        var out: [Range<Int>] = []
-        var current: Range<Int>?
-        for (index, minute) in sorted.enumerated() {
-            let rest = restingHeartRate(minute.start) ?? 60
-            let peak = Double(minute.heartRate.max() ?? 0)
-            let raised = peak >= rest + strengthAverageReserve * max(1, profile.maxHeartRate - rest)
-            let moving = minute.averageActivity >= walkMovement || (minute.wristAngle != nil && minute.movement >= walkMovement)
-            guard raised || moving else { continue }
-            if let open = current, minute.start.timeIntervalSince(sorted[open.upperBound - 1].start) <= 10 * 60 {
-                current = open.lowerBound..<(index + 1)
-            } else {
-                if let open = current { out.append(open) }
-                current = index..<(index + 1)
-            }
-        }
-        if let current { out.append(current) }
-        return out.map { max(0, $0.lowerBound - 3)..<min(sorted.count, $0.upperBound + 3) }
-    }
+    /// Kept minutes further apart than this can't end up in one workout: NOOP joins active seconds at most 150 s apart, and
+    /// runs at most 300 s apart.
+    static let separateAfterMinutes = 7
 
-    private static func cardio(_ window: [MinuteSample], resting: Double, profile: MetricsProfile) -> [Range<Date>] {
-        var seconds: [(time: Int, rate: Double)] = []
-        for minute in window {
-            let base = Int(minute.start.timeIntervalSince1970)
-            for (second, rate) in minute.heartRate.enumerated() where rate > 0 { seconds.append((base + second, Double(rate))) }
+    /// NOOP's detector over the minutes with strong movement, plus one minute either side for its 10-second average. A quiet
+    /// minute can't make a second active, so leaving the rest out changes nothing. Each stretch of kept minutes is run on its
+    /// own (`separateAfterMinutes`), so a long history never sits in memory second by second.
+    static func heartRateBouts(_ sorted: [MinuteSample], profile: MetricsProfile,
+                               restingHeartRate: (Date) -> Double?) -> [NoopWorkoutDetector.Bout] {
+        let strong = NoopWorkoutDetector.motionThreshold * MinuteBuilder.activityScale
+        let starts = sorted.map { Int($0.start.timeIntervalSince1970.rounded()) }
+        var kept = [Bool](repeating: false, count: sorted.count)
+        for index in sorted.indices where sorted[index].activity.contains(where: { Double($0) > strong }) {
+            kept[index] = true
+            if index > 0, starts[index] - starts[index - 1] <= 60 { kept[index - 1] = true }
+            if index + 1 < sorted.count, starts[index + 1] - starts[index] <= 60 { kept[index + 1] = true }
         }
-        let floor = OpenStrapAutoDetect.floor(resting: resting, maximum: profile.maxHeartRate)
-        let bouts = OpenStrapAutoDetect.detect(seconds: seconds, floor: floor) { low, high in
-            let inside = window.filter { Int($0.start.timeIntervalSince1970) + 59 >= low && Int($0.start.timeIntervalSince1970) <= high }
-            return inside.isEmpty ? nil : inside.reduce(0) { $0 + $1.movement } / Double(inside.count)
-        }
-        return bouts.map { bout in
-            let start = Date(timeIntervalSince1970: Double(bout.start / 60 * 60))
-            return start..<Date(timeIntervalSince1970: Double(bout.end / 60 * 60 + 60))
-        }
-    }
+        // A day without a resting heart rate uses NOOP's 10th percentile, here of the minutes' averages (worked out only if needed).
+        var fallback: Double?
+        var bouts: [NoopWorkoutDetector.Bout] = []
 
-    /// Groups minutes that pass `test`, allowing short pauses, into stretches of at least `shortest` minutes.
-    private static func stretches(_ window: [MinuteSample], pause: Int, shortest: Int, longest: Int,
-                                  excluding taken: [Range<Date>], test: (MinuteSample) -> Bool) -> [Range<Date>] {
-        var out: [Range<Date>] = []
-        var start: Date?, last: Date?
-        func close() {
-            if let start, let last {
-                let end = last.addingTimeInterval(60)
-                let length = Int(end.timeIntervalSince(start) / 60)
-                if length >= shortest, length <= longest, !taken.contains(where: { $0.lowerBound < end && start < $0.upperBound }) {
-                    out.append(start..<end)
+        func detect(from first: Int, through last: Int) {
+            var motion: [NoopWorkoutDetector.MotionPoint] = []
+            motion.reserveCapacity((first...last).filter { kept[$0] }.count * 60)
+            for index in first...last where kept[index] {
+                for (second, value) in sorted[index].activity.enumerated() {
+                    motion.append(NoopWorkoutDetector.MotionPoint(ts: starts[index] + second,
+                                                                  intensity: Double(value) / MinuteBuilder.activityScale))
                 }
             }
-            start = nil
-            last = nil
-        }
-        for minute in window {
-            if let previous = last, minute.start.timeIntervalSince(previous) > Double(pause + 1) * 60 { close() }
-            if test(minute) {
-                if start == nil { start = minute.start }
-                last = minute.start
+            // Which stored minute holds each clock minute of the stretch, with two minutes of margin either side.
+            let base = starts[first] - 120
+            var minuteAt = [Int](repeating: -1, count: (starts[last] - base) / 60 + 4)
+            for index in max(0, first - 2)...min(sorted.count - 1, last + 2) {
+                let slot = (starts[index] - base) / 60
+                if starts[index] >= base, slot < minuteAt.count { minuteAt[slot] = index }
             }
+            func heartRate(_ ts: Int) -> Double? {
+                guard ts >= base else { return nil }
+                let slot = (ts - base) / 60
+                guard slot < minuteAt.count, minuteAt[slot] >= 0 else { return nil }
+                let index = minuteAt[slot]
+                let second = ts - starts[index]
+                guard second >= 0, second < sorted[index].heartRate.count, sorted[index].heartRate[second] > 0 else { return nil }
+                return Double(sorted[index].heartRate[second])
+            }
+            // The resting heart rate of each clock minute of the stretch, looked up once (nan = not yet).
+            var restingAt = [Double](repeating: .nan, count: minuteAt.count)
+            func resting(_ ts: Int) -> Double {
+                let minute = ts - ((ts % 60) + 60) % 60
+                let slot = (minute - base) / 60
+                if minute >= base, slot < restingAt.count, !restingAt[slot].isNaN { return restingAt[slot] }
+                let value = restingHeartRate(Date(timeIntervalSince1970: Double(minute))) ?? {
+                    let derived = fallback ?? NoopWorkoutDetector.deriveRestingHR(sorted.compactMap(\.averageHeartRate))
+                    fallback = derived
+                    return derived
+                }()
+                if minute >= base, slot < restingAt.count { restingAt[slot] = value }
+                return value
+            }
+            bouts += NoopWorkoutDetector.detect(motion: motion, heartRateAt: heartRate, restingHR: resting,
+                                                maxHR: profile.maxHeartRate)
+        }
+
+        var stretchStart: Int?
+        var lastKept = 0
+        for index in sorted.indices where kept[index] {
+            if let open = stretchStart, starts[index] - starts[lastKept] > separateAfterMinutes * 60 {
+                detect(from: open, through: lastKept)
+                stretchStart = nil
+            }
+            if stretchStart == nil { stretchStart = index }
+            lastKept = index
+        }
+        if let open = stretchStart { detect(from: open, through: lastKept) }
+        return bouts
+    }
+
+    /// Walks and runs on the band's step count: minutes of 60 steps or more, with pauses of up to `stepPauseMinutes`, lasting
+    /// at least `stepWorkoutMinutes`. A run when their median is 140 a minute or more.
+    static func stepWorkouts(_ counted: [StepMinute]) -> [(Range<Date>, WorkoutKind)] {
+        let moving = counted.filter { $0.cadence >= Double(Steps.walkingStepsPerMinute) }
+        var out: [(Range<Date>, WorkoutKind)] = []
+        var group: [StepMinute] = []
+        func close() {
+            defer { group = [] }
+            guard let first = group.first, let last = group.last else { return }
+            let end = last.start.addingTimeInterval(60)
+            guard end.timeIntervalSince(first.start) >= Double(stepWorkoutMinutes) * 60 else { return }
+            let median = Stats.median(group.map(\.cadence))
+            out.append((first.start..<end, median >= Double(Steps.runningStepsPerMinute) ? .run : .walk))
+        }
+        for minute in moving {
+            if let last = group.last, minute.start.timeIntervalSince(last.start) > Double(stepPauseMinutes + 1) * 60 { close() }
+            group.append(minute)
         }
         close()
         return out
     }
 
-    private static func strength(_ window: [MinuteSample], resting: Double, profile: MetricsProfile,
-                                 excluding taken: [Range<Date>]) -> [Range<Date>] {
-        let reserve = max(1, profile.maxHeartRate - resting)
-        let found = stretches(window, pause: strengthPauseMinutes, shortest: strengthMinutes, longest: strengthLongestMinutes,
-                              excluding: taken) { minute in
-            guard let average = minute.averageHeartRate else { return false }
-            return average >= resting + strengthAverageReserve * reserve
-                || Double(minute.heartRate.max() ?? 0) >= resting + strengthPeakReserve * reserve
-        }
-        return found.filter { range in
-            let inside = window.filter { range.contains($0.start) }
-            return !inside.isEmpty && inside.reduce(0) { $0 + $1.movement } / Double(inside.count) >= strengthMovement
-                && swings(inside) >= strengthSwings
-        }
-    }
-
-    /// How many times the heart rate climbed and then fell back, from 30-second averages.
-    static func swings(_ minutes: [MinuteSample]) -> Int {
-        var count = 0
-        var low = Double.infinity, high = -Double.infinity
-        var climbing = false
-        for minute in minutes {
-            for half in stride(from: 0, to: minute.heartRate.count, by: 30) {
-                let rates = minute.heartRate[half..<min(half + 30, minute.heartRate.count)].filter { $0 > 0 }
-                guard !rates.isEmpty else { continue }
-                let rate = Double(rates.reduce(0) { $0 + Int($1) }) / Double(rates.count)
-                if climbing {
-                    high = max(high, rate)
-                    if rate <= high - strengthSwingBeats {
-                        count += 1
-                        climbing = false
-                        low = rate
-                    }
-                } else {
-                    low = min(low, rate)
-                    if rate >= low + strengthSwingBeats {
-                        climbing = true
-                        high = rate
-                    }
-                }
+    /// The indices of the elements of a list sorted by `key` that fall in `range`.
+    static func slice<T>(_ sorted: [T], _ range: Range<Date>, _ key: KeyPath<T, Date>) -> Range<Int> {
+        func firstIndex(atOrAfter date: Date) -> Int {
+            var low = 0, high = sorted.count
+            while low < high {
+                let mid = (low + high) / 2
+                if sorted[mid][keyPath: key] < date { low = mid + 1 } else { high = mid }
             }
+            return low
         }
-        return count
+        let lower = firstIndex(atOrAfter: range.lowerBound)
+        return lower..<max(lower, firstIndex(atOrAfter: range.upperBound))
     }
 
-    private static func walks(_ window: [MinuteSample], resting: Double, profile: MetricsProfile,
-                              excluding taken: [Range<Date>]) -> [Range<Date>] {
-        let reserve = max(1, profile.maxHeartRate - resting)
-        return stretches(window, pause: walkPauseMinutes, shortest: walkMinutes, longest: strengthLongestMinutes, excluding: taken) { minute in
-            guard let average = minute.averageHeartRate else { return false }
-            return minute.movement >= walkMovement && average >= resting + walkReserve * reserve
-        }
+    /// Walk or Run from the band's step count, when it counted at least half of the workout's minutes. nil = it can't tell.
+    static func kind(cadenceOf steps: [StepMinute], minutes: Int) -> WorkoutKind? {
+        let full = steps.filter { $0.seconds >= 30 }
+        guard minutes > 0, full.count * 2 >= minutes else { return nil }
+        let median = Stats.median(full.map(\.cadence))
+        if median >= Double(Steps.runningStepsPerMinute) { return .run }
+        if median >= Double(Steps.walkingStepsPerMinute) { return .walk }
+        return nil
     }
 
     private static func features(_ minutes: [MinuteSample], workout: Workout, resting: Double,

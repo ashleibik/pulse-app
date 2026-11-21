@@ -101,6 +101,8 @@ enum DS {
 
     enum Radius {
         static let card: CGFloat = 22
+        /// Text fields, such as the Settings search.
+        static let field: CGFloat = 14
     }
 
     // MARK: Motion (DESIGN.md section 9)

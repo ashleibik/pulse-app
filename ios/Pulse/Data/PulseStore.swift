@@ -7,7 +7,7 @@ enum PulseStore {
     static let schema = Schema([
         MinuteRecord.self, SleepRecord.self, WorkoutRecord.self, DaySummaryRecord.self,
         BandRecord.self, ProfileRecord.self, PacketRecord.self, JournalRecord.self, SleepCorrectionRecord.self,
-        StepReferenceRecord.self,
+        StepReferenceRecord.self, StepMinuteRecord.self,
     ])
 
     static func makeContainer(inMemory: Bool = false) -> ModelContainer {
@@ -43,6 +43,7 @@ enum PulseStore {
         try context.delete(model: WorkoutRecord.self)
         try context.delete(model: DaySummaryRecord.self)
         try context.delete(model: SleepCorrectionRecord.self)
+        try context.delete(model: StepMinuteRecord.self)
         try context.save()
         RawHistoryArchive.delete()
     }
@@ -73,13 +74,27 @@ enum PulseStore {
     static let previewContainer: ModelContainer = makeContainer(inMemory: true)
 }
 
+/// How much of the history workout detection looks at (docs/METRICS.md §10).
+enum WorkoutDetection: Sendable {
+    /// Leave the workouts as they are.
+    case skip
+    /// The last `recentDays`, after a band sync. Workouts that start earlier stay as they are.
+    case recent
+    /// Everything: when the rules change, after an import, and when "Your data starts" moves.
+    case all
+
+    static let recentDays = 3.0
+}
+
 /// Results of re-running the metrics engine, passed from the background actor to the main thread.
 struct RecomputeOutput: Sendable {
     let days: [DailySummary]
     let sleeps: [SleepSession]
     let workoutStrain: [UUID: Double]
-    /// Workouts found in the raw data (only after a band sync; `nil` = leave workouts alone).
+    /// Workouts found in the raw data (`nil` = leave workouts alone).
     var detectedWorkouts: [Workout]? = nil
+    /// Detection looked only from here on (nil = the whole history).
+    var detectedFrom: Date? = nil
     /// Fresh numbers for workouts the user added by hand (their band data may arrive later).
     var manualWorkouts: [UUID: Workout] = [:]
 }
@@ -93,17 +108,16 @@ actor MetricsRecomputer {
 
     /// Creates the actor away from the main thread. An actor created on the main thread would do its work there.
     static func inBackground(container: ModelContainer, profile: MetricsProfile, calendar: Calendar, now: Date,
-                             detectWorkouts: Bool = false) async throws -> RecomputeOutput {
+                             detection: WorkoutDetection = .skip) async throws -> RecomputeOutput {
         try await Task.detached(priority: .userInitiated) {
             try await MetricsRecomputer(modelContainer: container)
-                .run(profile: profile, calendar: calendar, now: now, detectWorkouts: detectWorkouts)
+                .run(profile: profile, calendar: calendar, now: now, detection: detection)
         }.value
     }
 
-    /// - Parameter detectWorkouts: also look for workouts in the raw data (used after a band sync;
-    ///   the demo month brings its own workouts).
+    /// - Parameter detection: how much of the history to look for workouts in.
     func run(profile: MetricsProfile, calendar: Calendar, now: Date,
-             detectWorkouts: Bool = false) throws -> RecomputeOutput {
+             detection: WorkoutDetection = .skip) throws -> RecomputeOutput {
         var descriptor = FetchDescriptor<MinuteRecord>(sortBy: [SortDescriptor(\.start)])
         // Never compute from the previous owner's data, even if some is still stored.
         if let cutoff = BandDataCutoff.date { descriptor.predicate = #Predicate { $0.start >= cutoff } }
@@ -133,10 +147,22 @@ actor MetricsRecomputer {
         }
         var output = RecomputeOutput(days: result.days, sleeps: result.sleeps, workoutStrain: strain)
         output.manualWorkouts = manual
-        if detectWorkouts {
-            output.detectedWorkouts = WorkoutDetector.detect(minutes: minutes, profile: profile, body: body) { date in
-                result.days.first { calendar.isDate($0.date, inSameDayAs: date) }?.restingHeartRate
+        if detection != .skip {
+            // Recent: from `recentDays` before the newest data, with an hour before that for workouts already under way.
+            let from = detection == .recent
+                ? minutes.last.map { $0.start.addingTimeInterval(-WorkoutDetection.recentDays * 86_400) } : nil
+            let lookFrom = from?.addingTimeInterval(-3600) ?? .distantPast
+            var stepsDescriptor = FetchDescriptor<StepMinuteRecord>(sortBy: [SortDescriptor(\.start)])
+            stepsDescriptor.predicate = #Predicate { $0.start >= lookFrom }
+            let steps = try modelContext.fetch(stepsDescriptor).map(\.value)
+            var restingByDay: [Date: Double] = [:]
+            for day in result.days { restingByDay[calendar.startOfDay(for: day.date)] = day.restingHeartRate }
+            let found = WorkoutDetector.detect(minutes: from == nil ? minutes : minutes.filter { $0.start >= lookFrom },
+                                               steps: steps, profile: profile, body: body) { date in
+                restingByDay[calendar.startOfDay(for: date)]
             }
+            output.detectedWorkouts = from.map { from in found.filter { $0.start >= from } } ?? found
+            output.detectedFrom = from
         }
         return output
     }
@@ -191,26 +217,30 @@ extension PulseStore {
             }
         }
         if let detected = output.detectedWorkouts {
-            // Planned demo workouts are kept as they are. Detected ones are added, updated, or
-            // removed if the detector no longer finds them. IDs are stable (WorkoutDetector.stableID),
-            // so a workout keeps its Strava mark across syncs.
-            // "kept" = demo workouts and ones the user added by hand: detection never touches them.
-            let demo = workouts.filter { $0.sourceRaw != DataSource.history.rawValue }
+            // Found workouts are added, updated, or removed when detection no longer finds them (docs/METRICS.md §10).
+            // IDs are stable (WorkoutDetector.stableID), so a workout keeps its Strava mark across syncs. Kept as they are:
+            // workouts added by hand, ones the owner confirmed, and found ones from before the detection window.
+            func isConfirmed(_ workout: WorkoutRecord) -> Bool {
+                workout.sourceRaw != DataSource.history.rawValue || workout.isSuggestion == false
+            }
+            let kept = workouts.filter(isConfirmed)
             var fromBand: [UUID: WorkoutRecord] = [:]
-            for workout in workouts where workout.sourceRaw == DataSource.history.rawValue {
+            for workout in workouts where !isConfirmed(workout) && workout.start >= (output.detectedFrom ?? .distantPast) {
                 fromBand[workout.id] = workout
             }
-            let dismissed = WorkoutSuggestions.dismissed
+            let dismissed = DismissedWorkouts.ids
             for found in detected {
-                if demo.contains(where: { $0.start < found.end && $0.end > found.start }) { continue }
-                if found.isSuggestion == true, dismissed.contains(found.id.uuidString) { continue }
+                if kept.contains(where: { $0.start < found.end && $0.end > found.start }) { continue }
+                if dismissed.contains(found.id.uuidString) { continue }
                 if let existing = fromBand.removeValue(forKey: found.id) {
+                    existing.kindRaw = found.kind.rawValue
                     existing.end = found.end
                     existing.averageHeartRate = found.averageHeartRate
                     existing.maxHeartRate = found.maxHeartRate
                     existing.strain = found.strain
                     existing.zoneSeconds = found.zoneSeconds
                     existing.calories = found.calories
+                    existing.isSuggestion = nil
                 } else {
                     context.insert(WorkoutRecord(found))
                 }

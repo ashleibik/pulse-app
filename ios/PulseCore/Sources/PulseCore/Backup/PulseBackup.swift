@@ -15,6 +15,7 @@ import Foundation
 ///     "sleep_corrections":[...],
 ///     "wear_sensor":[...],
 ///     "step_references":[...],
+///     "step_minutes":[[unix, steps, seconds],...],
 ///     "minutes":[
 ///     {...},
 ///     {...}
@@ -26,8 +27,9 @@ import Foundation
 /// anything, and importing the same file twice changes nothing. Days and sleeps are in the file so
 /// it is a complete record, but on import they are recalculated from the raw minutes.
 public enum PulseBackup {
-    /// 2 added `wear_sensor`, 3 added `step_references` and the step goal. Files of format 1 and 2 still read.
-    public static let formatVersion = 3
+    /// 2 added `wear_sensor`, 3 added `step_references` and the step goal, 4 added `step_minutes` (the band's step count).
+    /// Files of format 1 to 3 still read.
+    public static let formatVersion = 4
 
     public struct Profile: Codable, Sendable, Equatable {
         public var birthYear: Int?
@@ -104,12 +106,15 @@ public enum PulseBackup {
         public var sleepCorrections: [SleepCorrection]
         /// What the band said about how it sat on the wrist (docs/METRICS.md §13). For checking a night or a workout.
         public var wearSensor: [WearSensor.Observation]
-        /// The owner's step tests and Apple Watch days (docs/METRICS.md §15).
+        /// The owner's step tests (and Apple Watch days from earlier versions) (docs/METRICS.md §15).
         public var stepReferences: [Steps.Reference]
+        /// The steps the band counted, minute by minute (docs/METRICS.md §15).
+        public var stepMinutes: [StepMinute]
 
         public init(header: Header, workouts: [WorkoutEntry], journal: [JournalDay],
                     days: [DailySummary], sleeps: [SleepSession], sleepCorrections: [SleepCorrection] = [],
-                    wearSensor: [WearSensor.Observation] = [], stepReferences: [Steps.Reference] = []) {
+                    wearSensor: [WearSensor.Observation] = [], stepReferences: [Steps.Reference] = [],
+                    stepMinutes: [StepMinute] = []) {
             self.header = header
             self.workouts = workouts
             self.journal = journal
@@ -118,6 +123,7 @@ public enum PulseBackup {
             self.sleepCorrections = sleepCorrections
             self.wearSensor = wearSensor
             self.stepReferences = stepReferences
+            self.stepMinutes = stepMinutes
         }
     }
 
@@ -192,6 +198,7 @@ public enum PulseBackup {
             start.append(try field("sleep_corrections", contents.sleepCorrections))
             start.append(try field("wear_sensor", contents.wearSensor))
             start.append(try field("step_references", contents.stepReferences))
+            start.append(try field("step_minutes", contents.stepMinutes))
             start.append(Data("\"minutes\":[\n".utf8))
             try sink(start)
         }
@@ -255,6 +262,11 @@ public enum PulseBackup {
                 read.stepReferences = try Self.value(line, prefix: Self.stepReferencesPrefix)
                 next = try lines.next()
             }
+            // Format 4 adds the band's step count.
+            if let line = next, line.hasPrefix(Self.stepMinutesPrefix) {
+                read.stepMinutes = try Self.value(line, prefix: Self.stepMinutesPrefix)
+                next = try lines.next()
+            }
             guard next == "\"minutes\":[" else { throw Failure.damaged }
             contents = read
             self.lines = lines
@@ -262,6 +274,7 @@ public enum PulseBackup {
 
         private static let wearSensorPrefix = "\"wear_sensor\":"
         private static let stepReferencesPrefix = "\"step_references\":"
+        private static let stepMinutesPrefix = "\"step_minutes\":"
 
         private static func field<T: Decodable>(_ key: String, _ lines: LineSource) throws -> T {
             guard let line = try lines.next() else { throw Failure.damaged }

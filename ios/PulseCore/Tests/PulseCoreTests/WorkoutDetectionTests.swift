@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import PulseCore
 
-// Workouts, zones and active calories. The owner's workout itself isn't in a backup on this machine yet,
-// so these use made-up minutes shaped like it: 45 minutes, average near 120, peaks near 163.
+// Workouts found by themselves (docs/METRICS.md §10), zones and active calories. Made-up minutes: a hard session at 155 bpm,
+// an easy walk at 95 bpm, and the band's step count for walks and runs.
 
 private let start = Date(timeIntervalSince1970: 1_790_000_040)
 private let owner = DailyCalories.Body(weightKg: 80, heightCm: 180, age: 30, sex: .male)
@@ -30,66 +30,87 @@ private func strengthSession(_ from: Int, _ to: Int) -> [MinuteSample] {
     }, motion: { $0 % 240 < 80 ? ($0 % 3 == 0 ? 70 : 20) : 3 })
 }
 
-private func detect(_ list: [MinuteSample], body: DailyCalories.Body? = owner) -> [Workout] {
-    WorkoutDetector.detect(minutes: list, profile: profile, body: body) { _ in 55 }
+/// A hard session: 155 bpm (zone 2 and up for resting 55 and max 190) with strong arm movement (over NOOP's 0.20 g).
+private func hardSession(_ from: Int, _ to: Int) -> [MinuteSample] {
+    minutes(from, to, rate: { _ in 155 }, motion: { $0 % 2 == 0 ? 150 : 110 })
+}
+
+/// An easy walk: 95 bpm with the same movement. NOOP calls it no workout; the band's steps can.
+private func easyWalk(_ from: Int, _ to: Int) -> [MinuteSample] {
+    minutes(from, to, rate: { _ in 95 }, motion: { $0 % 2 == 0 ? 150 : 110 })
+}
+
+/// The band's count: `perMinute` steps in each minute from `from` to `to`.
+private func steps(_ from: Int, _ to: Int, _ perMinute: Int) -> [StepMinute] {
+    (from..<to).map { StepMinute(start: moment(Double($0)), steps: perMinute, seconds: 60) }
+}
+
+private func detect(_ list: [MinuteSample], steps: [StepMinute] = [], body: DailyCalories.Body? = owner) -> [Workout] {
+    WorkoutDetector.detect(minutes: list, steps: steps, profile: profile, body: body) { _ in 55 }
 }
 
 // MARK: - Detection
 
-@Test func strengthTrainingIsFoundFromItsUpAndDownHeartRate() throws {
-    let workouts = detect(quiet(0, 30) + strengthSession(30, 75) + quiet(75, 110))
+@Test func aHardSessionIsRecordedWithoutAsking() throws {
+    let workouts = detect(quiet(0, 30) + hardSession(30, 60) + quiet(60, 90))
     #expect(workouts.count == 1)
     let workout = try #require(workouts.first)
-    #expect(workout.kind == .strength)
-    #expect(abs(workout.start.timeIntervalSince(moment(30))) <= 3 * 60)
-    #expect(abs(workout.end.timeIntervalSince(moment(75))) <= 3 * 60)
-    #expect(workout.maxHeartRate >= 160)
+    #expect(abs(workout.start.timeIntervalSince(moment(30))) <= 60)
+    #expect(abs(workout.end.timeIntervalSince(moment(60))) <= 60)
     #expect(workout.isSuggestion == nil)
+    #expect(workout.source == .history)
+    #expect(workout.averageHeartRate == 155)
 }
 
-@Test func aShortBurstOfSetsIsNotAStrengthWorkout() {
-    #expect(detect(quiet(0, 30) + strengthSession(30, 39) + quiet(39, 80)).filter { $0.kind == .strength }.isEmpty)
+@Test func anEasyWalkByHeartRateAloneIsNotAWorkout() {
+    // Without the band's steps, 95 bpm with moving arms could be housework: NOOP needs zone 2 and up.
+    #expect(detect(quiet(0, 30) + easyWalk(30, 60) + quiet(60, 90)).isEmpty)
 }
 
-@Test func longRestsBetweenSetsStayInsideOneStrengthWorkout() throws {
-    // Three minutes of rest near 92 bpm after each set is too long for the cardio detector to bridge.
-    let session = minutes(30, 75, rate: { second in UInt8(second % 300 < 120 ? 140 : 92) },
-                          motion: { $0 % 300 < 120 ? ($0 % 3 == 0 ? 70 : 20) : 3 })
-    let workouts = detect(quiet(0, 30) + session + quiet(75, 110)).filter { $0.kind == .strength }
+@Test func aStillWristIsNeverAWorkout() {
+    let desk = minutes(30, 60, rate: { _ in 155 }, motion: { _ in 4 })
+    #expect(detect(quiet(0, 30) + desk + quiet(60, 90)).isEmpty)
+}
+
+@Test func aWalkIsRecordedFromTheBandsSteps() throws {
+    let workouts = detect(quiet(0, 30) + easyWalk(30, 50) + quiet(50, 80), steps: steps(30, 50, 105))
     #expect(workouts.count == 1)
-    #expect(try #require(workouts.first).durationMinutes >= 35)
+    let walk = try #require(workouts.first)
+    #expect(walk.kind == .walk && walk.isSuggestion == nil)
+    #expect(walk.start == moment(30) && walk.end == moment(50))
+    // At least the ACSM cost of 2,100 steps: 0.0005 × 2,100 × 0.747 m × 80 kg = 62.7 kcal.
+    #expect(walk.calories >= 62)
 }
 
-@Test func oneLongClimbAndFallIsNotSetsAndRests() {
-    // Hurrying somewhere and calming down afterwards: raised and moving, but only once.
-    let once = minutes(30, 70, rate: { second in UInt8(90 + 40 * sin(Double(second) / 2400 * .pi)) },
-                       motion: { $0 % 3 == 0 ? 50 : 8 })
-    #expect(detect(quiet(0, 30) + once + quiet(70, 100)).filter { $0.kind == .strength }.isEmpty)
+@Test func aRunIsTypedFromTheBandsCadence() throws {
+    let workouts = detect(quiet(0, 30) + hardSession(30, 55) + quiet(55, 80), steps: steps(30, 55, 165))
+    #expect(workouts.count == 1, "the run and its steps are one workout")
+    #expect(try #require(workouts.first).kind == .run)
 }
 
-@Test func anUpAndDownHeartRateWithoutMovementIsNotStrength() {
-    // Stress or coffee at a desk: the same heart rate pattern with a still wrist.
-    let desk = minutes(30, 75, rate: { UInt8($0 % 240 < 84 ? 130 : 96) }, motion: { $0 % 7 == 0 ? 6 : 3 })
-    #expect(detect(quiet(0, 30) + desk + quiet(75, 110)).filter { $0.kind == .strength }.isEmpty)
+@Test func aHardSessionWithoutStepsIsTypedByNoopsClassifier() throws {
+    let workout = try #require(detect(quiet(0, 30) + hardSession(30, 60) + quiet(60, 90), steps: steps(30, 60, 5)).first)
+    #expect(workout.kind != .walk && workout.kind != .run)
 }
 
-@Test func steadyCardioIsFoundAndIsNotStrength() throws {
-    let run = minutes(30, 60, rate: { _ in 155 }, motion: { $0 % 2 == 0 ? 90 : 60 })
-    let workout = try #require(detect(quiet(0, 30) + run + quiet(60, 90)).first)
-    #expect(workout.kind != .strength)
-    #expect(workout.durationMinutes >= 25)
+@Test func aShortWalkIsNotAWorkout() {
+    #expect(detect(quiet(0, 30) + easyWalk(30, 38) + quiet(38, 60), steps: steps(30, 38, 105)).isEmpty)
 }
 
-@Test func tenMinutesOfSteadyMovementWithARaisedHeartRateAsksAboutAWalk() throws {
-    let walk = minutes(30, 45, rate: { _ in 88 }, motion: { $0 % 2 == 0 ? 90 : 20 })
-    let workout = try #require(detect(quiet(0, 30) + walk + quiet(45, 70)).first)
-    #expect(workout.kind == .walk)
-    #expect(workout.isSuggestion == true)
+@Test func pausesOfUpToTwoMinutesStayInsideOneWalk() throws {
+    let list = quiet(0, 30) + easyWalk(30, 50) + quiet(50, 80)
+    let withPause = steps(30, 36, 105) + steps(38, 44, 105)
+    let walk = try #require(detect(list, steps: withPause).first)
+    #expect(walk.start == moment(30) && walk.end == moment(44))
+    // A three-minute pause splits it into two walks of 6 minutes: too short.
+    #expect(detect(list, steps: steps(30, 36, 105) + steps(39, 45, 105)).isEmpty)
 }
 
-@Test func movingWithAnOrdinaryHeartRateIsNotAWalk() {
-    let chores = minutes(30, 45, rate: { _ in 64 }, motion: { $0 % 2 == 0 ? 90 : 20 })
-    #expect(detect(quiet(0, 30) + chores + quiet(45, 70)).isEmpty)
+@Test func aStepRunIsARunAtRunningCadence() throws {
+    // Running with the heart rate still low (the first minutes): found from the steps alone.
+    let list = quiet(0, 30) + easyWalk(30, 45) + quiet(45, 70)
+    let run = try #require(detect(list, steps: steps(30, 45, 160)).first)
+    #expect(run.kind == .run)
 }
 
 // MARK: - Zones
@@ -132,13 +153,14 @@ private func detect(_ list: [MinuteSample], body: DailyCalories.Body? = owner) -
     #expect(OpenStrapCalories.boutActive(minutes: easy, body: owner, maxHeartRate: 190, restingHeartRate: 55) == 0)
 }
 
-@Test func aStrengthSessionBurnsAPlausibleAmount() throws {
-    let workout = try #require(detect(quiet(0, 30) + strengthSession(30, 75) + quiet(75, 110)).first)
-    #expect((150...420).contains(workout.calories), "\(workout.calories) kcal")
+@Test func aHardSessionBurnsAPlausibleAmount() throws {
+    let workout = try #require(detect(quiet(0, 30) + hardSession(30, 60) + quiet(60, 90)).first)
+    // 30 minutes at 155 bpm for 80 kg: about 7 to 20 kcal a minute above rest.
+    #expect((200...600).contains(workout.calories), "\(workout.calories) kcal")
 }
 
 @Test func noBodyDetailsMeansNoCalories() throws {
-    let workout = try #require(detect(quiet(0, 30) + strengthSession(30, 75) + quiet(75, 110), body: nil).first)
+    let workout = try #require(detect(quiet(0, 30) + hardSession(30, 60) + quiet(60, 90), body: nil).first)
     #expect(workout.calories == 0)
 }
 

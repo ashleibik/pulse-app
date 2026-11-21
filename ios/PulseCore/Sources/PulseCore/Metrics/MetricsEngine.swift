@@ -35,7 +35,8 @@ public enum MetricsEngine {
     ///    unsure sleeps ask "Is this right?", and new minutes measure motion from the wrist angle.
     /// 6: breathing, restful sleep, zones, calories and workout detection ported from OpenStrap and NOOP.
     /// 7: wake-ups of 3 minutes or more, daytime naps from 20 minutes, and naps lower the next night's sleep need.
-    public static let algorithmVersion = 7
+    /// 8: workouts by NOOP's detector and from the band's counted steps, recorded without asking; walking adds to calories.
+    public static let algorithmVersion = 8
     /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v2.json).
     /// The confirmation stage on top of them is Swift only.
     public static let sharedFormulaVersion = 2

@@ -131,6 +131,33 @@ private func run(_ minutes: [MinuteSample], corrections: [SleepCorrection] = [])
     #expect(!found.contains { $0.isNap }, "\(found.filter { $0.isNap }.map { "\($0.start)-\($0.end)" })")
 }
 
+@Test func theRealAfternoonNapIsFoundOnItsOwn() throws {
+    // The owner's nap on 2026-11-19 (logs/, never committed). They remembered lying down around 15:00 and getting up at
+    // 18:20. The band shows them moving until 16:52 (two short walks at 16:18 and 16:36, heart rate in the 90s), still
+    // from 16:55 with the heart rate at 53, mostly still to 18:05, restless in bed to 18:21, then walking at 18:22.
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("logs/pulse-backup-2026-11-20.json")
+    guard FileManager.default.fileExists(atPath: url.path) else { return }
+    var data: Data? = try Data(contentsOf: url)
+    let reader = try PulseBackup.Reader(chunks: { defer { data = nil }; return data })
+    var minutes: [MinuteSample] = []
+    while let minute = try reader.nextMinute() { minutes.append(minute) }
+    var local = Calendar(identifier: .gregorian)
+    local.timeZone = TimeZone(secondsFromGMT: -6 * 3600)!
+    func clock(_ day: Int, _ hour: Double) -> Date {
+        local.date(from: DateComponents(year: 2026, month: 11, day: day))!.addingTimeInterval(hour * 3600)
+    }
+    let found = MetricsEngine.run(minutes: minutes, calendar: local, now: reader.contents.header.exportedAt).sleeps
+    let naps = found.filter(\.isNap)
+    let nap = try #require(naps.count == 1 ? naps.first : nil, "\(naps.map { "\($0.start)-\($0.end)" })")
+    #expect(nap.start >= clock(19, 16.75) && nap.start <= clock(19, 17 + 5.0 / 60), "nap starts \(nap.start)")
+    #expect(nap.end >= clock(19, 17 + 40.0 / 60) && nap.end <= clock(19, 18 + 25.0 / 60), "nap ends \(nap.end)")
+    #expect(nap.asleepMinutes >= 45, "\(nap.asleepMinutes) minutes asleep")
+    // The night before stays its own sleep, ending in the morning.
+    let night = try #require(found.first { !$0.isNap && $0.end > clock(19, 6) && $0.end < clock(19, 10) })
+    #expect(night.end < nap.start)
+}
+
 @Test func aNapLowersTheNextNightsNeedButNotRecovery() throws {
     let without = run(days(6))
     let with = run(days(6, nap: (14, 15)))

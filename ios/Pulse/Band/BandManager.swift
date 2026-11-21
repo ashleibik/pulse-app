@@ -13,6 +13,8 @@ import PulseCore
 /// - While connected, new records are pulled every `pullInterval`, right away when the app opens,
 ///   and whenever the band wakes Pulse in the background (any event from it). A pull is short: a few
 ///   commands, the new batches, done. Live heart rate streams only while a live screen asks for it.
+/// - The band's 100 Hz motion stream counts steps while `MotionStreamPolicy` allows (worn, not still for half
+///   an hour, enough battery). Every connect starts with it off; it is decided again after every pull.
 /// - The screens show cached data at once; new data slides in when a pull saved something.
 ///
 /// It connects three things that each do one job:
@@ -89,13 +91,23 @@ final class BandManager {
     /// The band's live heart rate while a live screen asks for it. `nil` = no live reading.
     private(set) var liveHeartRate: Int?
     private var wantsLive = false
-    /// The 100 Hz motion stream's seconds while a step test runs (docs/METRICS.md §15).
+    /// The 100 Hz stream's seconds while a step test runs (docs/METRICS.md §15).
     private(set) var liveSteps = LiveSteps()
-    /// True while a step test wants the 100 Hz stream.
-    private(set) var isStreamingMotion = false
-    @ObservationIgnored private var motionStreamCap: Task<Void, Never>?
-    /// The stream turns itself off after this long, whatever happens to the step test.
-    static let motionStreamLimit: TimeInterval = 15 * 60
+    /// A step test is running: the stream stays on whatever the policy says.
+    private(set) var isStepTestRunning = false
+    @ObservationIgnored private var stepTestCap: Task<Void, Never>?
+    /// A step test ends by itself after this long.
+    static let stepTestLimit: TimeInterval = 15 * 60
+    /// Why the 100 Hz stream is on or off, for Settings > Steps. nil = not connected.
+    private(set) var streamDecision: MotionStreamPolicy.Decision?
+    /// The stream is on in this connection (every new connection starts with it off).
+    @ObservationIgnored private var streamOn = false
+    /// Counts the stream's steps, a clock minute at a time.
+    @ObservationIgnored private var stepCounter = StreamStepCounter()
+    /// What the stream counted since the last pull, for the sync log.
+    @ObservationIgnored private var countedSincePull = (steps: 0, minutes: 0)
+    /// Goes up whenever counted minutes are saved, so the steps cards reload.
+    private(set) var stepsRevision = 0
 
     /// Called after new data was saved and the metrics were recalculated.
     var onDataChanged: (() -> Void)?
@@ -358,35 +370,64 @@ final class BandManager {
         if hasSession { worker?.setLive(false) }
     }
 
-    /// A step test started: stream the band's 100 Hz motion. It stops by itself after `motionStreamLimit`, and every
-    /// new connection turns it off (BandSession.start), so a test cut short can't leave it running.
-    func startMotionStream(context: ModelContext) {
+    /// A step test started: keep the 100 Hz stream on and keep its seconds. It ends by itself after `stepTestLimit`.
+    func startStepTest(context: ModelContext) {
         self.context = context
         liveSteps = LiveSteps()
-        isStreamingMotion = true
-        traceLine("STEP TEST: asking for the 100 Hz motion stream")
+        isStepTestRunning = true
+        traceLine("STEP TEST: started")
         if isConnected && hasSession {
-            worker?.setRawStream(true)
+            updateStream()
         } else {
-            keepConnected(force: true)      // switched on after the first pull
+            keepConnected(force: true)      // the stream starts after the first pull
         }
-        motionStreamCap?.cancel()
-        motionStreamCap = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Self.motionStreamLimit))
+        stepTestCap?.cancel()
+        stepTestCap = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.stepTestLimit))
             guard !Task.isCancelled else { return }
-            self?.stopMotionStream()
+            self?.stopStepTest()
         }
     }
 
-    /// The step test stopped: stream off. The seconds received stay in `liveSteps` until the next test.
-    func stopMotionStream() {
-        motionStreamCap?.cancel()
-        motionStreamCap = nil
-        guard isStreamingMotion else { return }
-        isStreamingMotion = false
+    /// The step test stopped. Its seconds stay in `liveSteps` until the next test; the stream goes back to the policy.
+    func stopStepTest() {
+        stepTestCap?.cancel()
+        stepTestCap = nil
+        guard isStepTestRunning else { return }
+        isStepTestRunning = false
         let scale = liveSteps.medianG.map { String(format: "%.3f g", $0) } ?? "no readings"
-        traceLine("STEP TEST: stream off after \(liveSteps.seconds.count) seconds of motion (median size \(scale))")
-        if hasSession { worker?.setRawStream(false) }
+        traceLine("STEP TEST: ended after \(liveSteps.seconds.count) seconds of motion (median size \(scale))")
+        updateStream()
+    }
+
+    /// Turns the 100 Hz stream on or off as `MotionStreamPolicy` says, from the newest band minutes (a step test keeps it on).
+    func updateStream() {
+        guard isConnected, hasSession, let context else { return }
+        let record = Self.pairedBand(in: context)
+        let recent = PulseStore.minutes(from: Date.now.addingTimeInterval(-45 * 60), to: Date.now.addingTimeInterval(60), in: context)
+        let decision: MotionStreamPolicy.Decision = isStepTestRunning ? .stream
+            : MotionStreamPolicy.decide(recent: recent, batteryPercent: lastBatteryReading ?? record?.batteryPercent,
+                                        charging: record?.isCharging, streaming: streamOn)
+        streamDecision = decision
+        guard decision.isOn != streamOn else { return }
+        streamOn = decision.isOn
+        traceLine("STREAM \(streamOn ? "on" : "off"): \(decision.rawValue)")
+        if !streamOn { saveSteps(stepCounter.finish()) }
+        worker?.setRawStream(streamOn)
+    }
+
+    /// Saves finished minutes of the stream's count. A minute counted in two parts (the stream stopped inside it) adds up.
+    private func saveSteps(_ minutes: [StepMinute]) {
+        guard let context, !minutes.isEmpty else { return }
+        for minute in minutes {
+            let start = minute.start
+            let stored = try? context.fetch(FetchDescriptor<StepMinuteRecord>(predicate: #Predicate { $0.start == start })).first
+            if let stored { stored.add(minute) } else { context.insert(StepMinuteRecord(minute)) }
+            countedSincePull.steps += minute.steps
+            countedSincePull.minutes += 1
+        }
+        try? context.save()
+        stepsRevision += 1
     }
 
     /// Stop pairing (scan / connect to a new band). A paired band's connection is kept.
@@ -595,6 +636,10 @@ final class BandManager {
     private func endSession() {
         hasSession = false
         worker?.end()
+        // The minute in progress is saved; the next connection starts with the stream off.
+        saveSteps(stepCounter.finish())
+        streamOn = false
+        streamDecision = nil
     }
 
     // MARK: - Watchdog
@@ -655,7 +700,10 @@ final class BandManager {
                 liveHeartRate = bpm
 
             case .rawMotion(let motion):
-                if isStreamingMotion { liveSteps.add(motion) }
+                if isStepTestRunning { liveSteps.add(motion) }
+                saveSteps(stepCounter.add(motion))
+                // The stream keeps Pulse awake in the background: a chance to pull on time.
+                if stage != .syncing { pullIfDue() }
 
             case .finished:
                 stopWatchdog()
@@ -714,6 +762,10 @@ final class BandManager {
         pausedUntil = nil
         let saved = recordsSaved
         traceLine("PULL \(pullNumber) DONE: \(saved) records in \(batchesSaved) batches, \(recordsCleared) old records dropped, \(Int(Date.now.timeIntervalSince(syncStartedAt))) s. Phone battery \(Self.phoneBattery()), band \(info.batteryPercent.map { "\(Int($0.rounded()))%" } ?? "?").\(saved > 0 ? " Recalculating." : "")")
+        if countedSincePull.minutes > 0 {
+            traceLine("STEPS: \(countedSincePull.steps) counted in \(countedSincePull.minutes) minutes of the 100 Hz stream since the last pull")
+            countedSincePull = (0, 0)
+        }
         if let record = Self.pairedBand(in: context) {
             record.lastHistorySyncAt = .now
             record.lastSeenAt = .now
@@ -724,8 +776,8 @@ final class BandManager {
             self.showsSyncSpinner = false
             // A live screen is waiting: switch the stream on now that the pull is done.
             if self.wantsLive && self.hasSession { self.worker?.setLive(true) }
-            // A step test is running (the connection came back): the new session turned the 100 Hz stream off.
-            if self.isStreamingMotion && self.hasSession { self.worker?.setRawStream(true) }
+            // With the newest minutes in: should the band stream its motion to count steps?
+            self.updateStream()
         }
         guard saved > 0 else {
             stage = .upToDate
@@ -738,7 +790,7 @@ final class BandManager {
         Task { [weak self] in
             do {
                 let output = try await MetricsRecomputer.inBackground(container: container, profile: profile,
-                                                                      calendar: .current, now: .now, detectWorkouts: true)
+                                                                      calendar: .current, now: .now, detection: .recent)
                 let computed = Date.now
                 try PulseStore.apply(output, to: context)
                 self?.traceLine("RECOMPUTE: \(Int(computed.timeIntervalSince(started) * 1000)) ms in the background, \(Int(Date.now.timeIntervalSince(computed) * 1000)) ms writing results on the main thread")
@@ -759,7 +811,7 @@ final class BandManager {
         let profile = ProfileStore.current(in: context).metricsProfile
         Task { [weak self] in
             guard let output = try? await MetricsRecomputer.inBackground(container: container, profile: profile,
-                                                                         calendar: .current, now: .now, detectWorkouts: true) else { return }
+                                                                         calendar: .current, now: .now, detection: .recent) else { return }
             try? PulseStore.apply(output, to: context)
             self?.onDataChanged?()
         }

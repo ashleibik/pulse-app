@@ -61,7 +61,7 @@ final class DataLoader {
         defaults.set(MetricsEngine.algorithmVersion, forKey: Self.formulasKey)
         // Rows were deleted: recalculate from what's left.
         if removedFromBandData || removedOldOwner || formulasChanged {
-            await recompute(context: context, detectWorkouts: removedOldOwner || formulasChanged)
+            await recompute(context: context, detection: removedOldOwner || formulasChanged ? .all : .skip)
         }
     }
 
@@ -70,17 +70,17 @@ final class DataLoader {
         BandDataCutoff.set(day)
         guard let cutoff = BandDataCutoff.date else { return }
         _ = try? PulseStore.deleteBandData(before: cutoff, in: context)
-        await recompute(context: context, detectWorkouts: true)
+        await recompute(context: context, detection: .all)
     }
 
     /// Settings > "Recalculate": same raw data, fresh numbers (e.g. after changing birth year).
-    func recompute(context: ModelContext, detectWorkouts: Bool = false) async {
+    func recompute(context: ModelContext, detection: WorkoutDetection = .skip) async {
         guard rawDataReady, !isBusy else { return }
         state = .recalculating
         let profile = ProfileStore.current(in: context).metricsProfile
         do {
             let output = try await MetricsRecomputer.inBackground(container: context.container, profile: profile,
-                                                                  calendar: .current, now: .now, detectWorkouts: detectWorkouts)
+                                                                  calendar: .current, now: .now, detection: detection)
             try PulseStore.apply(output, to: context)
             state = .ready
             revision += 1

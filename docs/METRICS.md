@@ -291,12 +291,19 @@ and a resting heart rate. Without them, or without band data for the day, nothin
   female `−59.3954 + 0.450 × HR + 0.380 × VO2max + 0.103 × kg + 0.274 × age`. Divide by 4.184 for kcal. HR is capped at max HR. Only
   what it adds above the resting rate counts, and it never subtracts. A reading carries active energy for the band's usual sample
   spacing only, never across a gap.
+- **Walking (ACSM, from counted steps):** NOOP's gate leaves ordinary walking (about 95 bpm for the owner, under the gate's 121) at
+  zero active energy. So each minute of counted steps (§15) whose average heart rate is below the gate adds the ACSM walking cost:
+  net VO₂ = 0.1 ml/kg/min per m/min of speed, 5 kcal per litre of oxygen, so `0.0005 × steps × step length (m) × kg` kcal, and twice
+  that (ACSM's running 0.2) for a minute of 140 steps or more. Step length is the usual pedometer rule: 0.415 × height for men, 0.413
+  for women, 0.414 otherwise. Minutes at or above the gate already count by heart rate, so no minute counts twice. *Our addition:*
+  NOOP's own notes say its gate leaves out walking on purpose; counted steps let Pulse add it without the over-count.
 
 The card says how much of the day was measured when the band covered less than 90% of it.
 
 *Sources:* Roza & Shizgal, *Am J Clin Nutr* 1984; 40:168–182. Uth et al., *Eur J Appl Physiol* 2004; 91:111–115. Keytel et al.,
 *J Sports Sci* 2005; 23:289–297. The 50% gate is NOOP's: Keytel was fitted on exercise, and a lower gate over-counts ordinary daytime
-heart rates by 1000+ kcal.
+heart rates by 1000+ kcal. Walking and running costs: American College of Sports Medicine, *ACSM's Guidelines for Exercise Testing and
+Prescription*, metabolic equations.
 
 **How accurate this is:** it is an estimate from heart rate. WHOOP's own formula is private, so Pulse can't match it exactly. In a
 study of seven wrist devices against lab measurement, none had an energy error below 20% (Shcherbina et al., *J Pers Med* 2017; 7(2):3).
@@ -309,15 +316,35 @@ Sources and licenses for the ported parts are in `docs/THIRD_PARTY.md`.
 - **Zones:** `resting HR + share × (max HR − resting HR)` with shares 50/60/70/80/90% (Karvonen, OpenStrap `hr_zones.dart`), counted
   second by second so short peaks aren't averaged away. Resting HR is the median of recent nights. With none, zones are a share of max HR.
 - **Workout calories:** active calories only: seconds at or above resting HR + 40% of heart-rate reserve, minus the resting rate
-  (OpenStrap `calories.dart`). This is separate from the whole-day method in §9, and is waiting for a comparison with the owner's Watch.
-- **Cardio:** HR at or above `max(resting + 40, resting + 45% of reserve)` for 12+ minutes, with dips up to 90 s bridged (OpenStrap
-  `auto_detect.dart`).
-- **Strength:** 20+ minutes of raised HR (average 20% or peak 30% of reserve, pauses up to 5 minutes), average movement of at least 8,
-  at least 3 climbs and falls of 15 bpm, and NOOP's classifier agreeing. *Our choice:* everything except the classifier.
-- **Walk suggestion:** 10+ minutes of movement of at least 30 with HR 10% of reserve above resting. Pulse asks "Was this a walk?"
-  and doesn't count it until you answer. At one reading a second the rhythm of steps can't be measured. *Our choice.*
+  (OpenStrap `calories.dart`). A walk or run found from steps takes the larger of that and its steps' walking cost (§9).
 
-None of this has been compared with a chest strap, and the strength and walk rules have not yet been run on a real workout.
+**Finding workouts.** Everything found is recorded at once, with nothing to confirm. A found workout you delete stays deleted, and
+detection never changes or removes a workout you added or confirmed. After a sync Pulse looks at the last 3 days; it looks at the
+whole history when these rules change, after an import, and when "Your data starts" moves. NOOP's app itself only suggests a
+workout (its `AutoWorkoutDetector`: 12 minutes at resting + 30, kept after a tap). The owner asked for workouts without
+confirming, so Pulse uses NOOP's stricter exercise detector instead.
+
+- **From heart rate and movement (NOOP's `WorkoutDetector.detect`, ported).** A second's motion is the change of the band's gravity
+  reading from the second before, averaged over the trailing 10 seconds. A second is active when that is above 0.20 g and a heart
+  rate within 5 seconds is above resting + 15. Active seconds less than 150 s apart form a run, and runs up to 300 s apart are joined
+  while the heart rate between them stays above resting + 15 (or there is no reading). A run is a workout when it lasts at least
+  5 minutes (less the 10 s of averaging) and at least half its heart-rate readings are in zone 2 or higher (60% of reserve or more).
+  Its start then moves back over the warm-up's unbroken movement. Resting is the day's resting heart rate, or NOOP's 10th percentile
+  of the heart rates when the day has none. *The band differs:* Pulse keeps, per second, `max(|size − 1 g|, change of direction) × 500`
+  (at most 255) instead of the reading itself, so NOOP's 0.20 g is 100 in Pulse's units and a change over 0.51 g reads as 0.51 g.
+- **Type:** when the band counted steps (§15) for at least half of a workout's minutes, the median of those minutes decides: 140 steps
+  a minute or more is a Run, 60 or more a Walk. Otherwise NOOP's classifier (`WorkoutTypeClassifier.swift`) decides.
+- **Walks and runs from steps.** NOOP needs 60% of reserve, which an easy walk never reaches (the owner walks at about 95 bpm against
+  a zone-2 floor of 135). So a minute with 60 or more counted steps is a moving minute, and moving minutes with pauses of up to
+  2 minutes that last at least 10 minutes are a Walk, or a Run when their median is 140 steps a minute or more. Not added where a
+  heart-rate workout already is. *Our addition*, using the band's own step count; the thresholds are ordinary walking (about 100 a
+  minute) and running (about 160) cadences.
+
+*Removed on 2026-11-20:* OpenStrap's cardio detector, Pulse's strength rule and the "Was this a walk?" suggestion. On the owner's
+2026-11-18 to 20 the suggestion rule (movement of 30 with 10% of reserve, about 66 bpm) logged 31 walks out of arm movement, and NOOP
+has a detector of its own.
+
+None of this has been compared with a chest strap, and the step-based walks have not yet run on a real day.
 
 ## 11. Breathing rate
 
@@ -391,7 +418,7 @@ calmest hours of the same day.
 5. **Levels:** Calm below 1, Moderate from 1 to below 2, High from 2. An hour that matches the calm reference scores 1.5, so Moderate is
    the normal middle of the scale.
 
-*Our choices for this band:* a minute is moving at a movement of 30 or more, the same floor as the walk suggestion, because the WHOOP 4.0
+*Our choices for this band:* a minute is moving at a movement of 30 or more (the owner's walking measured 40 to 84), because the WHOOP 4.0
 data has no NOOP-style gravity reading. Minutes inside a workout also count as moving, and sleep is left out using Pulse's own sleep
 times. Time per level is the time measured in each hour, not a full hour. "Right now" is the newest hour scored in the last two clock hours.
 Levels stay hidden until 4 hours are scored. NOOP shows them from the first hour, but with two hours one always reads calm and the other
@@ -403,58 +430,44 @@ compared with WHOOP's stress monitor.
 
 ## 15. Steps
 
-**What the band gives.** A WHOOP 4.0 sends no step count. Its history (record version 24, about one record a second) holds one 3-axis
-motion reading per second in g (two copies of the same vector), next to heart rate and beat intervals; NOOP's decoder of the same record
-agrees. A step takes about half a second, so one reading a second can't see each footfall. On 2026-11-19 none of 23,160 readings passed
-1.71 g, so the stored reading is smoothed. Pulse keeps, per second, `activity` (§4: the larger of |size − 1 g| and the turn of the
-reading's direction, × 500, up to 255) and the wrist's turn in tenths of a degree (`WristAngle`). NOOP's counter needs the step counter
-that only the WHOOP 5.0 and MG keep, and its WHOOP 4.0 estimate is all of the day's motion times a factor fitted to a phone's step
-count, which counts typing and driving too and which NOOP itself says over-reads on active days. So Pulse finds the walking itself:
+**Counted, not estimated.** Steps come only from the band's 100 Hz motion stream. Command 0x3F (SEND_R10_R11_REALTIME) makes the
+band send, about once a second, 100 accelerometer readings per axis (packet type 0x2B, re-toolkit/docs/PROTOCOL.md §8b). The band's
+history holds one motion reading a second, and a step takes about half a second, so the history can't see a footstep and Pulse
+doesn't guess from it. Time without the stream counts no steps, and the screens say how long the band counted.
 
-1. **A second moves** when it is worn, its activity is at least 40 (about 0.08 g, or a 4.6° turn), and the wrist turned at least 3°
-   that second, or the activity is 150 or more.
-2. **A second is walking** when, of the worn seconds within 5 seconds either side (at least 8), at least 60% move and at least half
-   reach 80. The owner's walking minutes on 2026-11-18 had a median of 117 to 234; sitting stayed under 15 with a few spikes.
-3. **A walk** is a run of walking seconds with pauses of up to 3 seconds, lasting at least 12 seconds, or 20 inside a sleep.
-4. **Running:** a walking second where at least half the window is at 150 or more and the window's mean heart rate is at least
-   `resting + 0.55 × (max − resting)` (resting 60 when unknown). Movement alone can't tell: walking around at home reached 150 in 63% of
-   its seconds, at 86 bpm. The first minute of a run, before the heart rate climbs, counts as walking.
-5. **Cadence:** 1.8 steps a second walking (108 a minute) and 2.7 running (162), before the personal factor.
-6. **NOOP's sleep-aware counter** (`NoopSteps`, ported line for line): the steps become a cumulative counter, one reading per worn second
-   with the second's class (still, walk, run). Outside a sleep, and in its awake minutes (§4 step 10), every step counts. Asleep, only a
-   coherent walk counts: at least 5 readings over at least 4 seconds with at least 6 steps, no gap over 3 seconds.
-7. **A day** is counted hour by hour (each hour starts from the reading before it), and its total is the sum of the hours. With under 90%
-   of the day so far measured, the day says how long the band measured, as calories do.
+*Removed on 2026-11-20:* the once-a-second estimate (seconds of steady arm movement × 1.8 steps), NOOP's sleep-aware counter that it
+fed, and the factor learned from step tests and Apple Watch days. At once a second walking and other arm movement look alike, and
+NOOP's own WHOOP 4.0 method (all motion × a factor from a phone's step count) has the same weakness. The owner asked for the band's
+own count and no scaling from the Apple Watch.
 
-**The step test's 100 Hz count.** The band has a faster stream: command 0x3F (SEND_R10_R11_REALTIME) makes it send, about
-once a second, 100 accelerometer samples per axis (packet type 0x2B, re-toolkit/docs/PROTOCOL.md §8b). It exists only while
-the app asks for it and, left on, floods Bluetooth and the band's memory, so Pulse turns it off on every connect and on only
-for a step test (15 minutes at most). Each unbroken run of seconds is counted with OpenStrap's pedometer, ported line for line
-(`OpenStrapPedometer`, MIT): the size of each reading, an 8-sample moving average, peaks in a 33-sample window against a
-threshold that follows recent peaks with a 0.10 g dead zone, steps 0.2 to 2 s apart, and 8 regular steps before anything
-counts. OpenStrap's own figures: exact on clean synthetic walking at 60 to 180 steps a minute; on OxWalk (39 adults, free
-living, camera ground truth) 33% average error at 100 Hz on the wrist, so it is a counter for walks it supervises, not an
-all-day source. OpenStrap also measured an earlier "movement minutes × cadence" estimate on one-second data over-reading about
-6× on a real day; Pulse's own all-day estimate above is of that kind, with a stricter test for walking, and the Apple Watch
-days are what show whether it holds. The step test shows the 100 Hz count next to the owner's and keeps both.
+**When the band streams** (`MotionStreamPolicy`). Every connect turns the stream off (a crash or a killed app can't leave it on).
+After each pull (every 5 minutes while connected) and when the app opens, Pulse decides from the newest band minutes:
 
-**The personal factor.** The owner's references: a step test (walk, count the steps by hand, Pulse compares the same minutes) and Apple
-Watch day totals, typed in. A reference teaches Pulse when the band measured at least 90% of its time and both sides counted at least
-100 steps. From 3 references, NOOP's fit (`StepsEstimateEngine.calibrate`): the median of reference ÷ Pulse, each reference weighted by
-Pulse's count, with NOOP's confidence. With 1 or 2, their plain median. With none, 1. The factor stays between 0.5 and 2, so one wrong
-entry can't make the count absurd. *Our choice:* NOOP withholds steps until 3 days are fitted; Pulse shows its count from the start,
-because it is already in steps, and labels it an estimate.
+- **Off** while the band battery is under 15% and not charging, and on again from 20%.
+- **Off** when the band wasn't worn in the newest 10 minutes of data (no heart rate).
+- **Off** when the wrist was still for 30 minutes: at least 25 of the last 30 minutes measured, all worn, each turning under 1° a
+  second on average. On the owner's nap of 2026-11-19, sleep turned 0.1° to 0.8° a second and lying awake 1° to 4°.
+- **On** otherwise, and always during a step test.
 
-**Checking.** Each reference is compared with what Pulse would have said without it: its factor learned from the other references
-only. The error is (Pulse − reference) ÷ reference, and the average leaves out partial days. Targets set by the owner: within 5% on a
-500-step test and within 10% of the Apple Watch per day.
+The phone has to be within Bluetooth range: steps taken away from it aren't counted. While it streams, the band sends about 4 kB a
+second, so it uses more of the band's and the phone's battery; the sync log has each pull's battery levels.
 
-**Status:** tested only on simulated wrists (`WristSimulator`: the arm swings once every two steps, each step jolts the wrist, stride
-timing wanders by 3%, one reading a second) and on the owner's backup of 2026-11-17/18. Simulated, after one step test: within 4.7% on a
-500-step walk at 1.6 to 2.1 steps a second; 0 steps for an hour of typing or of sleep; up to 64 an hour on a rough-road drive and up to
-43 an hour talking with the hands. On the backup: 0 steps in the night, at most 30 at the computer (21:30 to 00:30), and a walk found
-at 11:27 to 11:39. Not yet compared with a real step test or the Apple Watch. Minutes saved before the wrist's turn was stored use the
-older activity value, which reads lower.
+**Counting.** OpenStrap's pedometer, ported line for line (`OpenStrapPedometer`, MIT): the size of each reading, an 8-sample moving
+average, peaks in a 33-sample window against a threshold that follows recent peaks with a 0.10 g dead zone, steps 0.2 to 2 s apart,
+and 8 regular steps before anything counts. Like OpenStrap's daily total (`calcSteps`), it runs on one clock minute at a time, on
+each unbroken run of seconds in that minute. Pulse keeps, per minute, the steps and how many seconds arrived. A second the band sends
+twice counts once.
+
+**A day** is the sum of its minutes, hour by hour; "counted for" is the seconds that arrived.
+
+**Accuracy.** OpenStrap's figures for this pedometer: exact on clean walking at 60 to 180 steps a minute (its synthetic tests, which
+Pulse's port reproduces), and 33% average error on OxWalk (39 adults, free living, camera ground truth, 100 Hz on the wrist), where
+arm movement without walking adds steps. The step test (Settings > Steps) compares the band's count of a 500-step walk with the
+owner's own count; it is a check and never changes how steps are counted. Target set by the owner: within 5%.
+
+**Status:** the stream worked on the owner's band on 2026-11-19 (firmware 41.11.7.0; median reading size 0.997 g and 1.000 g, as
+expected). Counting all day has only been tested with simulated walks and stillness. Not yet checked with a full step test or a real
+day.
 
 ## 16. VO₂ max
 

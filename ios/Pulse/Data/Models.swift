@@ -298,8 +298,31 @@ final class ProfileRecord {
     }
 }
 
-/// A count the step estimate is checked against: a step test counted by hand, or an Apple Watch day total
-/// (docs/METRICS.md §15). The user's own entries, so "Delete all band data" keeps them.
+/// One minute of steps the band counted on its 100 Hz motion stream (docs/METRICS.md §15).
+@Model
+final class StepMinuteRecord {
+    @Attribute(.unique) var start: Date
+    var steps: Int
+    /// Seconds of motion that arrived in this minute.
+    var seconds: Int
+
+    init(_ m: StepMinute) {
+        start = m.start
+        steps = m.steps
+        seconds = m.seconds
+    }
+
+    var value: StepMinute { StepMinute(start: start, steps: steps, seconds: seconds) }
+
+    /// The same minute counted again (the stream stopped and started inside it): both parts count.
+    func add(_ m: StepMinute) {
+        steps += m.steps
+        seconds = min(60, seconds + m.seconds)
+    }
+}
+
+/// A count the band's step count is checked against: a step test counted by hand, or an Apple Watch day total from an
+/// earlier version (docs/METRICS.md §15). The user's own entries, so "Delete all band data" keeps them.
 @Model
 final class StepReferenceRecord {
     @Attribute(.unique) var id: UUID

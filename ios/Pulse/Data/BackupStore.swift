@@ -40,8 +40,10 @@ actor BackupStore {
         let sleeps = try modelContext.fetch(FetchDescriptor<SleepRecord>(sortBy: [SortDescriptor(\.start)])).map(\.value)
         let corrections = try modelContext.fetch(FetchDescriptor<SleepCorrectionRecord>()).map(\.value)
         let stepReferences = try modelContext.fetch(FetchDescriptor<StepReferenceRecord>(sortBy: [SortDescriptor(\.start)])).map(\.value)
+        let stepMinutes = try modelContext.fetch(FetchDescriptor<StepMinuteRecord>(sortBy: [SortDescriptor(\.start)])).map(\.value)
         let contents = PulseBackup.Contents(header: header, workouts: workouts, journal: journal, days: days, sleeps: sleeps,
-                                            sleepCorrections: corrections, wearSensor: wearSensor, stepReferences: stepReferences)
+                                            sleepCorrections: corrections, wearSensor: wearSensor, stepReferences: stepReferences,
+                                            stepMinutes: stepMinutes)
 
         var writer = try PulseBackup.Writer(contents: contents) { try handle.write(contentsOf: $0) }
         var after = Date.distantPast
@@ -106,6 +108,12 @@ actor BackupStore {
         let knownReferences = Set(try modelContext.fetch(FetchDescriptor<StepReferenceRecord>()).map(\.id))
         for reference in reader.contents.stepReferences where !knownReferences.contains(reference.id) {
             modelContext.insert(StepReferenceRecord(reference))
+        }
+        // The band's step count: a minute this iPhone already has stays as it is.
+        let knownStepMinutes = Set(try modelContext.fetch(FetchDescriptor<StepMinuteRecord>()).map(\.start))
+        for minute in reader.contents.stepMinutes
+        where !knownStepMinutes.contains(minute.start) && minute.start >= (dataStart ?? .distantPast) {
+            modelContext.insert(StepMinuteRecord(minute))
         }
         try modelContext.save()
 

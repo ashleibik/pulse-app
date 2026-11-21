@@ -203,6 +203,8 @@ public enum StressMonitor {
     public static let stillActivity = 8.0
     /// With fewer scored hours than this, the day has little to compare against.
     public static let settledHours = NoopDaytimeStress.quartileHours
+    /// A minute with at least this movement is a moving minute (docs/METRICS.md §14). The owner's walking measured 40 to 84.
+    public static let movingMovement = 30.0
 
     /// One minute of a night, for the sleep stress of `SleepPerformance`. `nil` = can't tell (moving, or the band was off).
     public static func level(for minute: MinuteSample, restingHR: Double, maxHR: Double) -> StressLevel? {
@@ -263,7 +265,7 @@ public enum StressMonitor {
             let beats = inHour.flatMap(\.heartRate).filter { $0 > 0 }
             seconds[start] = beats.count
             let moving = inHour.filter { minute in
-                minute.movement >= WorkoutDetector.walkMovement
+                minute.movement >= movingMovement
                     || training.contains { $0.start <= minute.start && minute.start < $0.end }
             }
             // Each minute is cleaned alone, and the nil between minutes stops a pair forming across them.

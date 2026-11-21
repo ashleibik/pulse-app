@@ -106,8 +106,9 @@ strap is loose: the band's loose flag was wrong on the owner's wrist (docs/METRI
 ## 4b-4. Workouts
 
 Types are Run, Cycle, Strength, Walk, HIIT and Other. The Activity tab's + adds a past workout (type, start, end).
-A likely walk appears above the workout list as a "Was this a walk?" card (`monoCard`) with its time and two pills side by
-side: "Yes" (primary) and "No" (secondary). Until answered it is not counted as a workout. Finishing a workout
+Pulse records workouts by itself, with nothing to confirm: walks and runs from the band's counted steps, other workouts from heart
+rate (docs/METRICS.md §10). They appear in the list like any other workout. Deleting one keeps it away, and detection never changes
+or removes a workout you added or confirmed. With none in 14 days, one `body` line says how Pulse finds them. Finishing a workout
 under a minute long asks "Too short. Discard?" with Discard and Keep going.
 
 ## 4b-5. Stress
@@ -141,27 +142,33 @@ lasts 10 minutes to 3 hours, can't be in the future and can't overlap another sl
 
 ## 4b-8. Steps
 
-Today has a "STEPS" card under the calories card (`monoCard`): "Estimated" on the right of the label, the count in `title`, "of 10,000"
-(the goal) in `caption`, a progress bar toward the goal (`accent` fill on a `border` track, full at the goal), and the same `caption`
-as calories when the band measured under 90% of the day. With no band data the count is `--`. Before any step test or Apple Watch day,
-one `caption` says "Not checked yet. Settings > Steps".
+Steps are counted by the band, never estimated, so no step number carries "Estimated" (docs/METRICS.md §15).
 
-The Activity tab has a "Steps" card under heart rate zones: today's count, then "Steps by hour" bars (`DayBarsChart`, the current
-hour highlighted, every third hour labelled).
+Today has a "STEPS" card under the calories card (`monoCard`): the count in `title`, "of 10,000" (the goal) in `caption`, a progress
+bar toward the goal (`accent` fill on a `border` track, full at the goal), and one `caption` with how long the band counted that day
+("Counted for 9h 12m"). A day the band never counted shows `--` and the `caption` "The band counts steps while it streams its motion
+to your iPhone."
 
-Settings has a "Steps" section: a "Daily goal" row with minus / plus (1,000 steps a click, 2,000 to 30,000), a "Calibration" row
-("Not checked yet", "From 2 step tests", "From 3 Apple Watch days", ...), and two secondary pills: "Step test" and "Compare with Apple Watch".
+The Activity tab has a "Steps" card under heart rate zones: today's count, the same "Counted for" `caption`, then "Steps by hour" bars
+(`DayBarsChart`, the current hour highlighted, every third hour labelled).
 
-"Step test" is a sheet: one `body` paragraph (walk at your usual pace, count 500 steps, tap Stop), a Start primary pill with one
-`caption` saying the band streams its motion 100 times a second during the test, then a big timer in `title` while it runs with a
-`caption` under it ("The band has counted 312 steps so far", or why there is no count yet) and Stop (primary) / Cancel
-(secondary). After Stop it shows Pulse's count (the band's 100 Hz count when the stream ran, else the all-day estimate once its data
-is in) and yours side by side, the difference in percent (`warn` past 5%, a word next to it too), one `caption` with the all-day
-estimate and its difference, an editable "You counted" row (default 500), and "Save" (primary) / "Discard" (secondary). Saved tests
-are listed under it with their date, the 100 Hz count, the all-day estimate and yours, and the difference; the title shows the
-average error of the 100 Hz counts. "Compare with Apple Watch" is a sheet: a day picker and a steps field with "Add day", then each day with Pulse, Apple
-Watch and the difference, and at the top the average difference. Each test and day has a "Remove" button (ask once). Each difference
-is checked without that entry (docs/METRICS.md §15), and both sheets say so in one `caption`.
+Settings has a "Steps" section: a "Daily goal" row with minus / plus (1,000 steps a click, 2,000 to 30,000), a "Step counting" row
+("On", "Paused: you're still", "Paused: band not worn", "Paused: band battery low", "Waiting for the band"), one `caption` footer
+saying when the band counts, and a "Step test" secondary pill.
+
+"Step test" is a sheet that checks the band's count against yours: one `body` paragraph (walk at your usual pace, count 500 steps,
+tap Stop), a Start primary pill, then a big timer in `title` while it runs with a `caption` under it ("The band has counted 312 steps
+so far", or why there is no count yet) and Stop (primary) / Cancel (secondary). After Stop it shows the band's count and yours side
+by side, the difference in percent (`warn` past 5%, a word next to it too), an editable "You counted" row (default 500), and "Save"
+(primary) / "Discard" (secondary). Saved tests are listed under it with their date, both counts and the difference, with a "Remove"
+button (ask once); the title shows their average difference. The test never changes how steps are counted.
+
+## 4b-11. Settings search
+
+Settings pins a search field under its header: `surface` fill, `border` edge, radius `DS.Radius.field`, at least 44 pt tall, a
+magnifying glass, the placeholder "Search settings" and a clear button while it holds text. Typing keeps only the sections whose name
+or settings match (letter case and accents don't matter), in their usual order. With no match, one `body` line says "No settings
+match "…"."
 
 ## 4b-9. VO₂ max
 

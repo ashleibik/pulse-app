@@ -115,7 +115,7 @@ Builders are in `protocol/frames.py`. **Allowlist** in `protocol/constants.py`: 
 | 0x16 | SEND_HISTORICAL_DATA | `00` | 🟢 |
 | 0x17 | HISTORICAL_DATA_RESULT (ack) | `01` + 8-byte token (§7) | 🟢 layout [BW]+[OS], token contents 🔴 see §7 |
 | 0x14 | ABORT_HISTORICAL | | 🟡 |
-| 0x3F | SEND_R10_R11_REALTIME (100 Hz motion + optical stream, type 0x2B) | `01` on / `00` off | 🟡 [NOOP]: seen in WHOOP 4 device captures, 2.1 packets/s → 0 when off. The state **stays on across reconnects** and, left on, floods Bluetooth and the band's memory. Pulse turns it off on every connect and on only during a step test (15 minutes at most) |
+| 0x3F | SEND_R10_R11_REALTIME (100 Hz motion + optical stream, type 0x2B) | `01` on / `00` off | 🟡 [NOOP]: seen in WHOOP 4 device captures, 2.1 packets/s → 0 when off. The state **stays on across reconnects** and floods Bluetooth (about 4 kB/s). Pulse turns it off on every connect, then on while the band is worn and moving, to count steps (docs/METRICS.md §15) |
 
 ### Refused (not on the allowlist)
 `0x0F` forget bonds · `0x19` force trim (**erases data**) · `0x1D` reboot · `0x20` power cycle · `0x21` set read pointer ·

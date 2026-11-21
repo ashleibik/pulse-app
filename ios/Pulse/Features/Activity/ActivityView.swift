@@ -8,8 +8,6 @@ struct ActivityView: View {
     @Query(sort: \DaySummaryRecord.date, order: .reverse) private var days: [DaySummaryRecord]
     @Query(sort: \WorkoutRecord.start, order: .reverse) private var workouts: [WorkoutRecord]
     @Query private var profiles: [ProfileRecord]
-    @Query private var sleepRecords: [SleepRecord]
-    @Query private var stepReferences: [StepReferenceRecord]
     @Environment(\.modelContext) private var context
     @Environment(DataLoader.self) private var loader
     @Environment(BandManager.self) private var band
@@ -19,9 +17,9 @@ struct ActivityView: View {
     @State private var path: [UUID] = []
     @State private var showAdd = false
     @State private var showLive = false
-    /// Estimated active calories so far today. nil = not enough details to estimate.
+    /// Active calories so far today, from heart rate and counted steps. nil = not enough details to work them out.
     @State private var activeCalories: Int?
-    /// Today's estimated steps. nil = no band data today.
+    /// Today's steps, as the band counted them. nil = it hasn't counted today.
     @State private var steps: Steps.Day?
     /// This week's VO₂ max estimate. nil = fewer than 4 nights of resting heart rate.
     @State private var vo2: VO2Max.Estimate?
@@ -37,7 +35,6 @@ struct ActivityView: View {
                     }
                     stepsByHour.riseIn(1)
                     fitness.riseIn(2)
-                    ForEach(suggestions) { WalkSuggestionCard(workout: $0).riseIn(2) }
                     workoutList.riseIn(2)
                 }
                 .padding(.horizontal, DS.Space.side)
@@ -60,6 +57,8 @@ struct ActivityView: View {
                     WorkoutDetailView(workout: workout) {
                         // Go back to the list first, then delete, so the screen never shows a deleted workout.
                         path.removeAll()
+                        // One Pulse found stays deleted: the next sync doesn't record it again.
+                        if workout.sourceRaw == DataSource.history.rawValue { DismissedWorkouts.dismiss(workout.id) }
                         Task {
                             try? await Task.sleep(for: .milliseconds(500))
                             context.delete(workout)
@@ -68,7 +67,7 @@ struct ActivityView: View {
                     }
                 }
             }
-            .task(id: "\(loader.rawDataReady)-\(loader.revision)-\(days.first?.strain ?? 0)-\(stepReferences.count)") { loadZones() }
+            .task(id: "\(loader.rawDataReady)-\(loader.revision)-\(days.first?.strain ?? 0)-\(band.stepsRevision)") { loadZones() }
             .task {
                 // Only the screenshot job sets this: open the hardest workout straight away.
                 if LaunchOptions.route == "workout", path.isEmpty,
@@ -86,15 +85,12 @@ struct ActivityView: View {
         let resting = days.first?.restingHeartRate ?? days.first?.baselineRestingHeartRate
         let zones = OpenStrapZones.zones(restingHistory: Array(days.prefix(28)).compactMap(\.restingHeartRate), maxHeartRate: maxHR)
         zoneMinutes = OpenStrapZones.secondsInZones(minutes, zones: zones).map { $0 / 60 }
+        let counted = StepsData.minutes(from: start, to: .now, in: context)
         activeCalories = profiles.first?.calorieBody().flatMap { body in
-            DailyCalories.estimate(minutes: minutes, body: body, dayStart: start, end: .now, maxHeartRate: maxHR,
+            DailyCalories.estimate(minutes: minutes, steps: counted, body: body, dayStart: start, end: .now, maxHeartRate: maxHR,
                                    restingHeartRate: resting)?.active
         }
-        let sleeps = sleepRecords.map(\.value)
-        let summaries = Array(days)
-        let factor = Steps.factor(StepsData.checked(stepReferences.map(\.value), sleeps: sleeps, days: summaries,
-                                                    maxHeartRate: maxHR, context: context))
-        steps = StepsData.day(start, sleeps: sleeps, days: summaries, maxHeartRate: maxHR, factor: factor, context: context)
+        steps = Steps.day(counted, dayStart: start, end: .now, calendar: .current)
         let profile = profiles.first
         let week = Calendar.current.date(byAdding: .day, value: -6, to: start) ?? start
         restingNights = days.filter { $0.date >= week && $0.restingHeartRate != nil }.count
@@ -140,13 +136,18 @@ struct ActivityView: View {
     /// Today's steps, hour by hour (DESIGN.md §4b-8).
     private var stepsByHour: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
-            SectionTitle(title: "Steps", trailing: "Estimated")
+            SectionTitle(title: "Steps")
             if let steps {
-                HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
-                    Text(steps.total.formatted())
-                        .textStyle(.title)
-                        .foregroundStyle(DS.Colors.primary)
-                    Text("today").textStyle(.caption).foregroundStyle(DS.Colors.secondary)
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                        Text(steps.total.formatted())
+                            .textStyle(.title)
+                            .foregroundStyle(DS.Colors.primary)
+                        Text("today").textStyle(.caption).foregroundStyle(DS.Colors.secondary)
+                    }
+                    Text(StepsData.countedText(steps))
+                        .textStyle(.caption)
+                        .foregroundStyle(DS.Colors.secondary)
                 }
                 Text("Steps by hour")
                     .textStyle(.caption)
@@ -154,9 +155,10 @@ struct ActivityView: View {
                 DayBarsChart(bars: hourBars(steps.hourly), height: 110,
                              summary: "Steps by hour today, \(steps.total) in all")
             } else {
-                Text("No band data today yet.")
+                Text(StepsData.notCountedText)
                     .textStyle(.body)
                     .foregroundStyle(DS.Colors.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .monoCard()
@@ -202,7 +204,7 @@ struct ActivityView: View {
                 .foregroundStyle(DS.Colors.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let activeCalories {
-                Text("About \(activeCalories) active kcal today (estimated from heart rate).")
+                Text("About \(activeCalories) active kcal today, from your heart rate and steps.")
                     .textStyle(.caption)
                     .foregroundStyle(DS.Colors.secondary)
             }
@@ -233,7 +235,7 @@ struct ActivityView: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionTitle(title: "Workouts", trailing: "Last 14 days")
             if recent.isEmpty {
-                Text("No workouts yet. Pulse finds them by itself from your heart rate. Use + to add one it missed.")
+                Text("No workouts in the last 14 days. Pulse records walks and runs from your steps and other workouts from your heart rate. Use + to add one it missed.")
                     .textStyle(.body)
                     .foregroundStyle(DS.Colors.secondary)
                     .padding(.top, DS.Space.s)
@@ -258,13 +260,8 @@ struct ActivityView: View {
 
     private var recent: [WorkoutRecord] {
         let cutoff = Calendar.current.date(byAdding: .day, value: -14, to: .now) ?? .now
+        // A walk an earlier version asked about stays hidden until the next detection replaces it.
         return workouts.filter { $0.start >= cutoff && $0.isSuggestion != true }
-    }
-
-    /// Walks Pulse is asking about.
-    private var suggestions: [WorkoutRecord] {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -14, to: .now) ?? .now
-        return workouts.filter { $0.start >= cutoff && $0.isSuggestion == true }
     }
 
     struct DayGroup: Identifiable {

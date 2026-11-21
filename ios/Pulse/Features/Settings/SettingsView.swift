@@ -25,73 +25,60 @@ struct SettingsView: View {
     @State private var pendingDataStart: Date?
     /// Tapping the version row 7 times also opens the sync log.
     @State private var versionTaps = 0
+    /// What the search field holds (DESIGN.md §4b-11).
+    @State private var query = ""
+
+    /// The sections, with the words that find them.
+    private enum SettingsGroup: CaseIterable {
+        case profile, steps, band, cloud, reminders, data, about
+
+        var words: String {
+            switch self {
+            case .profile: "Profile birth year age sex weight height waist sleep goal max heart rate recalculate metrics"
+            case .steps: "Steps daily goal step counting step test 100 Hz motion stream walk"
+            case .band: "Band WHOOP name connection firmware battery wear sensor last sync your data starts sync now forget sync log motion check pair Bluetooth"
+            case .cloud: "Cloud upload sign in sign out account Claude connector Strava workouts"
+            case .reminders: "Reminders notifications bedtime recovery"
+            case .data: "Your data export all data backup import delete all band data undo sleep edits"
+            case .about: "About widget version metrics algorithm"
+            }
+        }
+    }
+
+    /// Every word typed must appear in the section's words; letter case and accents don't matter.
+    private func shows(_ section: SettingsGroup) -> Bool {
+        let typed = query.split(whereSeparator: \.isWhitespace)
+        return typed.allSatisfy { section.words.localizedStandardContains($0) }
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.xxl) {
+                if !SettingsGroup.allCases.contains(where: shows) {
+                    Text("No settings match “\(query.trimmingCharacters(in: .whitespaces))”.")
+                        .textStyle(.body)
+                        .foregroundStyle(DS.Colors.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if let profile = profiles.first {
-                    ProfileSection(profile: profile) {
-                        Task { await loader.recompute(context: context) }
-                    }
-                    StepsSection(profile: profile)
-                }
-
-                bandSection
-
-                CloudSettingsView()
-
-                SettingsSection("Reminders", footer: "A nudge 30 minutes before tonight's bedtime, and your recovery score after a sync. Created on this iPhone; nothing is sent anywhere.") {
-                    ValueRow(label: "Bedtime and recovery", value: remindersOn ? "On" : "Off", symbol: "bell",
-                             emphasized: remindersOn)
-                    Hairline()
-                    Button(remindersOn ? "Turn off" : "Turn on") {
-                        Task {
-                            if remindersOn {
-                                Notifier.disable()
-                                remindersOn = false
-                            } else {
-                                remindersOn = await Notifier.enable()
-                                Notifier.refresh(context: context)
-                            }
+                    if shows(.profile) {
+                        ProfileSection(profile: profile) {
+                            Task { await loader.recompute(context: context) }
                         }
                     }
-                    .buttonStyle(.secondaryPill)
-                    .padding(.top, DS.Space.m)
+                    if shows(.steps) { StepsSection(profile: profile) }
                 }
 
-                SettingsSection("Your data", footer: backupMessage ?? "Export all data is your backup. The file is one JSON file with all your band data, workouts, journal and profile. Use it to move Pulse to a new install. Importing adds to what is here and never deletes anything.") {
-                    BackupButtons(message: $backupMessage)
-                    if !sleepCorrections.isEmpty {
-                        Button("Undo my sleep edits (\(sleepCorrections.count))") { undoSleepEdits() }
-                            .buttonStyle(.secondaryPill)
-                            .disabled(loader.isBusy)
-                            .padding(.top, DS.Space.s)
-                    }
-                    Button("Delete all band data") { confirmDelete = true }
-                        .buttonStyle(.secondaryPill)
-                        .disabled(band.isBusy || loader.isBusy)
-                        .padding(.top, DS.Space.s)
-                }
+                if shows(.band) { bandSection }
 
-                SettingsSection("About", footer: "Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.") {
-                    // Whether the home screen widget can see the app's data (App Group kept when signing).
-                    ValueRow(label: "Widget link", value: WidgetSnapshot.appGroup ?? "Not available",
-                             symbol: "square.grid.2x2")
-                    Hairline()
-                    ValueRow(label: "Version", value: appVersion)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            versionTaps += 1
-                            if versionTaps >= 7 {
-                                versionTaps = 0
-                                showLog = true
-                            }
-                        }
-                    Hairline()
-                    ValueRow(label: "Metrics", value: "Algorithm v\(MetricsEngine.algorithmVersion)")
-                    Hairline()
-                    ValueRow(label: "Your data", value: "Stored on this iPhone")
-                }
+                if shows(.cloud) { CloudSettingsView() }
+
+                if shows(.reminders) { remindersSection }
+
+                if shows(.data) { dataSection }
+
+                if shows(.about) { aboutSection }
             }
             .padding(.horizontal, DS.Space.side)
             .padding(.top, DS.Space.m)
@@ -99,9 +86,15 @@ struct SettingsView: View {
         }
         // Only the screenshot job sets this (to capture the lower half of the screen).
         .defaultScrollAnchor(LaunchOptions.scroll == "bottom" ? UnitPoint.bottom : nil)
+        .scrollDismissesKeyboard(.immediately)
         .safeAreaInset(edge: .top, spacing: 0) {
-            ScreenHeader(title: "Settings", isSheet: true) {
-                IconButton(systemName: "xmark", label: "Close") { dismiss() }
+            VStack(spacing: DS.Space.s) {
+                ScreenHeader(title: "Settings", isSheet: true) {
+                    IconButton(systemName: "xmark", label: "Close") { dismiss() }
+                }
+                SettingsSearchField(text: $query)
+                    .padding(.horizontal, DS.Space.side)
+                    .padding(.bottom, DS.Space.s)
             }
         }
         .monoSheet()
@@ -139,6 +132,68 @@ struct SettingsView: View {
         .sheet(isPresented: $showMotionCheck) { MotionCheckView() }
         .task {
             if profiles.isEmpty { _ = ProfileStore.current(in: context) }
+        }
+    }
+
+    /// Bedtime and recovery notifications.
+    private var remindersSection: some View {
+        SettingsSection("Reminders", footer: "A nudge 30 minutes before tonight's bedtime, and your recovery score after a sync. Created on this iPhone; nothing is sent anywhere.") {
+            ValueRow(label: "Bedtime and recovery", value: remindersOn ? "On" : "Off", symbol: "bell",
+                     emphasized: remindersOn)
+            Hairline()
+            Button(remindersOn ? "Turn off" : "Turn on") {
+                Task {
+                    if remindersOn {
+                        Notifier.disable()
+                        remindersOn = false
+                    } else {
+                        remindersOn = await Notifier.enable()
+                        Notifier.refresh(context: context)
+                    }
+                }
+            }
+            .buttonStyle(.secondaryPill)
+            .padding(.top, DS.Space.m)
+        }
+    }
+
+    /// Backup, import, and deleting band data.
+    private var dataSection: some View {
+        SettingsSection("Your data", footer: backupMessage ?? "Export all data is your backup. The file is one JSON file with all your band data, workouts, journal and profile. Use it to move Pulse to a new install. Importing adds to what is here and never deletes anything.") {
+            BackupButtons(message: $backupMessage)
+            if !sleepCorrections.isEmpty {
+                Button("Undo my sleep edits (\(sleepCorrections.count))") { undoSleepEdits() }
+                    .buttonStyle(.secondaryPill)
+                    .disabled(loader.isBusy)
+                    .padding(.top, DS.Space.s)
+            }
+            Button("Delete all band data") { confirmDelete = true }
+                .buttonStyle(.secondaryPill)
+                .disabled(band.isBusy || loader.isBusy)
+                .padding(.top, DS.Space.s)
+        }
+    }
+
+    /// Version, metrics and the widget link. Seven taps on Version open the sync log.
+    private var aboutSection: some View {
+        SettingsSection("About", footer: "Pulse is a personal project for general wellness, not medical advice. Not affiliated with or endorsed by WHOOP, Inc.") {
+            // Whether the home screen widget can see the app's data (App Group kept when signing).
+            ValueRow(label: "Widget link", value: WidgetSnapshot.appGroup ?? "Not available",
+                     symbol: "square.grid.2x2")
+            Hairline()
+            ValueRow(label: "Version", value: appVersion)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    versionTaps += 1
+                    if versionTaps >= 7 {
+                        versionTaps = 0
+                        showLog = true
+                    }
+                }
+            Hairline()
+            ValueRow(label: "Metrics", value: "Algorithm v\(MetricsEngine.algorithmVersion)")
+            Hairline()
+            ValueRow(label: "Your data", value: "Stored on this iPhone")
         }
     }
 
@@ -280,35 +335,67 @@ private struct SettingsSection<Content: View>: View {
     }
 }
 
-/// Step goal, how the estimate is calibrated, and the two ways to check it (DESIGN.md §4b-8).
-private struct StepsSection: View {
-    @Bindable var profile: ProfileRecord
-    @Environment(\.modelContext) private var context
-    @Query private var references: [StepReferenceRecord]
-    @Query private var sleepRecords: [SleepRecord]
-    @Query private var days: [DaySummaryRecord]
-    @State private var factor: Steps.Factor = .none
-    @State private var showTest = false
-    @State private var showWatch = false
+/// A search field pinned under the Settings header (DESIGN.md §4b-11).
+private struct SettingsSearchField: View {
+    @Binding var text: String
 
     var body: some View {
-        SettingsSection("Steps", footer: "A WHOOP 4.0 doesn't count steps, so Pulse estimates them from how your wrist moves. A step test and your Apple Watch's daily totals tune the estimate to you and show how close it is.") {
+        HStack(spacing: DS.Space.s) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(DS.Colors.secondary)
+                .accessibilityHidden(true)
+            TextField("Search settings", text: $text)
+                .textStyle(.body)
+                .foregroundStyle(DS.Colors.primary)
+                .tint(DS.Colors.accent)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(DS.Colors.secondary)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.leading, DS.Space.m)
+        .padding(.trailing, text.isEmpty ? DS.Space.m : 0)
+        .frame(minHeight: 44)
+        .background(DS.Colors.surface, in: RoundedRectangle(cornerRadius: DS.Radius.field, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.field, style: .continuous).stroke(DS.Colors.border, lineWidth: 1))
+    }
+}
+
+/// The step goal, whether the band is counting, and the step test (DESIGN.md §4b-8).
+private struct StepsSection: View {
+    @Bindable var profile: ProfileRecord
+    @Environment(BandManager.self) private var band
+    @State private var showTest = false
+
+    var body: some View {
+        SettingsSection("Steps", footer: "The band counts your steps from its motion, 100 times a second, while you wear it and your iPhone is nearby. It pauses while you're still or asleep, and when its battery is low.") {
             goalRow
             Hairline()
-            ValueRow(label: "Calibration", value: StepsData.calibrationText(factor), emphasized: factor.isCalibrated)
+            ValueRow(label: "Step counting", value: countingText, emphasized: band.streamDecision == .stream)
             Hairline()
             Button("Step test") { showTest = true }
                 .buttonStyle(.secondaryPill)
                 .padding(.top, DS.Space.m)
-            Button("Compare with Apple Watch") { showWatch = true }
-                .buttonStyle(.secondaryPill)
-                .padding(.top, DS.Space.s)
         }
         .sheet(isPresented: $showTest) { StepTestView() }
-        .sheet(isPresented: $showWatch) { WatchStepsView() }
-        .task(id: references.count) {
-            factor = Steps.factor(StepsData.checked(references.map(\.value), sleeps: sleepRecords.map(\.value), days: Array(days),
-                                                    maxHeartRate: profile.estimatedMaxHeartRate(), context: context))
+    }
+
+    private var countingText: String {
+        switch band.streamDecision {
+        case .stream: "On"
+        case .still: "Paused: you're still"
+        case .notWorn: "Paused: band not worn"
+        case .lowBattery: "Paused: band battery low"
+        case nil: "Waiting for the band"
         }
     }
 
