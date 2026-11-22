@@ -19,6 +19,12 @@ public struct MetricsResult: Sendable {
     /// The newest sleep that is found but not finished yet (nil = none). Only its existence is shown
     /// ("shows once you're up"), never its times or numbers.
     public var unfinishedSleep: UnfinishedSleep? = nil
+    /// The newest band minutes as the sleep model reads them, oldest first: true = likely asleep, false = awake, nil = no band
+    /// data. The newest `MotionStreamPolicy.asleepWindowMinutes`, so the step stream can pause as soon as the owner falls asleep,
+    /// before the sleep itself is found (docs/METRICS.md §15).
+    public var newestMinutesAsleep: [Bool?] = []
+    /// The start of the newest band minute. nil without data.
+    public var newestMinute: Date? = nil
 
     public struct UnfinishedSleep: Sendable, Equatable {
         /// Where it ends so far: the newest minute while it goes on.
@@ -267,9 +273,13 @@ public enum MetricsEngine {
             previousAsleep = asleepMinutes.map { Double($0) }
             day = next
         }
-        return MetricsResult(sleeps: sleeps, days: days, unfinishedSleep: waiting.map {
+        var result = MetricsResult(sleeps: sleeps, days: days, unfinishedSleep: waiting.map {
             MetricsResult.UnfinishedSleep(end: tl.date($0.end), hasEnded: tl.count - $0.end >= 3)
         })
+        let newest = max(0, tl.count - MotionStreamPolicy.asleepWindowMinutes)..<tl.count
+        result.newestMinutesAsleep = newest.map { observed[$0] ? candidates[$0] : nil }
+        result.newestMinute = tl.date(tl.count - 1)
+        return result
     }
 
     /// Strain for a time range (e.g. one workout).

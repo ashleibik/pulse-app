@@ -104,6 +104,9 @@ struct RecomputeOutput: Sendable {
     let workoutStrain: [UUID: Double]
     /// A sleep found but not finished yet (docs/METRICS.md §4, step 9).
     var unfinishedSleep: MetricsResult.UnfinishedSleep? = nil
+    /// The newest band minutes look asleep, and when the newest one started (the step stream, docs/METRICS.md §15).
+    var newestLooksAsleep = false
+    var newestMinute: Date? = nil
     /// Workouts found in the raw data (`nil` = leave workouts alone).
     var detectedWorkouts: [Workout]? = nil
     /// Detection looked only from here on (nil = the whole history).
@@ -161,6 +164,8 @@ actor MetricsRecomputer {
         }
         var output = RecomputeOutput(days: result.days, sleeps: result.sleeps, workoutStrain: strain)
         output.unfinishedSleep = result.unfinishedSleep
+        output.newestLooksAsleep = MotionStreamPolicy.looksAsleep(result.newestMinutesAsleep)
+        output.newestMinute = result.newestMinute
         output.manualWorkouts = manual
         if detection != .skip {
             // Recent: from `recentDays` before the newest data, with an hour before that for workouts already under way.
@@ -266,7 +271,7 @@ extension PulseStore {
             for stale in fromBand.values { context.delete(stale) }
         }
         try context.save()
-        UnfinishedSleepStore.save(output.unfinishedSleep)
+        UnfinishedSleepStore.save(output.unfinishedSleep, newestLooksAsleep: output.newestLooksAsleep, newestMinute: output.newestMinute)
     }
 
     /// Raw minutes in [from, to), as plain values (for charts and the sleep timeline).
@@ -303,15 +308,35 @@ enum UnfinishedSleepStore {
     /// A sleep waits to be shown right now.
     static var isWaitingNow: Bool { isWaiting(end: UserDefaults.standard.double(forKey: endKey)) }
 
-    /// A sleep is going on: found, and the band has no minutes after it yet. The step stream pauses for it.
-    static var sleepIsGoingOn: Bool { isWaitingNow && !UserDefaults.standard.bool(forKey: hasEndedKey) }
+    /// The newest band minutes looked asleep at the last recalculation, and when the newest of them started (seconds since 1970).
+    static let newestLooksAsleepKey = "newestMinutesLookAsleep"
+    static let newestMinuteKey = "newestMinuteStart"
+    /// Older than this, the newest minutes say nothing about now.
+    static let newestMinutesFreshFor: TimeInterval = 15 * 60
+
+    /// The step stream pauses for sleep (docs/METRICS.md §15):
+    /// - while a sleep is found and not finished yet, short wakes in bed included: the night is only over once the owner is
+    ///   clearly up, or opens Pulse;
+    /// - and before the sleep is found (that takes 45 minutes asleep), as soon as the newest minutes look asleep, unless Pulse
+    ///   was opened since they started (opening Pulse counts as being up).
+    static func streamPausesForSleep(now: Date = .now) -> Bool {
+        let defaults = UserDefaults.standard
+        if isWaiting(end: defaults.double(forKey: endKey), now: now) { return true }
+        let newest = defaults.double(forKey: newestMinuteKey)
+        guard defaults.bool(forKey: newestLooksAsleepKey), newest > 0,
+              now.timeIntervalSince1970 - newest < newestMinutesFreshFor else { return false }
+        let windowStart = newest - Double(MotionStreamPolicy.asleepWindowMinutes) * 60
+        return (openedAt?.timeIntervalSince1970 ?? 0) < windowStart
+    }
     /// Quicker pulls only this long after it ended. After that, the usual pace.
     static let quickPullsFor: TimeInterval = 2 * 3600
 
-    static func save(_ sleep: MetricsResult.UnfinishedSleep?) {
+    static func save(_ sleep: MetricsResult.UnfinishedSleep?, newestLooksAsleep: Bool = false, newestMinute: Date? = nil) {
         let defaults = UserDefaults.standard
         defaults.set(sleep?.end.timeIntervalSince1970 ?? 0, forKey: endKey)
         defaults.set(sleep?.hasEnded ?? false, forKey: hasEndedKey)
+        defaults.set(newestLooksAsleep, forKey: newestLooksAsleepKey)
+        defaults.set(newestMinute?.timeIntervalSince1970 ?? 0, forKey: newestMinuteKey)
     }
 
     /// True while a sleep waits to be shown. It is shown anyway `showAnywayMinutes` after it ended.

@@ -13,6 +13,20 @@ public enum MotionStreamPolicy {
     public static let resumeBatteryPercent = 20.0
     /// No heart rate in this many of the newest minutes: the band isn't worn.
     public static let notWornMinutes = 10
+    /// The newest band minutes the sleep model looks at to tell the owner fell asleep ...
+    public static let asleepWindowMinutes = 20
+    /// ... and the share of them, measured, that must be likely asleep.
+    public static let asleepShare = 0.8
+
+    /// The sleep model's newest minutes say the owner has fallen asleep: at least `asleepShare` of the newest
+    /// `asleepWindowMinutes` are likely asleep, with at least half of them measured (docs/METRICS.md §15). Shorter windows
+    /// fired on the owner's still minutes at noon.
+    /// - Parameter newest: oldest first; true = likely asleep, false = awake, nil = no band data (`MetricsResult.newestMinutesAsleep`).
+    public static func looksAsleep(_ newest: [Bool?]) -> Bool {
+        let measured = newest.suffix(asleepWindowMinutes).compactMap { $0 }
+        guard measured.count * 2 >= asleepWindowMinutes else { return false }
+        return Double(measured.filter { $0 }.count) >= asleepShare * Double(measured.count)
+    }
 
     public enum Decision: String, Equatable, Sendable {
         case stream, lowBattery, notWorn, asleep
@@ -23,7 +37,8 @@ public enum MotionStreamPolicy {
     /// - Parameters:
     ///   - minutes: the newest band minutes, any order (the last 10 minutes or more).
     ///   - streaming: whether the stream is on now, so the battery limits don't flicker.
-    ///   - asleep: a sleep is going on (found, with no band minutes after it yet: docs/METRICS.md §4).
+    ///   - asleep: the owner is asleep or still in their night: a sleep found and not finished yet (short wakes in bed
+    ///     included), or the newest minutes `looksAsleep` before the sleep is found (docs/METRICS.md §15).
     public static func decide(recent minutes: [MinuteSample], batteryPercent: Double?, charging: Bool?,
                               streaming: Bool, asleep: Bool) -> Decision {
         if charging != true, let batteryPercent,

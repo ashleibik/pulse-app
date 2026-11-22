@@ -206,6 +206,35 @@ private func minute(_ index: Int, heartRate: UInt8 = 60, turn: UInt8? = 4, movem
     #expect(!MotionStreamPolicy.Decision.asleep.isOn)
 }
 
+@Test func theNewestMinutesTellWhenYouFellAsleep() {
+    // 16 of the newest 20 likely asleep: asleep, before the sleep itself is found (that takes 45 minutes).
+    let fellAsleep: [Bool?] = [Bool?](repeating: false, count: 4) + [Bool?](repeating: true, count: 16)
+    #expect(MotionStreamPolicy.looksAsleep(fellAsleep))
+    // 15 of 20: not yet.
+    #expect(!MotionStreamPolicy.looksAsleep([Bool?](repeating: false, count: 5) + [Bool?](repeating: true, count: 15)))
+    // A still stretch of 10 minutes at a desk is not enough.
+    #expect(!MotionStreamPolicy.looksAsleep([Bool?](repeating: false, count: 10) + [Bool?](repeating: true, count: 10)))
+    // Only the newest 20 count.
+    #expect(!MotionStreamPolicy.looksAsleep([Bool?](repeating: true, count: 20) + [Bool?](repeating: false, count: 5)))
+    // Minutes without band data are left out, but half the window must be measured.
+    #expect(MotionStreamPolicy.looksAsleep([Bool?](repeating: nil, count: 10) + [Bool?](repeating: true, count: 10)))
+    #expect(!MotionStreamPolicy.looksAsleep([Bool?](repeating: nil, count: 11) + [Bool?](repeating: true, count: 9)))
+    #expect(!MotionStreamPolicy.looksAsleep([]))
+}
+
+@Test func theEngineReportsTheNewestMinutes() {
+    let start = Date(timeIntervalSince1970: 1_750_032_000)
+    let minutes = (0..<45).map { index in
+        MinuteSample(start: start.addingTimeInterval(Double(index) * 60), heartRate: [UInt8](repeating: 70, count: 60),
+                     rrIntervalsMs: [], activity: [UInt8](repeating: 3, count: 60), source: .history)
+    }
+    let result = MetricsEngine.run(minutes: minutes, calendar: utcCalendar, now: start.addingTimeInterval(45 * 60))
+    #expect(result.newestMinutesAsleep.count == MotionStreamPolicy.asleepWindowMinutes)
+    #expect(result.newestMinutesAsleep.allSatisfy { $0 != nil })
+    #expect(result.newestMinute == start.addingTimeInterval(44 * 60))
+    #expect(MetricsEngine.run(minutes: [], calendar: utcCalendar, now: start).newestMinutesAsleep.isEmpty)
+}
+
 @Test func theStreamStopsWhenTheBandIsOffTheWrist() {
     let worn = (0..<20).map { minute($0, turn: 60) }
     let off = (20..<30).map { minute($0, heartRate: 0, turn: nil, movement: 0) }

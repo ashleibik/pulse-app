@@ -472,7 +472,17 @@ from the newest band minutes:
 
 - **Off** while the band battery is under 15% and not charging, and on again from 20%.
 - **Off** when the band wasn't worn in the newest 10 minutes of data (no heart rate).
-- **Off** while a sleep is going on (§4: found, with no band minutes after it yet).
+- **Off** while the owner sleeps: from the moment the sleep model's newest minutes look asleep (16 of the newest 20 band minutes
+  likely asleep, at least half of them measured: `MotionStreamPolicy.looksAsleep`), and for as long as a sleep is found and not
+  finished (§4), short wakes in bed included. Opening Pulse counts as being up, as it does for the night (§4 step 9).
+
+*Changed 2026-11-22:* the stream paused only while a found sleep had no band minutes after it. A sleep is found after 45 minutes
+asleep, and any short wake in bed gave it minutes after it, so on the owner's night of 2026-11-21/22 the stream counted 3 hours in bed
+(2:35 to 3:24, short bursts at 5:07, 6:54, 7:20 and 8:20, and 9:17 to 10:57). Replayed every 10 minutes over 2026-11-18 to 22 against
+the sleeps Pulse recorded: in bed with the stream on fell from 550 to 190 minutes (mostly the first 20 minutes of each sleep). The
+stream is now off for 160 minutes awake instead of 50, mostly lying in bed before falling asleep and the minutes after getting up
+until the night is finished (opening Pulse finishes it at once). A 10-minute window cut bed time to 140 minutes but paused 240
+minutes awake, at noon among them.
 - **On** otherwise, and always during a step test.
 
 *Changed 2026-11-21:* the stream also paused after 30 still minutes. Only the next pull could start it again, and with the app

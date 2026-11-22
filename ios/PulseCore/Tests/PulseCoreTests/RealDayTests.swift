@@ -79,6 +79,25 @@ private struct RealDay {
             == [real.clock(22, 4), real.clock(22, 6), real.clock(22, 8), real.clock(22, 10)])
 }
 
+@Test func theRealNightPausesTheStepStream() throws {
+    guard let real = try RealDay() else { return }
+    func seen(at now: Date) -> MetricsResult {
+        MetricsEngine.run(minutes: real.minutes.filter { $0.start.addingTimeInterval(60) <= now }, calendar: real.local, now: now)
+    }
+    // Asleep from 2:35. The sleep is only found at 3:20 (45 minutes), and the stream ran until 3:24. The newest minutes say
+    // asleep by 2:55.
+    let falling = seen(at: real.clock(22, 2 + 55.0 / 60))
+    #expect(falling.unfinishedSleep == nil)
+    #expect(MotionStreamPolicy.looksAsleep(falling.newestMinutesAsleep))
+    // 9:20, a short wake in bed: the sleep has band minutes after it, but it isn't finished, so the stream stays off.
+    let wake = try #require(seen(at: real.clock(22, 9 + 20.0 / 60)).unfinishedSleep)
+    #expect(wake.hasEnded)
+    // 12:10, up and about since 11:19: a few still minutes don't look like sleep.
+    let noon = seen(at: real.clock(22, 12 + 10.0 / 60))
+    #expect(noon.unfinishedSleep == nil)
+    #expect(!MotionStreamPolicy.looksAsleep(noon.newestMinutesAsleep))
+}
+
 @Test func theRealHealthMonitorIsStillLearning() throws {
     guard let real = try RealDay() else { return }
     let days = real.contents.days.sorted { $0.date < $1.date }

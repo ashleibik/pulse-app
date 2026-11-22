@@ -440,7 +440,7 @@ final class BandManager {
         let decision: MotionStreamPolicy.Decision = isStepTestRunning ? .stream
             : MotionStreamPolicy.decide(recent: recent, batteryPercent: lastBatteryReading ?? record?.batteryPercent,
                                         charging: record?.isCharging, streaming: streamOn,
-                                        asleep: UnfinishedSleepStore.sleepIsGoingOn)
+                                        asleep: UnfinishedSleepStore.streamPausesForSleep())
         streamDecision = decision
         guard decision.isOn != streamOn else { return }
         streamOn = decision.isOn
