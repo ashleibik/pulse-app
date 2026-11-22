@@ -159,27 +159,38 @@ public enum SleepTimeline {
         return out
     }
 
-    /// Times to label under a night chart: the start and the end (with minutes), and whole hours between them that leave room
-    /// for those labels. On a phone the chart is about 270 points wide and "10:22 AM" about 60, so an hour label must stay a
-    /// third of the night away from either end, and hour labels a fifth of the night apart (every 1, 2, 3, 4 or 6 hours).
-    /// The owner's night of 2026-11-21 (1:48 to 10:22) showed "1:48 AM4 AM" and "8 AM10:22 AM" run together with 18%.
+    /// Times to label under a night chart (DESIGN.md §4b-6): whole hours only, evenly spaced, on the clock's multiples of the
+    /// step (every 1, 2, 3, 4 or 6 hours, the smallest that keeps labels a fifth of the night apart on a ~270 pt chart), and
+    /// 6% of the night in from either end so no label is cut off. The exact start and end are in the line above the chart.
+    /// They used to be labelled too ("1:48 AM · 5 AM · 7 AM · 10:22 AM"), which left gaps of 3h12, 2h and 3h22: uneven.
+    /// A sleep too short for any whole hour gets its start and end.
     public static func axisTimes(from start: Date, to end: Date, calendar: Calendar) -> [Date] {
         guard end > start else { return [start] }
         let length = end.timeIntervalSince(start)
-        let step = ([1, 2, 3, 4, 6].map { TimeInterval($0) * 3600 }.first { $0 >= axisHourSpacing * length }) ?? 6 * 3600
-        let room = max(axisEdgeRoom * length, 20 * 60)
-        guard var hour = calendar.dateInterval(of: .hour, for: start.addingTimeInterval(room))?.start else { return [start, end] }
-        if hour < start.addingTimeInterval(room) { hour = hour.addingTimeInterval(3600) }
-        var times = [start]
-        while hour <= end.addingTimeInterval(-room) {
-            times.append(hour)
-            hour = hour.addingTimeInterval(step)
+        let stepHours = axisStepHours.first { Double($0) * 3600 >= axisHourSpacing * length } ?? axisStepHours[axisStepHours.count - 1]
+        let first = start.addingTimeInterval(axisEdgeMargin * length)
+        let last = end.addingTimeInterval(-axisEdgeMargin * length)
+        guard var hour = calendar.dateInterval(of: .hour, for: first)?.start else { return [start, end] }
+        if hour < first { hour = hour.addingTimeInterval(3600) }
+        // On the clock's own multiples of the step: 2, 4, 6 AM for every 2 hours. A day has at most 24 hours to try.
+        var tries = 0
+        while calendar.component(.hour, from: hour) % stepHours != 0 && tries < 24 {
+            hour = hour.addingTimeInterval(3600)
+            tries += 1
         }
-        return times + [end]
+        var times: [Date] = []
+        while hour <= last {
+            times.append(hour)
+            hour = hour.addingTimeInterval(Double(stepHours) * 3600)
+        }
+        // Too short for any whole hour: its start and end, so the axis isn't empty.
+        return times.isEmpty ? [start, end] : times
     }
 
-    /// How far from either end of the night an hour label must be, as a share of the night.
-    public static let axisEdgeRoom = 0.32
+    /// The steps an hour axis may take, in hours.
+    public static let axisStepHours = [1, 2, 3, 4, 6]
+    /// How far in from either end of the night an hour label must be, as a share of the night (so it isn't cut off).
+    public static let axisEdgeMargin = 0.06
     /// How far apart hour labels must be, as a share of the night.
     public static let axisHourSpacing = 0.2
 

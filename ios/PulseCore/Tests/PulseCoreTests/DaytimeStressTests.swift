@@ -8,9 +8,10 @@ private let midnight = Date(timeIntervalSince1970: 1_750_032_000)      // 2025-0
 
 private func clock(_ hour: Double) -> Date { midnight.addingTimeInterval(hour * 3600) }
 
+/// Every second of the minute at one heart rate and one motion value.
 private func minute(at start: Date, hr: UInt8, activity: UInt8 = 2, rr: [UInt16] = [], source: DataSource = .history) -> MinuteSample {
     MinuteSample(start: start, heartRate: [UInt8](repeating: hr, count: 60), rrIntervalsMs: rr,
-                 activity: (0..<60).map { $0 % 2 == 0 ? activity : 0 }, source: source)
+                 activity: [UInt8](repeating: activity, count: 60), source: source)
 }
 
 /// A full hour at one heart rate.
@@ -84,6 +85,85 @@ private func ordinaryHours() -> [MinuteSample] { ordinary.flatMap { hour($0.0, h
     let day = analyze(ordinaryHours() + steady, now: clock(14.99))
     #expect(try #require(day.current).start == clock(14))
     #expect(!day.isMovingNow)
+}
+
+@Test func deskWorkIsNotMoving() throws {
+    // Typing and handling the phone: the wrist's reading changes by 0.05 to 0.10 g a second (25 to 50 here), NOOP's desk range.
+    // The old rule called a minute averaging 30 or more moving, so desk hours read "Moving" all day.
+    func deskMotion(_ index: Int) -> [UInt8] {
+        var values: [UInt8] = []
+        for second in 0..<60 {
+            let value: Int = 25 + (second * 7 + index) % 70                   // 25 to 94
+            values.append(UInt8(value))
+        }
+        return values
+    }
+    var desk: [MinuteSample] = []
+    for index in 0..<60 {
+        let start: Date = clock(14).addingTimeInterval(Double(index) * 60)
+        desk.append(MinuteSample(start: start, heartRate: [UInt8](repeating: 74, count: 60), rrIntervalsMs: [],
+                                 activity: deskMotion(index), source: .history))
+    }
+    let day = analyze(ordinaryHours() + desk, now: clock(14.99))
+    #expect(try #require(day.current).start == clock(14))
+    #expect(!day.isMovingNow)
+}
+
+@Test func movingIsCountedInSecondsLikeNoop() throws {
+    // 22 minutes in which a third of the seconds are walking-sized (0.24 g) is 12% of the hour's seconds: not moving. The old
+    // minute rule called each of those minutes moving (37% of the hour) and left the hour out.
+    var mixed: [MinuteSample] = []
+    for index in 0..<60 {
+        var motion: [UInt8] = []
+        for second in 0..<60 {
+            let walking: Bool = index < 22 && second % 3 == 0
+            motion.append(walking ? 120 : 20)
+        }
+        let start: Date = clock(14).addingTimeInterval(Double(index) * 60)
+        mixed.append(MinuteSample(start: start, heartRate: [UInt8](repeating: 80, count: 60), rrIntervalsMs: [], activity: motion,
+                                  source: .history))
+    }
+    #expect(try #require(analyze(ordinaryHours() + mixed).hours.first { $0.start == clock(14) }).isMoving == false)
+    // Exactly at NOOP's 0.20 g (100) a second isn't moving; above it, it is.
+    #expect(try #require(analyze(ordinaryHours() + hour(14, hr: 80, activity: 100)).hours.first { $0.start == clock(14) }).isMoving == false)
+    #expect(try #require(analyze(ordinaryHours() + hour(14, hr: 80, activity: 101)).hours.first { $0.start == clock(14) }).isMoving)
+}
+
+@Test func theCardKeepsTheLastScoredHour() throws {
+    // Scored hours from 8 to 13, then a walk at 14: nothing new, but 13:00 is still the last valid reading.
+    let day = analyze(ordinaryHours() + hour(14, hr: 120, activity: 120), now: clock(14.9))
+    #expect(day.current == nil && day.isMovingNow)
+    #expect(try #require(day.lastScored).start == clock(13))
+    // Before 4 hours are scored, nothing is shown, so there is nothing to keep.
+    #expect(analyze(hour(8, hr: 70) + hour(9, hr: 71), now: clock(9.9)).lastScored == nil)
+}
+
+@Test func theOwnersDeskDaysAreScored() throws {
+    // The owner's 2026-11-17 to 20 (logs/, never committed): mostly at a desk, 38 of 42 waking hours used to be left out as
+    // "moving". With NOOP's motion gate about a third are, mostly hours with walks.
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("logs/pulse-backup-2026-11-21b.json")
+    guard FileManager.default.fileExists(atPath: url.path) else { return }
+    var data: Data? = try Data(contentsOf: url)
+    let reader = try PulseBackup.Reader(chunks: { defer { data = nil }; return data })
+    var minutes: [MinuteSample] = []
+    while let minute = try reader.nextMinute() { minutes.append(minute) }
+    var local = Calendar(identifier: .gregorian)
+    local.timeZone = TimeZone(secondsFromGMT: -6 * 3600)!
+    let sleeps = MetricsEngine.run(minutes: minutes, calendar: local, now: reader.contents.header.exportedAt).sleeps
+    var moving = 0, total = 0
+    for day in 17...20 {
+        let start = local.date(from: DateComponents(year: 2026, month: 11, day: day))!
+        let end = start.addingTimeInterval(86_400)
+        let result = StressMonitor.day(minutes: minutes.filter { $0.start >= start && $0.start < end }, sleeps: sleeps, workouts: [],
+                                       now: end, calendar: local)
+        for hour in result.hours where hour.minutes >= 20 {
+            total += 1
+            if hour.isMoving { moving += 1 }
+        }
+    }
+    #expect(total >= 30, "\(total) hours")
+    #expect(Double(moving) / Double(total) < 0.5, "\(moving) of \(total) hours left out as moving")
 }
 
 @Test func anHourNeedsFiveMinutesOfHeartRate() {

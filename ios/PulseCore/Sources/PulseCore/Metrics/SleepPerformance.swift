@@ -78,16 +78,63 @@ public struct RestorativeSleep: Sendable, Equatable {
     }
 }
 
-/// "Within your range": is today's value inside your usual night-to-night spread?
+/// "Within your range": is last night's value inside your usual night-to-night spread? (docs/METRICS.md §18)
 public enum HealthMonitor {
+    /// A metric is checked only with this many earlier nights. With 3, three near-identical nights shrank the range to its
+    /// floor and an ordinary night was flagged.
+    public static let minimumNights = 7
+
+    public enum Metric: String, Sendable, CaseIterable {
+        case hrv, restingHeartRate, respiratoryRate
+
+        /// The card's short name.
+        public var name: String {
+            switch self {
+            case .hrv: "HRV"
+            case .restingHeartRate: "Resting HR"
+            case .respiratoryRate: "Breathing"
+            }
+        }
+    }
+
+    public enum Reading: Sendable, Equatable { case within, high, low }
+
+    public struct Check: Sendable, Equatable {
+        public let metric: Metric
+        public let reading: Reading
+
+        public init(metric: Metric, reading: Reading) {
+            self.metric = metric
+            self.reading = reading
+        }
+    }
+
+    /// Your usual range: the mean ± max(`minSpread`, 1.5 × sample SD) of the earlier values.
     /// - Parameters:
     ///   - history: previous values (e.g. the last 30 days), today excluded.
     ///   - minSpread: smallest band around the average (so a very steady history isn't too strict).
-    /// - Returns: nil with fewer than 3 earlier values (no range yet).
-    public static func withinRange(_ today: Double, history: [Double], minSpread: Double) -> Bool? {
-        guard history.count >= 3 else { return nil }
+    /// - Returns: nil with fewer than `minimumNights` earlier values (no range yet).
+    public static func range(history: [Double], minSpread: Double) -> ClosedRange<Double>? {
+        guard history.count >= minimumNights else { return nil }
         let mean = Stats.mean(history)
         let spread = max(minSpread, 1.5 * Stats.sampleSD(history))
-        return abs(today - mean) <= spread
+        return (mean - spread)...(mean + spread)
+    }
+
+    /// Inside the range, or which side of it. nil without a range yet.
+    public static func reading(_ today: Double, history: [Double], minSpread: Double) -> Reading? {
+        guard let range = range(history: history, minSpread: minSpread) else { return nil }
+        return today > range.upperBound ? .high : today < range.lowerBound ? .low : .within
+    }
+
+    public static func withinRange(_ today: Double, history: [Double], minSpread: Double) -> Bool? {
+        reading(today, history: history, minSpread: minSpread).map { $0 == .within }
+    }
+
+    /// What the card says about the metrics outside their range: "HRV low · Resting HR high". nil when none is.
+    public static func flaggedText(_ checks: [Check]) -> String? {
+        let outside = checks.filter { $0.reading != .within }
+        guard !outside.isEmpty else { return nil }
+        return outside.map { "\($0.metric.name) \($0.reading == .high ? "high" : "low")" }.joined(separator: " · ")
     }
 }

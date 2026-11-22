@@ -93,7 +93,8 @@ struct ActivityView: View {
             DailyCalories.estimate(minutes: minutes, steps: counted, body: body, dayStart: start, end: .now, maxHeartRate: maxHR,
                                    restingHeartRate: resting)?.active
         }
-        steps = Steps.day(counted, dayStart: start, end: .now, calendar: .current)
+        steps = Steps.day(counted, dayStart: start, end: .now, calendar: .current,
+                          asleep: StepsData.sleeps(from: start, to: .now, in: context))
         let profile = profiles.first
         let week = Calendar.current.date(byAdding: .day, value: -6, to: start) ?? start
         restingNights = days.filter { $0.date >= week && $0.restingHeartRate != nil }.count

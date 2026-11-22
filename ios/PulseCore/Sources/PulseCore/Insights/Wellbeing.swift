@@ -203,8 +203,10 @@ public enum StressMonitor {
     public static let stillActivity = 8.0
     /// With fewer scored hours than this, the day has little to compare against.
     public static let settledHours = NoopDaytimeStress.quartileHours
-    /// A minute with at least this movement is a moving minute (docs/METRICS.md §14). The owner's walking measured 40 to 84.
-    public static let movingMovement = 30.0
+    /// A second above this activity is a moving second (docs/METRICS.md §14): NOOP's `WorkoutDetector.motionThreshold`,
+    /// 0.20 g of change since the second before, on Pulse's activity scale (× `MinuteBuilder.activityScale`). NOOP puts desk
+    /// work at 0.05 to 0.10 g (25 to 50 here) and walking at 0.2 to 0.4 g.
+    public static let movingActivity: UInt8 = 100
 
     /// One minute of a night, for the sleep stress of `SleepPerformance`. `nil` = can't tell (moving, or the band was off).
     public static func level(for minute: MinuteSample, restingHR: Double, maxHR: Double) -> StressLevel? {
@@ -239,6 +241,9 @@ public enum StressMonitor {
         public let scoredHours: Int
         /// true = too few hours to compare yet. With two hours, one always reads calm and the other high.
         public var isEarlyRead: Bool { scoredHours < settledHours }
+        /// The newest hour with a score, however old. What the Today card keeps showing when the newest hour has none
+        /// (DESIGN.md §4b-5). nil before 4 hours are scored, since their scores are withheld.
+        public var lastScored: Hour? { hours.last { $0.score != nil } }
     }
 
     /// - Parameters:
@@ -264,16 +269,25 @@ public enum StressMonitor {
             let inHour = (byHour[start] ?? []).sorted { $0.start < $1.start }
             let beats = inHour.flatMap(\.heartRate).filter { $0 > 0 }
             seconds[start] = beats.count
-            let moving = inHour.filter { minute in
-                minute.movement >= movingMovement
-                    || training.contains { $0.start <= minute.start && minute.start < $0.end }
+            // NOOP's motion gate counts seconds (records), not minutes: the share of the hour's seconds with a reading whose
+            // motion is above `movingActivity`. Every second inside a workout counts as moving.
+            var movingSeconds = 0, readSeconds = 0
+            for minute in inHour {
+                let inWorkout = training.contains { $0.start <= minute.start && minute.start < $0.end }
+                for (second, motion) in minute.activity.enumerated() {
+                    let hasReading = motion > 0 || (second < minute.heartRate.count && minute.heartRate[second] > 0)
+                    guard hasReading else { continue }
+                    readSeconds += 1
+                    if inWorkout || motion > movingActivity { movingSeconds += 1 }
+                }
             }
             // Each minute is cleaned alone, and the nil between minutes stops a pair forming across them.
             let clean = inHour.flatMap { HRV.cleanBeats($0.rrIntervalsMs.map(Double.init)) + [nil] }
             let enough = beats.count >= NoopDaytimeStress.minHourHeartRateSeconds
             return NoopDaytimeStress.HourInput(start: start, hourOfDay: calendar.component(.hour, from: start),
                                                meanHeartRate: enough ? Double(beats.reduce(0) { $0 + Int($1) }) / Double(beats.count) : nil,
-                                               rmssd: HRV.rmssd(clean), movingShare: Double(moving.count) / Double(inHour.count))
+                                               rmssd: HRV.rmssd(clean),
+                                               movingShare: readSeconds > 0 ? Double(movingSeconds) / Double(readSeconds) : 0)
         }
 
         let hours = NoopDaytimeStress.score(inputs).map {

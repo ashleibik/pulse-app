@@ -18,12 +18,18 @@ public enum Steps {
         public var countedMinutes: Int
     }
 
-    /// A day's steps. nil when the band never counted that day.
+    /// A day's steps. nil when the band never counted that day while the owner was awake.
     /// - Parameters:
     ///   - minutes: counted minutes, any order. Minutes outside the day are ignored.
     ///   - end: the end of the day, or now for a day still going.
-    public static func day(_ minutes: [StepMinute], dayStart: Date, end: Date, calendar: Calendar) -> Day? {
-        let inDay = minutes.filter { $0.start >= dayStart && $0.start < end }
+    ///   - asleep: the day's sleeps. Counting starts when the owner wakes: a minute starting inside one counts neither steps
+    ///     nor time. The stream only pauses for a sleep Pulse has already found, so it can run in bed (docs/METRICS.md §15).
+    public static func day(_ minutes: [StepMinute], dayStart: Date, end: Date, calendar: Calendar,
+                           asleep: [DateInterval] = []) -> Day? {
+        let inDay = minutes.filter { minute in
+            minute.start >= dayStart && minute.start < end
+                && !asleep.contains { $0.start <= minute.start && minute.start < $0.end }
+        }
         guard !inDay.isEmpty else { return nil }
         let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(86_400)
         let hours = max(1, Int((nextDay.timeIntervalSince(dayStart) / 3600).rounded()))

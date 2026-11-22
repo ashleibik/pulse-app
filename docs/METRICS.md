@@ -402,7 +402,7 @@ These are rough estimates. Pulse's port has not been compared with a sleep lab o
 composite in `AnalyticsEngine.swift`): `credit = min(1, share ÷ 0.50) × deepFactor`, with `deepFactor = 0.5 + 0.5 × min(1, deep share ÷ 0.13)`,
 so a night with almost no deep sleep keeps at most half the credit. NOOP notes healthy adults sit at about 40 to 50%. *Our choice:* the
 three steps over the credit: optimal from 0.8 (40% with enough deep), sufficient from 0.6, poor below. It is shown next to the sleep
-performance and is not part of its score, so Sleep % doesn't change. The owner's night of 2026-11-17/18: 3h 35m, 39%, sufficient.
+performance and is not part of its score, so the sleep score doesn't change. The owner's night of 2026-11-17/18: 3h 35m, 39%, sufficient.
 
 ## 13. Wear sensor
 
@@ -427,7 +427,7 @@ calmest hours of the same day.
 
 1. **An hour counts** with at least 300 seconds of heart rate. Its values are the mean heart rate and the RMSSD of its clean beats
    (at least 20 pairs).
-2. **Moving hours are left out.** An hour is left out when at least 30% of its minutes are moving. So is the hour right after one, while
+2. **Moving hours are left out.** An hour is left out when at least 30% of its seconds are moving (NOOP's motion gate). So is the hour right after one, while
    its heart rate is still more than 8 bpm above the calm reference. Moving hours don't count toward the reference.
 3. **Calm reference:** the lower quartile of the day's hourly heart rates and the upper quartile of its hourly RMSSD. With fewer than 4
    hours, the plain mean. The spread is the population standard deviation across the same hours.
@@ -435,8 +435,14 @@ calmest hours of the same day.
 5. **Levels:** Calm below 1, Moderate from 1 to below 2, High from 2. An hour that matches the calm reference scores 1.5, so Moderate is
    the normal middle of the scale.
 
-*Our choices for this band:* a minute is moving at a movement of 30 or more (the owner's walking measured 40 to 84), because the WHOOP 4.0
-data has no NOOP-style gravity reading. Minutes inside a workout also count as moving, and sleep is left out using Pulse's own sleep
+**A moving second** is NOOP's: the wrist's reading changed by more than 0.20 g since the second before (`WorkoutDetector.motionThreshold`,
+NOOP's calibrated walk floor; its notes put desk work at 0.05 to 0.10 g and walking at 0.2 to 0.4 g). Pulse keeps that change per second
+as its activity value (×500, §10), so a second is moving above 100. *Fixed on 2026-11-22:* Pulse used to call a whole minute moving when
+its average movement was 30 or more (0.06 g, inside NOOP's desk range). Typing and handling the phone averaged above that, so on the
+owner's 2026-11-17 to 20 days 38 of 42 waking hours were left out and the card read "Moving" all day; NOOP's rule leaves out 14 of 40,
+mostly hours with walks. A still wrist reads 3 to 9, so the band's sense of gravity was never the problem.
+
+*Our choices for this band:* minutes inside a workout also count as moving, and sleep is left out using Pulse's own sleep
 times. Time per level is the time measured in each hour, not a full hour. "Right now" is the newest hour scored in the last two clock hours.
 Levels stay hidden until 4 hours are scored. NOOP shows them from the first hour, but with two hours one always reads calm and the other
 high, whatever the heart rates are.
@@ -451,6 +457,9 @@ compared with WHOOP's stress monitor.
 band send, about once a second, 100 accelerometer readings per axis (packet type 0x2B, re-toolkit/docs/PROTOCOL.md §8b). The band's
 history holds one motion reading a second, and a step takes about half a second, so the history can't see a footstep and Pulse
 doesn't guess from it. Time without the stream counts no steps, and the screens say how long the band counted.
+A day's count starts when the owner wakes: minutes inside a recorded sleep count neither steps nor time (`Steps.day`,
+`asleep:`). The stream only pauses for a sleep Pulse has already found, so before this the time in bed before Pulse recognised
+the night (and after a short wake that ended it early) counted, and "Counted for" ran past the time awake.
 
 *Removed on 2026-11-20:* the once-a-second estimate (seconds of steady arm movement × 1.8 steps), NOOP's sleep-aware counter that it
 fed, and the factor learned from step tests and Apple Watch days. At once a second walking and other arm movement look alike, and
@@ -532,6 +541,14 @@ longest run anywhere in the history is shown too.
 learns the owner's normal (§7), so that rule read 0 days for the owner's first four days. A day counts in Pulse when it has a main
 sleep (a night the band recorded), or a recovery. Every day with a recovery has a night, so after those first nights the two rules
 agree.
+
+## 18. Health monitor
+
+Last night's HRV, resting heart rate and breathing rate, each against the owner's own earlier nights (up to 30): inside when it is within
+`max(floor, 1.5 × sample SD)` of their mean, with floors of 5 ms, 2 bpm and 1 breath a minute so a very steady history isn't too strict.
+A metric is checked only with **7 earlier nights**. It used 3 until 2026-11-22: the owner's first three HRV nights were 75.6, 73.4 and
+75.9 ms, so the range shrank to the 5 ms floor and a 69.7 ms night (7% lower) was flagged. Seven nights is a week, the usual
+minimum for a personal baseline. An outside value is named with its direction (`HealthMonitor.Check`), high or low.
 
 ### Bugs the truth tests caught while building v1
 1. One HR threshold for the whole month split nights where resting HR ran a few beats high → per-noon-block threshold.

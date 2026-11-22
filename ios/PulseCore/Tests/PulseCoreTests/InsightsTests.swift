@@ -128,32 +128,42 @@ import Testing
     #expect(SleepTimeline.smooth(edges) == edges)
 }
 
-@Test func aNightsTimeAxisShowsItsStartAndEnd() {
+@Test func aNightsTimeAxisIsEvenlySpacedWholeHours() {
     func at(_ hour: Int, _ minute: Int) -> Date { Date(timeIntervalSince1970: 1_750_032_000 + Double(hour * 3600 + minute * 60)) }
-    // The owner's night of 2026-11-21: 4 AM ran into "1:48 AM" and 8 AM into "10:22 AM".
-    #expect(SleepTimeline.axisTimes(from: at(1, 48), to: at(10, 22), calendar: utcCalendar) == [at(1, 48), at(5, 0), at(7, 0), at(10, 22)])
-    // 1:12 to 7:55: hours every 2, a third of the night clear of each end.
-    #expect(SleepTimeline.axisTimes(from: at(1, 12), to: at(7, 55), calendar: utcCalendar) == [at(1, 12), at(4, 0), at(7, 55)])
-    // A three-hour sleep can have an hour a third of the way along.
-    #expect(SleepTimeline.axisTimes(from: at(13, 5), to: at(16, 10), calendar: utcCalendar) == [at(13, 5), at(15, 0), at(16, 10)])
+    // The owner's night of 2026-11-21 used to read "1:48 AM · 5 AM · 7 AM · 10:22 AM": gaps of 3h12, 2h and 3h22.
+    #expect(SleepTimeline.axisTimes(from: at(1, 48), to: at(10, 22), calendar: utcCalendar) == [at(4, 0), at(6, 0), at(8, 0)])
+    // Woken at 11:19: 10 AM is still 40 minutes in from the end.
+    #expect(SleepTimeline.axisTimes(from: at(1, 47), to: at(11, 19), calendar: utcCalendar) == [at(4, 0), at(6, 0), at(8, 0), at(10, 0)])
+    // 1:12 to 7:55: every 2 hours, on the even hours.
+    #expect(SleepTimeline.axisTimes(from: at(1, 12), to: at(7, 55), calendar: utcCalendar) == [at(2, 0), at(4, 0), at(6, 0)])
+    // A three-hour nap: every hour. 4 PM is 10 minutes from the end, inside the 11-minute margin.
+    #expect(SleepTimeline.axisTimes(from: at(13, 5), to: at(16, 10), calendar: utcCalendar) == [at(14, 0), at(15, 0)])
+    // Too short for a whole hour: its start and end.
     #expect(SleepTimeline.axisTimes(from: at(13, 5), to: at(13, 30), calendar: utcCalendar) == [at(13, 5), at(13, 30)])
 }
 
-@Test func nightAxisLabelsNeverCrowdEachOther() {
-    // Every length from 20 minutes to 14 hours: hours clear of both ends and of each other.
-    let start = Date(timeIntervalSince1970: 1_750_032_000 + 1800)
-    for minutes in stride(from: 20, through: 14 * 60, by: 7) {
-        let end = start.addingTimeInterval(Double(minutes) * 60)
-        let length = end.timeIntervalSince(start)
-        let times = SleepTimeline.axisTimes(from: start, to: end, calendar: utcCalendar)
-        #expect(times.first == start && times.last == end)
-        let hours = Array(times.dropFirst().dropLast())
-        for hour in hours {
-            #expect(hour.timeIntervalSince(start) >= SleepTimeline.axisEdgeRoom * length - 1)
-            #expect(end.timeIntervalSince(hour) >= SleepTimeline.axisEdgeRoom * length - 1)
-        }
-        for (a, b) in zip(hours, hours.dropFirst()) {
-            #expect(b.timeIntervalSince(a) >= SleepTimeline.axisHourSpacing * length - 1)
+@Test func nightAxisTicksAreEvenAndNeverCrowd() {
+    // Every length from 20 minutes to 14 hours, starting on and off the hour.
+    for offset in [0, 1800, 2820] {
+        let start = Date(timeIntervalSince1970: 1_750_032_000 + Double(offset))
+        for minutes in stride(from: 20, through: 14 * 60, by: 7) {
+            let end = start.addingTimeInterval(Double(minutes) * 60)
+            let length = end.timeIntervalSince(start)
+            let times = SleepTimeline.axisTimes(from: start, to: end, calendar: utcCalendar)
+            #expect(!times.isEmpty)
+            if times == [start, end] { continue }                   // too short for a whole hour
+            let gaps = zip(times, times.dropFirst()).map { $1.timeIntervalSince($0) }
+            // Even: every gap the same whole number of hours, at least a fifth of the night.
+            #expect(Set(gaps).count <= 1, "\(minutes) min: \(gaps)")
+            for gap in gaps {
+                #expect(gap >= SleepTimeline.axisHourSpacing * length - 1)
+                #expect(SleepTimeline.axisStepHours.contains(Int(gap / 3600)) && gap.truncatingRemainder(dividingBy: 3600) == 0)
+            }
+            for time in times {
+                #expect(utcCalendar.component(.minute, from: time) == 0)
+                #expect(time.timeIntervalSince(start) >= SleepTimeline.axisEdgeMargin * length - 1)
+                #expect(end.timeIntervalSince(time) >= SleepTimeline.axisEdgeMargin * length - 1)
+            }
         }
     }
 }

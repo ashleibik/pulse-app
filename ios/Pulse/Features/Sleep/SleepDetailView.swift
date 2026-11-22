@@ -61,7 +61,7 @@ struct SleepDetailView: View {
         return VStack(alignment: .leading, spacing: DS.Space.l) {
             VStack(spacing: DS.Space.m) {
                 BigScoreRing(fraction: p.score / 100, text: "\(Int(p.score.rounded()))%",
-                             caption: "SLEEP\nPERFORMANCE", color: DS.Colors.sleepTint)
+                             caption: "SLEEP\nSCORE", color: DS.Colors.sleepTint)
                 LevelIndicator(level: SleepPerformance.scoreLevel(p.score))
             }
             .riseIn(1)
@@ -180,9 +180,9 @@ struct SleepDetailView: View {
         let level = SleepPerformance.scoreLevel(p.score)
         var parts: [String] = []
         switch level {
-        case .optimal: parts.append("Your sleep performance is optimal.")
-        case .sufficient: parts.append("Your sleep performance is sufficient.")
-        case .poor: parts.append("Your sleep performance is low.")
+        case .optimal: parts.append("Your sleep score is optimal.")
+        case .sufficient: parts.append("Your sleep score is sufficient.")
+        case .poor: parts.append("Your sleep score is low.")
         }
         parts.append(p.hoursVsNeeded >= 85 ? "You slept close to what you needed" : "You slept less than you needed")
         if let consistency = p.consistency {

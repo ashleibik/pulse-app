@@ -72,8 +72,9 @@ All styles follow Dynamic Type.
 ## 4b. Today (home)
 
 Top to bottom: header (settings · "‹ TODAY ›" day switcher, the pill opens the calendar §4b-12 · band battery) → three rings
-(Sleep %, Recovery %, Strain) → two monitor cards (Health: "within range n/n metrics";
-Stress: level + value + time) → calories card (`title` number, labelled "Estimated", resting +
+(Sleep score, Recovery %, Strain; the first is labelled "SLEEP SCORE", the same name and number as the big ring on the Sleep page, so it
+never reads as the Sleep tab's "% of the time you needed") → two monitor cards (Health §4b-14; Stress: level + value + time §4b-5)
+→ calories card (`title` number, labelled "Estimated", resting +
 active underneath, then one `caption` with the time measured when the band covered under 90% of the day; asks for the missing profile details instead of guessing) → steps card (§4b-8) → streak card (§4b-13) → "MY DAY" with a + button → daily outlook row (opens Coach) →
 today's activities card (sleep and workouts as rows with their times; Add / Start activity) →
 live heart rate. The rings use `sleepTint`, the recovery zone colour, and `strainTint`.
@@ -130,8 +131,10 @@ by itself over the one you're timing.
 The sheet opens with "RIGHT NOW": the level in `display` (Calm `accent`, Moderate `warn`, High `alert`) and one line saying which hour it
 reads. An hour spent moving shows "Moving", and with no recent reading it shows "Can't tell yet" with what Pulse needs. Under that: "Today"
 with the time in each level, "Hour by hour" bars on the 0 to 3 scale, and "How it works". With fewer than 4 scored hours it shows "Too early
-to tell" with the count so far, and leaves out the levels and bars. The Today card shows the same level and score, and says "Moving",
-"Too early" or "No reading" when there is no level.
+to tell" with the count so far, and leaves out the levels and bars. The Today card shows the newest scored hour's level and score with its
+hour ("2 PM"). When the newest hour has no score (you're moving, or no reading yet), the card keeps the last valid one instead of `--`:
+"Moving · last 2 PM" or "Last 2 PM". Before today has a scored hour, it shows yesterday's last one ("Yesterday 9 PM"). Only with
+neither does it show `--` with "Moving", "Too early" or "No reading". The sheet's "RIGHT NOW" stays about now and doesn't fall back.
 
 ## 4b-6. Sleep stages
 
@@ -140,9 +143,10 @@ at least 3:1 against `surface`) and Deep (`sleepTint`). "Your night" says "Stage
 stages are estimates, not a sleep-lab measurement.
 
 "Your night" is one connected step chart, 160 pt tall: each stage is a block 12 pt high on its row, and a 1.5 pt `tertiary` line joins
-one stage to the next. The time axis shows when the sleep started and ended, with minutes, and whole hours between them: an hour label stays a
-third of the night away from either end and a fifth of the night from the next one (every 1, 2, 3, 4 or 6 hours), so no two
-labels touch on a phone ("1:48 AM · 5 AM · 7 AM · 10:22 AM"). Under the chart, a 2 × 2 grid holds the four stages with
+one stage to the next. The time axis shows whole hours only, evenly spaced: every 1, 2, 3, 4 or 6 hours, the smallest step that keeps
+labels a fifth of the night apart, on the clock's own multiples (2, 4, 6 AM for every 2 hours), and at least 6% of the night in from
+either end so no label is cut off ("4 AM · 6 AM · 8 AM" for 1:48 to 10:22 AM). The exact start and end are in the line above the chart,
+so the axis doesn't repeat them; a sleep too short for any whole hour shows its start and end instead. Under the chart, a 2 × 2 grid holds the four stages with
 their times: Deep and Light, then REM and Awake. Under the grid, after a hairline, one "Restorative" row ("deep + REM" in `caption`,
 then the time and share on one line, "2h 15m · 29%", never wrapping). The Sleep page adds a "Restorative sleep" row with its three-step level under "High sleep stress", and a
 "RESTORATIVE (DEEP + REM)" line under the phases.
@@ -161,7 +165,7 @@ Steps are counted by the band, never estimated, so no step number carries "Estim
 
 Today has a "STEPS" card under the calories card (`monoCard`): the count in `title`, "of 10,000" (the goal) in `caption`, a progress
 bar toward the goal (`accent` fill on a `border` track, full at the goal), and one `caption` with how long the band counted that day
-("Counted for 9h 12m"). A day the band never counted shows `--` and the `caption` "The band counts steps while it streams its motion
+("Counted for 9h 12m"). Counting starts when you wake: minutes inside the day's sleeps count neither steps nor time. A day the band never counted shows `--` and the `caption` "The band counts steps while it streams its motion
 to your iPhone." While the band streams, today's count includes the minute in progress and moves as you walk (every 5 seconds,
 `numericText` transition), on Today and on the Activity tab. When the band isn't counting right now, today's card adds a second
 `caption` saying why: "Paused while you sleep.", "Paused: the band isn't on your wrist.", "Paused: the band's battery is low.",
@@ -203,6 +207,13 @@ A "STREAK" card on Today under the steps card (`monoCard`, padding `m`), shown o
 each (`caption` `tertiary`): `accent` filled for a day that counts, a `border` ring for one that doesn't, today's ring `accent`.
 Under them one `caption`: "Longest: 4 days. A day counts when your band records its night." Tapping the card opens the
 calendar (§4b-12). The count is NOOP's streak calculator (docs/METRICS.md §17); today keeps the streak until its night is in.
+
+## 4b-14. Health monitor
+
+The Today card checks last night's HRV, resting heart rate and breathing rate against your own range (docs/METRICS.md §18). Each
+metric is checked only once it has 7 earlier nights; until none has, the card shows "Learning" with "n of 7 nights" and an hourglass.
+All checked metrics inside: "Within range" (`accent`) with "3/3 metrics". Any outside: "Out of range" (`warn`) and the detail names
+each one and its direction instead of a count ("HRV low", "HRV low · Resting HR high"), so you know what to look at.
 
 ## 4b-11. Settings search
 

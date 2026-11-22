@@ -106,6 +106,25 @@ private func count(_ packets: [Whoop.RawMotion]) -> [StepMinute] {
     #expect(counted.countedMinutes == 3)        // 150 seconds
 }
 
+@Test func countingStartsWhenTheOwnerWakes() throws {
+    // Asleep 1:00 to 11:19 with the stream running in bed until Pulse found the night: that time counts neither steps nor
+    // time. Up at 11:19, so 11:19 to 16:39 is 5h 20m awake.
+    let day = stepCalendar.startOfDay(for: date(minuteStart))
+    let night = DateInterval(start: day.addingTimeInterval(3600), end: day.addingTimeInterval(11 * 3600 + 19 * 60))
+    var minutes = (0..<60).map { StepMinute(start: day.addingTimeInterval(Double($0) * 60), steps: 2, seconds: 60) }      // up until 1:00
+    minutes += (0..<300).map { StepMinute(start: night.start.addingTimeInterval(Double($0) * 60), steps: 1, seconds: 60) } // in bed
+    minutes += (0..<320).map { StepMinute(start: night.end.addingTimeInterval(Double($0) * 60), steps: 3, seconds: 60) }  // awake
+    let end = night.end.addingTimeInterval(320 * 60)
+    let all = try #require(Steps.day(minutes, dayStart: day, end: end, calendar: stepCalendar))
+    #expect(all.countedMinutes == 680)
+    let awake = try #require(Steps.day(minutes, dayStart: day, end: end, calendar: stepCalendar, asleep: [night]))
+    #expect(awake.countedMinutes == 60 + 320)
+    #expect(awake.total == 120 + 960)
+    #expect(awake.hourly[1] == 0 && awake.hourly[10] == 0 && awake.hourly[11] == 41 * 3)
+    // Only time in bed so far: nothing counted awake yet.
+    #expect(Steps.day(Array(minutes[60..<360]), dayStart: day, end: end, calendar: stepCalendar, asleep: [night]) == nil)
+}
+
 @Test func aDayTheBandNeverCountedHasNoSteps() {
     let day = stepCalendar.startOfDay(for: date(minuteStart))
     #expect(Steps.day([], dayStart: day, end: day.addingTimeInterval(86_400), calendar: stepCalendar) == nil)

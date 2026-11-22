@@ -69,7 +69,7 @@ struct RecoveryDetailView: View {
                 CompareRow(symbol: "lungs", title: "Respiratory rate", value: respiratory.today,
                            average: respiratory.average, format: { String(format: "%.1f", $0) }, higherIsBetter: nil)
                 Hairline()
-                CompareRow(symbol: "moon", title: "Sleep performance", value: performance?.score,
+                CompareRow(symbol: "moon", title: "Sleep score", value: performance?.score,
                            average: performanceAverage, format: { "\(Int($0.rounded()))%" }, higherIsBetter: true)
                 HStack(spacing: 6) {
                     Text("▲▼").foregroundStyle(DS.Colors.accent)
@@ -97,11 +97,10 @@ struct RecoveryDetailView: View {
     /// The day's explanation, plus where resting HR sits in its usual range (when there is one).
     private func paragraph(_ day: DaySummaryRecord, rhrHistory: [Double]) -> String {
         var text = day.explanation
-        if let rhr = day.restingHeartRate, rhrHistory.count >= 3 {
-            let mean = Stats.mean(rhrHistory)
-            let spread = max(2, 1.5 * Stats.sampleSD(rhrHistory))
-            let low = Int((mean - spread).rounded()), high = Int((mean + spread).rounded())
-            let inside = HealthMonitor.withinRange(rhr, history: rhrHistory, minSpread: 2) == true
+        // The same range as the health monitor, so only with a week of nights (docs/METRICS.md §18).
+        if let rhr = day.restingHeartRate, let range = HealthMonitor.range(history: rhrHistory, minSpread: 2) {
+            let low = Int(range.lowerBound.rounded()), high = Int(range.upperBound.rounded())
+            let inside = range.contains(rhr)
             text += " Your resting heart rate (\(Int(rhr.rounded())) bpm) is \(inside ? "within" : "outside") its usual range of \(low) to \(high) bpm."
         }
         return text

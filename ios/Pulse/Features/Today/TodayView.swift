@@ -5,7 +5,7 @@ import PulseCore
 /// Home screen (DESIGN.md §4b). Layout modelled on the WHOOP app's home, in Pulse's own Glow look:
 ///
 ///   header (settings · ‹ TODAY › · band battery)
-///   three rings: Sleep % · Recovery % · Strain
+///   three rings: Sleep score · Recovery % · Strain
 ///   Health monitor · Stress monitor
 ///   calories · steps
 ///   MY DAY (+): daily outlook, journal, today's activities (sleep, workouts), add / start activity
@@ -42,6 +42,8 @@ struct TodayView: View {
     @State private var explaining: MetricKind? = LaunchOptions.route == "explainer" ? .hrv : nil
     /// Today's stress picture and numbers so far (from today's raw minutes).
     @State private var stress: StressMonitor.Day?
+    /// Yesterday's last scored hour, for the stress card while today has none yet (DESIGN.md §4b-5).
+    @State private var stressYesterday: StressMonitor.Hour?
     @State private var soFar: TodaySoFar?
     /// The selected day's estimated calories (nil = no band data that day, or the profile is incomplete).
     @State private var calories: DailyCalories.Estimate?
@@ -154,7 +156,7 @@ struct TodayView: View {
         }
     }
 
-    /// Sleep % · Recovery % · Strain. Each opens its page.
+    /// Sleep score · Recovery % · Strain. Each opens its page.
     private var rings: some View {
         let performance = summary.flatMap { NightVitals.performance(for: $0, sleeps: sleepRecords) }
         let recovery = summary?.recoveryScore
@@ -162,7 +164,7 @@ struct TodayView: View {
         return HStack(alignment: .top, spacing: DS.Space.s) {
             Button { open { showSleep = true } } label: {
                 ScoreRing(fraction: performance.map { $0.score / 100 }, text: performance.map { "\(Int($0.score.rounded()))%" } ?? "--",
-                          label: "SLEEP", color: DS.Colors.sleepTint)
+                          label: "SLEEP SCORE", color: DS.Colors.sleepTint)
             }
             .frame(maxWidth: .infinity)
             Button { open { showRecovery = true } } label: {
@@ -179,45 +181,66 @@ struct TodayView: View {
         .buttonStyle(.pressable)
     }
 
-    /// Health: are tonight's vitals within your usual range? Stress: right now.
+    /// Health: are last night's vitals within your usual range (§4b-14)? Stress: the newest scored hour, or the last valid one (§4b-5).
     private var monitors: some View {
         let health = healthStatus
-        let level = stress?.current?.level
-        let score = stress?.hours.last(where: { $0.score != nil })
-        let noLevel = stress?.isMovingNow == true ? "Moving" : (stress?.scoredHours ?? 0) > 0 ? "Too early" : "No reading"
+        let stressCard = stressStatus
         return HStack(alignment: .top, spacing: DS.Space.s) {
             Button { open { showRecovery = true } } label: {
                 MonitorCard(title: "HEALTH MONITOR", badge: health.symbol, badgeIsSymbol: true,
                             state: health.state, stateColor: health.color, detail: health.detail)
             }
             Button { open { showStress = true } } label: {
-                MonitorCard(title: "STRESS MONITOR", badge: score?.score.map { String(format: "%.1f", $0) } ?? "--",
-                            badgeIsSymbol: false,
-                            state: isToday ? (level?.title ?? noLevel) : "Today only",
-                            stateColor: level == .high ? DS.Colors.alert : level == .medium ? DS.Colors.warn : level == .calm ? DS.Colors.accent : DS.Colors.secondary,
-                            detail: score.map { $0.start.formatted(date: .omitted, time: .shortened) } ?? "6 AM to 10 PM")
+                MonitorCard(title: "STRESS MONITOR", badge: stressCard.badge, badgeIsSymbol: false,
+                            state: stressCard.state, stateColor: stressCard.color, detail: stressCard.detail)
             }
         }
         .buttonStyle(.pressable)
     }
 
+    /// Today's newest scored hour. When the newest hour has none (moving, no reading), the last valid one, today's or
+    /// yesterday's, with its time; `--` only when neither day has one (DESIGN.md §4b-5).
+    private var stressStatus: (badge: String, state: String, color: Color, detail: String) {
+        guard isToday else { return ("--", "Today only", DS.Colors.secondary, "6 AM to 10 PM") }
+        let todays = stress?.lastScored
+        guard let reading = todays ?? stressYesterday, let level = reading.level, let score = reading.score else {
+            let noLevel = stress?.isMovingNow == true ? "Moving" : (stress?.scoredHours ?? 0) > 0 ? "Too early" : "No reading"
+            return ("--", noLevel, DS.Colors.secondary, "6 AM to 10 PM")
+        }
+        let color = level == .high ? DS.Colors.alert : level == .medium ? DS.Colors.warn : DS.Colors.accent
+        let hour = reading.start.formatted(.dateTime.hour())
+        let detail: String
+        if todays == nil {
+            detail = "Yesterday \(hour)"
+        } else if stress?.current?.start == reading.start {
+            detail = hour
+        } else if stress?.isMovingNow == true {
+            detail = "Moving · last \(hour)"
+        } else {
+            detail = "Last \(hour)"
+        }
+        return (String(format: "%.1f", score), level.title, color, detail)
+    }
+
     private var healthStatus: (state: String, detail: String, symbol: String, color: Color) {
         guard let summary else { return ("No night yet", "Wear it to sleep", "moon.zzz", DS.Colors.secondary) }
         let earlier = NightVitals.previous30(days, before: summary.date)
-        var checks: [Bool] = []
-        if let hrv = summary.hrvRMSSD,
-           let ok = HealthMonitor.withinRange(hrv, history: earlier.compactMap(\.hrvRMSSD), minSpread: 5) { checks.append(ok) }
-        if let rhr = summary.restingHeartRate,
-           let ok = HealthMonitor.withinRange(rhr, history: earlier.compactMap(\.restingHeartRate), minSpread: 2) { checks.append(ok) }
-        if let rate = respiratory.today,
-           let ok = HealthMonitor.withinRange(rate, history: respiratory.history, minSpread: 1) { checks.append(ok) }
-        guard !checks.isEmpty else {
-            return ("Learning", "\(min(earlier.count, 3)) of 3 nights", "hourglass", DS.Colors.secondary)
+        var checks: [HealthMonitor.Check] = []
+        func check(_ metric: HealthMonitor.Metric, _ value: Double?, history: [Double], minSpread: Double) {
+            guard let value, let reading = HealthMonitor.reading(value, history: history, minSpread: minSpread) else { return }
+            checks.append(HealthMonitor.Check(metric: metric, reading: reading))
         }
-        let inRange = checks.filter { $0 }.count
-        return inRange == checks.count
-            ? ("Within range", "\(inRange)/\(checks.count) metrics", "checkmark", DS.Colors.accent)
-            : ("Out of range", "\(inRange)/\(checks.count) metrics", "exclamationmark", DS.Colors.warn)
+        check(.hrv, summary.hrvRMSSD, history: earlier.compactMap(\.hrvRMSSD), minSpread: 5)
+        check(.restingHeartRate, summary.restingHeartRate, history: earlier.compactMap(\.restingHeartRate), minSpread: 2)
+        check(.respiratoryRate, respiratory.today, history: respiratory.history, minSpread: 1)
+        guard !checks.isEmpty else {
+            let needed = HealthMonitor.minimumNights
+            return ("Learning", "\(min(earlier.count, needed)) of \(needed) nights", "hourglass", DS.Colors.secondary)
+        }
+        if let flagged = HealthMonitor.flaggedText(checks) {
+            return ("Out of range", flagged, "exclamationmark", DS.Colors.warn)
+        }
+        return ("Within range", "\(checks.count)/\(checks.count) metrics", "checkmark", DS.Colors.accent)
     }
 
     // MARK: - Calories
@@ -547,6 +570,13 @@ struct TodayView: View {
         let sleeps = sleepRecords.map(\.value)
         stress = StressMonitor.day(minutes: minutes, sleeps: sleeps, workouts: workouts.map(\.value),
                                    now: .now, calendar: calendar)
+        // Nothing scored today yet: the card keeps yesterday's last valid reading instead of "--".
+        if stress?.lastScored == nil, let yesterday = calendar.date(byAdding: .day, value: -1, to: start) {
+            stressYesterday = StressMonitor.day(minutes: PulseStore.minutes(from: yesterday, to: start, in: context), sleeps: sleeps,
+                                                workouts: workouts.map(\.value), now: start, calendar: calendar).lastScored
+        } else {
+            stressYesterday = nil
+        }
         steps = StepsData.day(selectedDay, context: context)
         // Respiratory rate needs the beat-to-beat data of each night: the selected one and up to 30 before.
         let tonight = mainSleep

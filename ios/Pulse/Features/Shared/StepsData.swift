@@ -14,12 +14,23 @@ enum StepsData {
         return ((try? context.fetch(descriptor)) ?? []).map(\.value)
     }
 
-    /// A day's steps. nil when the band never counted that day.
+    /// The sleeps that overlap [from, to). Steps count from waking: minutes inside these are left out (DESIGN.md §4b-8).
+    static func sleeps(from start: Date, to end: Date, in context: ModelContext) -> [DateInterval] {
+        let descriptor = FetchDescriptor<SleepRecord>(
+            predicate: #Predicate<SleepRecord> { record in record.end > start && record.start < end }
+        )
+        return ((try? context.fetch(descriptor)) ?? []).compactMap { record in
+            record.end > record.start ? DateInterval(start: record.start, end: record.end) : nil
+        }
+    }
+
+    /// A day's steps, counted from waking. nil when the band never counted that day while you were awake.
     static func day(_ day: Date, context: ModelContext, calendar: Calendar = .current, now: Date = .now) -> Steps.Day? {
         let start = calendar.startOfDay(for: day)
         let end = min(calendar.date(byAdding: .day, value: 1, to: start) ?? start, now)
         guard end > start else { return nil }
-        return Steps.day(minutes(from: start, to: end, in: context), dayStart: start, end: end, calendar: calendar)
+        return Steps.day(minutes(from: start, to: end, in: context), dayStart: start, end: end, calendar: calendar,
+                         asleep: sleeps(from: start, to: end, in: context))
     }
 
     /// A day's steps with the minute the stream is filling (BandManager.stepsInProgress), so the cards move while you walk.

@@ -293,8 +293,8 @@ struct SleepView: View {
                 .chartXAxis {
                     AxisMarks(values: ticks) { value in
                         if let time = value.as(Date.self) {
-                            AxisValueLabel(anchor: Self.anchor(time, ticks: ticks)) {
-                                Text(Self.tickText(time, ticks: ticks))
+                            AxisValueLabel(anchor: Self.anchor(time, start: night.start, end: night.end)) {
+                                Text(Self.tickText(time, start: night.start, end: night.end))
                             }
                             .font(.footnote)
                             .foregroundStyle(DS.Colors.secondary)
@@ -539,13 +539,14 @@ struct SleepView: View {
     }
 
     /// The start and end of the night keep their labels inside the chart.
-    private static func anchor(_ time: Date, ticks: [Date]) -> UnitPoint {
-        time == ticks.first ? .topLeading : time == ticks.last ? .topTrailing : .top
+    /// Hours sit centred on their tick. A sleep too short for a whole hour labels its start and end, kept inside the chart.
+    private static func anchor(_ time: Date, start: Date, end: Date) -> UnitPoint {
+        time == start ? .topLeading : time == end ? .topTrailing : .top
     }
 
-    /// The start and the end with minutes ("1:12 AM"), the hours between without ("3 AM").
-    private static func tickText(_ time: Date, ticks: [Date]) -> String {
-        time == ticks.first || time == ticks.last
+    /// Whole hours without minutes ("4 AM"); a short sleep's start and end with them ("1:12 PM").
+    private static func tickText(_ time: Date, start: Date, end: Date) -> String {
+        time == start || time == end
             ? time.formatted(date: .omitted, time: .shortened)
             : time.formatted(.dateTime.hour())
     }
