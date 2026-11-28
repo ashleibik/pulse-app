@@ -66,6 +66,7 @@ SOFTWARE.
 | `NOOP/NoopRestorative.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/AnalyticsEngine.swift` (`enum Rest`, restorative sub-score) | Restorative sleep level |
 | `NOOP/NoopWorkoutDetector.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/WorkoutDetector.swift` (`detect` and its helpers), `StrainScorer.swift` (Edwards zones) | Finding workouts from heart rate and movement |
 | `NOOP/NoopStreak.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/StreakCalculator.swift` (`streaks`), `Baselines.swift` (`isoEpochDay`) | Days in a row (which days count is Pulse's, docs/METRICS.md §17) |
+| `NOOP/NoopNightBridge.swift` | `Packages/StrandAnalytics/Sources/StrandAnalytics/SleepStageTotals.swift` (`bridgedNightGroups`, `isOvernightOnset`) | A night broken by getting up is one sleep (which sleeps may join is Pulse's, docs/METRICS.md §4 step 8) |
 
 ## Pulse's own rules
 

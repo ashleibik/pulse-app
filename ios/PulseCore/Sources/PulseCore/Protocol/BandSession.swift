@@ -107,8 +107,9 @@ public struct BandSession: Sendable {
     /// packets are summarized once per batch.
     public var verboseTrace = false
     private var quiet = (notifications: 0, frames: 0, bytes: 0)
-    /// The 100 Hz stream's packets, counted like history: motion and the optical variant.
-    private var quietRaw = (motion: 0, other: 0)
+    /// The 100 Hz stream's packets, counted like history: motion and the optical variant. And live heart rate, which runs all
+    /// night as Pulse's heartbeat (`MotionStreamPolicy.heartbeat`): one packet a second, never one log line each.
+    private var quietRaw = (motion: 0, other: 0, heartRate: 0)
     /// Dates the 100 Hz stream's seconds by the phone's clock.
     private var motionClock = MotionClock()
     /// From GET_DATA_RANGE: where the band's unsynced data starts and ends (flash pages).
@@ -149,10 +150,14 @@ public struct BandSession: Sendable {
         guard quiet.notifications > 0 else { return [] }
         defer {
             quiet = (0, 0, 0)
-            quietRaw = (0, 0)
+            quietRaw = (0, 0, 0)
         }
         if quietRaw.motion + quietRaw.other > 0 {
-            return [.trace("  … REALTIME_RAW: \(quietRaw.motion) motion and \(quietRaw.other) other packets, \(quiet.frames) history frames, in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized)")]
+            let heartRate = quietRaw.heartRate > 0 ? ", \(quietRaw.heartRate) heart-rate packets" : ""
+            return [.trace("  … REALTIME_RAW: \(quietRaw.motion) motion and \(quietRaw.other) other packets\(heartRate), \(quiet.frames) history frames, in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized)")]
+        }
+        if quietRaw.heartRate > 0 {
+            return [.trace("  … REALTIME_HR: \(quietRaw.heartRate) heart-rate packets, \(quiet.frames) history frames, in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized)")]
         }
         return [.trace("  … HISTORICAL_DATA: \(quiet.frames) frames in \(quiet.notifications) notifications (\(quiet.bytes) bytes), all checksums ok (summarized; turn on Verbose for every packet)")]
     }
@@ -200,7 +205,7 @@ public struct BandSession: Sendable {
         // A big download is thousands of identical-looking history packets. Unless the log is
         // verbose, they are counted (not hex-dumped) and summarized at the end of each batch.
         // That keeps the log small and saves the CPU time of formatting them.
-        let quietTypes = [Int(Whoop.PacketType.historicalData.rawValue), Int(Whoop.PacketType.realtimeRaw.rawValue)]
+        let quietTypes = [Whoop.PacketType.historicalData, .realtimeRaw, .realtimeData].map { Int($0.rawValue) }
         let onlyHistory = frames.allSatisfy { $0.valid && quietTypes.contains($0.packetType) }
         if !verboseTrace && !resynced && key == Whoop.dataUUID && onlyHistory {
             quiet.notifications += 1
@@ -210,6 +215,8 @@ public struct BandSession: Sendable {
                 let packet = Whoop.decode(frame)
                 if frame.packetType == Int(Whoop.PacketType.realtimeRaw.rawValue) {
                     if case .rawMotion = packet { quietRaw.motion += 1 } else { quietRaw.other += 1 }
+                } else if frame.packetType == Int(Whoop.PacketType.realtimeData.rawValue) {
+                    quietRaw.heartRate += 1
                 } else {
                     quiet.frames += 1
                 }
@@ -257,10 +264,11 @@ public struct BandSession: Sendable {
         return map(sync.stalled())
     }
 
-    /// Turns the band's live heart-rate stream on or off (used by the live workout screen).
+    /// Turns the band's live heart-rate stream on or off (the live screens, and the heartbeat that keeps Pulse awake while
+    /// the 100 Hz stream is off, `MotionStreamPolicy.heartbeat`).
     public mutating func setLive(_ on: Bool) -> [Effect] {
         let command = Whoop.Command.realtimeHR(on: on, seq: seq.next())
-        return write(command, "TOGGLE_REALTIME_HR")
+        return flushQuiet() + write(command, "TOGGLE_REALTIME_HR")
     }
 
     /// Turns the band's 100 Hz motion stream on or off (step counting, docs/METRICS.md §15).

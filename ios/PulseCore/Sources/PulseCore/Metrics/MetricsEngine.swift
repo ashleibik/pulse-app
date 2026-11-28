@@ -52,7 +52,8 @@ public enum MetricsEngine {
     /// 6: breathing, restful sleep, zones, calories and workout detection ported from OpenStrap and NOOP.
     /// 7: wake-ups of 3 minutes or more, daytime naps from 20 minutes, and naps lower the next night's sleep need.
     /// 8: workouts by NOOP's detector and from the band's counted steps, recorded without asking; walking adds to calories.
-    public static let algorithmVersion = 8
+    /// 9: a night broken by getting up for a while is one sleep (NOOP's gap bridge).
+    public static let algorithmVersion = 9
     /// The building blocks that must match the Python reference (shared/test-vectors/metrics_v2.json).
     /// The confirmation stage on top of them is Swift only.
     public static let sharedFormulaVersion = 2
@@ -138,6 +139,27 @@ public enum MetricsEngine {
         return (counted, asleep)
     }
 
+    /// A night broken by getting up for a while is one sleep (docs/METRICS.md §4, step 8). NOOP's bridge joins sleeps less
+    /// than 60 minutes apart, or less than 90 when the later one starts between 20:00 and 11:00. Only sleeps with more
+    /// minutes asleep than awake join. A mostly awake stretch in bed that lies between the parts becomes part of the night.
+    /// - Parameter counted: the sleeps as `described` counts them. The joined ones come back with no counts: describe them again.
+    static func joiningNights(_ counted: [SleepDetector.Session], timeline tl: Timeline,
+                              calendar: Calendar) -> [SleepDetector.Session] {
+        let sorted = counted.sorted { $0.start < $1.start }
+        let parts = sorted.filter { $0.asleep > $0.awake }
+        guard parts.count > 1 else { return sorted }
+        func seconds(_ index: Int) -> Int { Int(tl.date(index).timeIntervalSince1970) }
+        let groups = NoopNightBridge.bridgedNightGroups(parts.map { .init(start: seconds($0.start), end: seconds($0.end)) },
+                                                       offsetSec: { calendar.timeZone.secondsFromGMT(for: Date(timeIntervalSince1970: Double($0))) })
+        let nights = groups.filter { $0.indices.count > 1 }.map { group in
+            (start: parts[group.indices[0]].start, end: group.indices.map { parts[$0].end }.max() ?? parts[group.indices[0]].end)
+        }
+        guard !nights.isEmpty else { return sorted }
+        let kept = sorted.filter { s in !nights.contains { $0.start <= s.start && s.end <= $0.end } }
+        let joined = nights.map { SleepDetector.Session(start: $0.start, end: $0.end, asleep: 0, awake: 0, disturbances: 0, isNap: false) }
+        return (kept + joined).sorted { $0.start < $1.start }
+    }
+
     public static func run(minutes: [MinuteSample], profile: MetricsProfile = MetricsProfile(),
                            calendar: Calendar, now: Date, corrections: [SleepCorrection] = [],
                            ownerAwakeAt: Date? = nil) -> MetricsResult {
@@ -176,7 +198,9 @@ public enum MetricsEngine {
             now.timeIntervalSince(tl.date(end)) / 60
         }
         let finished = zip(ordered, isFinished).filter { $0.1 }.map { $0.0 }
-        let (counted, asleep) = described(applying(corrections, to: finished, timeline: tl, asleep: candidates), timeline: tl)
+        var (counted, asleep) = described(applying(corrections, to: finished, timeline: tl, asleep: candidates), timeline: tl)
+        let joined = joiningNights(counted, timeline: tl, calendar: calendar)
+        if joined.count != counted.count { (counted, asleep) = described(joined, timeline: tl) }
         let found = SleepModel.markingNaps(counted, usualSleep: usual)
         // A sleep still waiting to be finished, unless an edit already shows it.
         let unfinished = zip(ordered, isFinished).filter { !$0.1 }.map { $0.0 }

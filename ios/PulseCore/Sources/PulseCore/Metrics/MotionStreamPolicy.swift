@@ -34,6 +34,16 @@ public enum MotionStreamPolicy {
         public var isOn: Bool { self == .stream }
     }
 
+    /// Whether the band's live heart rate runs as Pulse's heartbeat (docs/METRICS.md §15, "Keeping Pulse awake"): whenever the
+    /// stream is off. iOS only runs Pulse in the background while the band sends it something, and the stream used to be the
+    /// only thing it sent. With the stream off in bed nothing woke Pulse, so nothing was pulled and nothing turned the stream
+    /// back on: on 2026-11-26/27 the stream went off at 21:50 and the night only arrived when the owner opened Pulse the next
+    /// afternoon. The heartbeat is one small packet a second (about 1% of the stream's data), enough for a pull every few
+    /// minutes. A step test or the stream itself keeps Pulse awake instead.
+    public static func heartbeat(for decision: Decision) -> Bool {
+        !decision.isOn
+    }
+
     /// - Parameters:
     ///   - minutes: the newest band minutes, any order (the last 10 minutes or more).
     ///   - streaming: whether the stream is on now, so the battery limits don't flicker.

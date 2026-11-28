@@ -57,8 +57,10 @@ Band connection and kept reconnect, band clock set, history drain (a batch is ac
 is saved), the data cutoff (`BandDataCutoff`: the band was bought used, older records belong to the
 previous owner and are dropped), the low-battery pause (below 5%, "Sync anyway" overrides once), and the 100 Hz motion
 stream (command 0x3F): off on every connect, then on only as `MotionStreamPolicy` allows (worn, not asleep, band battery
-from 15%; always during a step test). It sends about 4 kB a second, so it costs band and phone battery. The stall watchdog
-must count only the download's own packets (`BandSession.downloadActivity`), never the stream's.
+from 15%; always during a step test). It sends about 4 kB a second, so it costs band and phone battery. Whenever the stream
+is off, live heart rate runs as the heartbeat that keeps Pulse awake to pull (`MotionStreamPolicy.heartbeat`); without it
+the night never syncs in the background. The stall watchdog must count only the download's own packets
+(`BandSession.downloadActivity`), never the stream's or the heartbeat's.
 
 ## Layout
 

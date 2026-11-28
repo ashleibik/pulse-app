@@ -7,7 +7,9 @@ import PulseCore
 /// Pulling band data while Pulse is not on screen.
 ///
 /// The main path is the kept connection (BandManager): with the band connected, iOS wakes Pulse
-/// for the band's own messages and a running pull simply continues in the background. On top:
+/// for the band's own messages and a running pull simply continues in the background. The band always
+/// sends something: the 100 Hz stream while it counts steps, otherwise live heart rate as the heartbeat
+/// (docs/METRICS.md §15, "Keeping Pulse awake"). On top:
 /// - "Background app refresh" (`taskID`): short wake-ups now and then (iOS decides when).
 /// - A nightly processing task (`nightlyID`): iOS runs it when the phone is idle, usually at night
 ///   on the charger, with more time. It pulls the night so far and recalculates, so sleep and HRV

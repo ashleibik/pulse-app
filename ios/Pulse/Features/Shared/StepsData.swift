@@ -45,7 +45,7 @@ enum StepsData {
     }
 
     /// The line for a day the band never counted.
-    static let notCountedText = "The band counts steps while it streams its motion to your iPhone."
+    static let notCountedText = "Counts steps while your iPhone is near the band."
 
     /// Why the band isn't counting right now (DESIGN.md §4b-8). nil while it counts.
     static func pausedText(_ decision: MotionStreamPolicy.Decision?, connected: Bool) -> String? {

@@ -110,13 +110,17 @@ private func night(_ from: Double, _ to: Double) -> [MinuteSample] {
     #expect(sleeps(daytime(9, 14) + reading + daytime(18, 22), now: time(22)).isEmpty)
 }
 
-@Test func aLongActivePeriodEndsTheSleep() {
+@Test func aLongActivePeriodIsAWakeUpInsideTheNight() throws {
+    // 45 minutes up and about at 02:00 end the sleep (step 7). Both parts are one night (step 8, NOOP's gap bridge, since
+    // 2026-11-28), with those minutes awake. Before, they were two sleeps and the day counted only one (SplitNightTests).
     let first = stretch(23, 26) { _ in (50, 1) }
-    let up = stretch(26, 26.75) { _ in (58, 40) }                  // 45 minutes up and about at 02:00
+    let up = stretch(26, 26.75) { _ in (58, 40) }
     let second = stretch(26.75, 30.5) { _ in (50, 1) }
     let found = sleeps(daytime(9, 23) + first + up + second + daytime(30.5, 33), now: time(33))
-    #expect(found.count == 2)
-    #expect(found.allSatisfy { $0.start >= time(26.75) || $0.end <= time(26.1) })
+    #expect(found.count == 1)
+    let night = try #require(found.first)
+    #expect(abs(night.start.timeIntervalSince(time(23))) <= 10 * 60 && abs(night.end.timeIntervalSince(time(30.5))) <= 10 * 60)
+    #expect(night.awakeMinutes >= 40, "\(night.awakeMinutes) minutes awake")
 }
 
 // MARK: - Calibrated on a real night (RealNightReplayTests replays the night itself)

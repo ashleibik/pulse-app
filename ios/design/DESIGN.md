@@ -71,7 +71,8 @@ All styles follow Dynamic Type.
 
 ## 4b. Today (home)
 
-Top to bottom: header (settings · "‹ TODAY ›" day switcher, the pill opens the calendar §4b-12 · band battery) → three rings
+Top to bottom: header (settings · "‹ TODAY ›" day switcher, the pill opens the calendar §4b-12 · band battery) → the sync line
+(today only, see below) → three rings
 (Sleep score, Recovery %, Strain; the first is labelled "SLEEP SCORE", the same name and number as the big ring on the Sleep page, so it
 never reads as the Sleep tab's "% of the time you needed") → two monitor cards (Health §4b-14; Stress: level + value + time §4b-5)
 → calories card (`title` number, labelled "Estimated", resting +
@@ -82,6 +83,14 @@ Tapping a ring opens its page: a big ring + score, a card of rows (each with a t
 Poor / Sufficient / Optimal indicator, or today vs your 30-day average with ▲▼), then one
 plain-language paragraph.
 - Minimum tap target 44 pt.
+
+**Sync line.** One centred `caption` above the rings, on today only, saying when a pull from the band last finished
+(`SyncFreshness`, updated every 30 seconds): "Synced just now", "Synced 4 min ago", "Last synced 1h 20m ago", in `secondary` with
+an `arrow.triangle.2.circlepath` icon; "Syncing…" while a pull runs. After 2 hours without a finished pull it is a warning:
+`warn` with an `exclamationmark.triangle` icon ("Last synced 3h 12m ago"), because pulls run every 5 minutes in the background
+and a gap that long means the background sync stopped (docs/METRICS.md §15). A pull catching up shows "Syncing… last synced
+11h 20m ago" in `secondary`. No line before the band's first pull. It is the one exception to "syncing is invisible" (§4):
+the owner asked to see it after a night that never synced.
 
 ## 4b-2. Sleep is only shown when it is finished
 
@@ -165,8 +174,8 @@ Steps are counted by the band, never estimated, so no step number carries "Estim
 
 Today has a "STEPS" card under the calories card (`monoCard`): the count in `title`, "of 10,000" (the goal) in `caption`, a progress
 bar toward the goal (`accent` fill on a `border` track, full at the goal), and one `caption` with how long the band counted that day
-("Counted for 9h 12m"). Counting starts when you wake: minutes inside the day's sleeps count neither steps nor time. A day the band never counted shows `--` and the `caption` "The band counts steps while it streams its motion
-to your iPhone." While the band streams, today's count includes the minute in progress and moves as you walk (every 5 seconds,
+("Counted for 9h 12m"). Counting starts when you wake: minutes inside the day's sleeps count neither steps nor time. A day the band never counted shows `--` and the `caption` "Counts steps while your iPhone is near the band."
+(the owner's wording, 2026-11-28; the band's stored history holds too little motion to count steps, docs/METRICS.md §15). While the band streams, today's count includes the minute in progress and moves as you walk (every 5 seconds,
 `numericText` transition), on Today and on the Activity tab. When the band isn't counting right now, today's card adds a second
 `caption` saying why: "Paused while you sleep.", "Paused: the band isn't on your wrist.", "Paused: the band's battery is low.",
 "Not counting: the band isn't connected." or "Waiting for the band…".

@@ -16,6 +16,9 @@ import PulseCore
 ///   commands, the new batches, done. Live heart rate streams only while a live screen asks for it.
 /// - The band's 100 Hz motion stream counts steps while `MotionStreamPolicy` allows (worn, not asleep, enough
 ///   battery). Every connect starts with it off; it is decided again after every pull.
+/// - Whenever the stream is off, the band's live heart rate runs as the heartbeat (`MotionStreamPolicy.heartbeat`): iOS
+///   only keeps Pulse running in the background while the band sends it something, so without it nothing was pulled all
+///   night and the stream never came back on (docs/METRICS.md §15, "Keeping Pulse awake").
 /// - The screens show cached data at once; new data slides in when a pull saved something.
 ///
 /// It connects three things that each do one job:
@@ -107,6 +110,10 @@ final class BandManager {
     private(set) var streamDecision: MotionStreamPolicy.Decision?
     /// The stream is on in this connection (every new connection starts with it off).
     @ObservationIgnored private var streamOn = false
+    /// The heartbeat is wanted: the stream is off, so live heart rate keeps Pulse awake (every connection starts without it).
+    @ObservationIgnored private var heartbeatOn = false
+    /// The band's live heart rate is on in this connection, for a live screen or the heartbeat (starts off).
+    @ObservationIgnored private var realtimeOn = false
     /// Counts the stream's steps, a clock minute at a time.
     @ObservationIgnored private var stepCounter = StreamStepCounter()
     /// What the stream counted since the last pull, for the sync log.
@@ -388,18 +395,28 @@ final class BandManager {
         liveUsers.insert(user)
         guard !alreadyOn else { return }
         liveHeartRate = nil
-        if isConnected && hasSession && stage != .syncing {
-            worker?.setLive(true)
+        if isConnected && hasSession && (stage != .syncing || realtimeOn) {
+            applyRealtime()
         } else {
             keepConnected(force: true)      // the stream starts after the first pull
         }
     }
 
-    /// A live screen closed: stop the stream once nothing else asks for it. The connection stays.
+    /// A live screen closed: stop the stream once nothing else asks for it. The connection stays, and while the 100 Hz
+    /// stream is off live heart rate stays on as the heartbeat.
     func stopLive(_ user: LiveUser) {
         guard liveUsers.remove(user) != nil, liveUsers.isEmpty else { return }
         liveHeartRate = nil
-        if hasSession { worker?.setLive(false) }
+        applyRealtime()
+    }
+
+    /// Live heart rate on while a live screen or the heartbeat wants it, off otherwise. Sends only on a change.
+    private func applyRealtime() {
+        guard hasSession else { return }
+        let wanted = wantsLive || heartbeatOn
+        guard wanted != realtimeOn else { return }
+        realtimeOn = wanted
+        worker?.setLive(wanted)
     }
 
     /// A step test started: keep the 100 Hz stream on and keep its seconds. It ends by itself after `stepTestLimit`.
@@ -432,7 +449,8 @@ final class BandManager {
         updateStream()
     }
 
-    /// Turns the 100 Hz stream on or off as `MotionStreamPolicy` says, from the newest band minutes (a step test keeps it on).
+    /// Turns the 100 Hz stream on or off as `MotionStreamPolicy` says, from the newest band minutes (a step test keeps it on),
+    /// and the heartbeat with it: whenever the stream is off, live heart rate keeps Pulse awake to pull.
     func updateStream() {
         guard isConnected, hasSession, let context else { return }
         let record = Self.pairedBand(in: context)
@@ -442,14 +460,21 @@ final class BandManager {
                                         charging: record?.isCharging, streaming: streamOn,
                                         asleep: UnfinishedSleepStore.streamPausesForSleep())
         streamDecision = decision
-        guard decision.isOn != streamOn else { return }
-        streamOn = decision.isOn
-        traceLine("STREAM \(streamOn ? "on" : "off"): \(decision.rawValue)")
-        if !streamOn {
-            saveSteps(stepCounter.finish())
-            showStepsInProgress()
+        if decision.isOn != streamOn {
+            streamOn = decision.isOn
+            traceLine("STREAM \(streamOn ? "on" : "off"): \(decision.rawValue)")
+            if !streamOn {
+                saveSteps(stepCounter.finish())
+                showStepsInProgress()
+            }
+            worker?.setRawStream(streamOn)
         }
-        worker?.setRawStream(streamOn)
+        let heartbeat = MotionStreamPolicy.heartbeat(for: decision)
+        if heartbeat != heartbeatOn {
+            heartbeatOn = heartbeat
+            traceLine("HEARTBEAT \(heartbeat ? "on: live heart rate keeps Pulse awake while the stream is off" : "off: the stream keeps Pulse awake")")
+        }
+        applyRealtime()
     }
 
     /// Saves finished minutes of the stream's count. A minute counted in two parts (the stream stopped inside it) adds up.
@@ -686,6 +711,9 @@ final class BandManager {
         showStepsInProgress()
         streamOn = false
         streamDecision = nil
+        // BandSession.start switches live heart rate off on every connect: decided again after the first pull.
+        heartbeatOn = false
+        realtimeOn = false
     }
 
     // MARK: - Watchdog
@@ -743,7 +771,10 @@ final class BandManager {
                 progress = newProgress
 
             case .liveHeartRate(let bpm):
-                liveHeartRate = bpm
+                // Shown only while a live screen asks; the heartbeat's readings are just a wake-up.
+                if wantsLive { liveHeartRate = bpm }
+                // The heartbeat keeps Pulse awake in the background: a chance to pull on time.
+                if stage != .syncing { pullIfDue() }
 
             case .rawMotion(let motion):
                 if isStepTestRunning { liveSteps.add(motion) }
@@ -822,10 +853,10 @@ final class BandManager {
         let afterwards = { [weak self] in
             guard let self else { return }
             self.showsSyncSpinner = false
-            // A live screen is waiting: switch the stream on now that the pull is done.
-            if self.wantsLive && self.hasSession { self.worker?.setLive(true) }
-            // With the newest minutes in: should the band stream its motion to count steps?
+            // With the newest minutes in: should the band stream its motion to count steps? Live heart rate follows (a
+            // waiting live screen, or the heartbeat while the stream is off).
             self.updateStream()
+            self.applyRealtime()
         }
         // Opened while a sleep waited: recalculate even without new records, so it shows now.
         let opened = recalculateAfterOpening

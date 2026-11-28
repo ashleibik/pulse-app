@@ -141,7 +141,11 @@ struct TodayView: View {
 
     private var home: some View {
         VStack(alignment: .leading, spacing: DS.Space.xl) {
-            rings.riseIn(1)
+            VStack(spacing: DS.Space.m) {
+                syncLine
+                rings
+            }
+            .riseIn(1)
             monitors.riseIn(2)
             caloriesCard.riseIn(2)
             stepsCard.riseIn(2)
@@ -153,6 +157,26 @@ struct TodayView: View {
             myDay.riseIn(3)
             if days.isEmpty { firstNightCard.riseIn(4) }
             liveCard.riseIn(4)
+        }
+    }
+
+    /// "Synced 4 min ago", or a `warn` line after 2 hours without a finished pull (DESIGN.md §4b, sync line). Today only.
+    @ViewBuilder private var syncLine: some View {
+        if isToday {
+            TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                if let line = SyncFreshness.line(lastSync: bands.first?.lastHistorySyncAt, now: timeline.date,
+                                                 syncing: band.stage == .syncing) {
+                    Label {
+                        Text(line.text)
+                    } icon: {
+                        Image(systemName: line.isStale ? "exclamationmark.triangle" : "arrow.triangle.2.circlepath")
+                    }
+                    .textStyle(.caption)
+                    .foregroundStyle(line.isStale ? DS.Colors.warn : DS.Colors.secondary)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityElement(children: .combine)
+                }
+            }
         }
     }
 

@@ -151,7 +151,23 @@ latest week only. An edit recalculates its own week and, if that changes what wa
    up still counts as the night.
    *Our choice:* 20 minutes, the owner's rule. The 6-hour daytime rule: the owner's afternoon nap of 2026-11-19 ran from about
    15:00 to 18:20, longer than 3 hours, and must not become a second night. WHOOP calls every sleep other than the main one a nap.
-8. **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
+8. **One night, even with getting up in it** (NOOP's gap bridge, `NoopNightBridge`). Two finished sleeps are one sleep when they are
+   less than 60 minutes apart, or less than 90 minutes when the later one starts between 20:00 and 11:00. The joined sleep runs
+   from the first start to the last end, and step 10 counts its minutes like any sleep's, the time up included.
+   *Added 2026-11-27:* the owner slept 02:04–05:35, walked around for about 10 minutes with the heart rate near 100, and slept
+   again 06:14–10:24. Step 7 kept the two apart (39 minutes up, almost none of them asleep), and the day counted only the
+   second part: 3h 49m instead of 7h 11m, recovery 65% instead of 87%.
+   *Departures from NOOP, and why:*
+   - Only sleeps with more minutes asleep than awake (step 10) join. NOOP's detector never keeps a mostly awake stretch, but
+     Pulse's does: the owner's time in bed before falling asleep, 2026-11-19 to 11-27, gave nine "naps" that were 2–48% asleep. With NOOP's rule
+     they would join the night after them and move its start back to the evening (22:44 instead of 01:58 on 2026-11-23/24, with
+     2 minutes asleep in the first 2 hours). The two parts of 2026-11-27 were 91% and 92% asleep. A mostly awake stretch that
+     lies between two joined parts becomes part of the night.
+   - NOOP keeps the parts apart and adds them up for the day, with the time between them all awake and one wake-up. Pulse
+     stores one sleep, so every screen shows the same night, and step 10 judges the time between the parts like every other
+     minute of a sleep, so the night chart and the totals agree. On 2026-11-27, 33 of the 39 minutes between the parts counted as
+     awake and 6 still minutes between the walking as asleep: 431 minutes asleep instead of NOOP's 422, and 9 wake-ups instead of 7.
+   **Main sleep of a day** = the longest non-nap session that **ends** on that calendar day.
 9. **Finished:** a sleep is shown only once, at some point between its end and the next sleep, **15 of 45 minutes** in a row
    are clearly awake (`A > 2.5`, or HR 10+ bpm above the sleep's), or the band was off the wrist for an hour; or once a later
    sleep is finished; or 6 hours after it ended. Until then the app says a sleep is on its way (DESIGN.md §4b-2), without its
@@ -465,6 +481,10 @@ the night (and after a short wake that ended it early) counted, and "Counted for
 fed, and the factor learned from step tests and Apple Watch days. At once a second walking and other arm movement look alike, and
 NOOP's own WHOOP 4.0 method (all motion × a factor from a phone's step count) has the same weakness. The owner asked for the band's
 own count and no scaling from the Apple Watch.
+*Checked again on 2026-11-27:* on the owner's backup, about 3,500 minutes have both the stream's count and the history. A factor fitted
+on alternate days missed the day's total by 41–47% on 2026-11-23 (4–6% on 11-25), and found about 3,000 steps in minutes the
+stream counted none. The protocol has a stored high-rate motion packet (0x34) but no known command that turns it on. The owner chose
+to keep the band's own count and say on the card that it counts while the iPhone is near (DESIGN.md §4b-8).
 
 **When the band streams** (`MotionStreamPolicy`). Every connect turns the stream off (a crash or a killed app can't leave it on).
 After each pull (every minute while Pulse is on screen, every 5 minutes in the background) and when the app opens, Pulse decides
@@ -488,6 +508,22 @@ minutes awake, at noon among them.
 *Changed 2026-11-21:* the stream also paused after 30 still minutes. Only the next pull could start it again, and with the app
 closed and the stream off nothing woke Pulse for up to a quarter of an hour, so the first minutes of every walk after sitting were
 never counted. Sitting no longer pauses it; sleep does.
+
+**Keeping Pulse awake** (`MotionStreamPolicy.heartbeat`). iOS only runs Pulse in the background while the band sends it
+something; a pull needs Pulse running, and only a pull decides the stream again. Whenever the stream is off (asleep, not worn,
+low battery), Pulse turns on the band's live heart rate (TOGGLE_REALTIME_HR, packet 0x28): one small packet a second, about 1%
+of the stream's data. Each packet is a chance to pull (every 5 minutes, 2 while a night waits for the owner to get up), so the
+night is downloaded as it happens and shows once the owner is up, without opening Pulse. When the stream comes back on, the
+heartbeat goes off. Like the stream it is off on every connect and decided after the first pull. Its packets are summarized in
+the sync log, never logged one by one, and the stall watchdog doesn't count them. A live screen uses the same switch: closing it
+leaves live heart rate on while the heartbeat wants it.
+
+*Added 2026-11-27:* on 2026-11-26/27 the stream went off at 21:50, before bed (the backup doesn't say which rule turned it off),
+and from then on nothing kept Pulse awake: the stream never came back on, and at 13:33 Pulse had nothing of the day after 2:13
+and no night (asleep 2:04 to 10:24). The band
+recorded every minute, and it all arrived once Pulse was opened (the stream ran again from 16:16). The band was connected the
+whole time, so a reconnect never came to start a pull either. iOS background refresh (asked for every 15 minutes) and the
+nightly processing task didn't make up for it.
 
 While the stream is on, the steps cards add the minute being counted (refreshed every 5 seconds), so the number moves while the
 owner walks. The minute's own count replaces it when the minute closes.
